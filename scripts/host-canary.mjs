@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { existsSync } from "node:fs"
 import { createServer } from "node:http"
 import net from "node:net"
 import { spawn } from "node:child_process"
@@ -9,7 +10,20 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const isWindows = process.platform === "win32"
-const opencodeBin = path.join(repoRoot, "node_modules", ".bin", isWindows ? "opencode.cmd" : "opencode")
+
+function resolveOpenCodeBinary() {
+  if (!isWindows) return path.join(repoRoot, "node_modules", ".bin", "opencode")
+  const candidates = [
+    path.join(repoRoot, "node_modules", "opencode-windows-x64", "bin", "opencode.exe"),
+    path.join(repoRoot, "node_modules", "opencode-windows-x64-baseline", "bin", "opencode.exe"),
+    path.join(repoRoot, "node_modules", "opencode-windows-arm64", "bin", "opencode.exe"),
+  ]
+  const found = candidates.find((candidate) => existsSync(candidate))
+  if (!found) throw new Error(`OpenCode native Windows binary was not installed. Checked: ${candidates.join(", ")}`)
+  return found
+}
+
+const opencodeBin = resolveOpenCodeBinary()
 
 function appendLog(current, chunk, limit = 40_000) {
   return (current + String(chunk)).slice(-limit)
@@ -47,16 +61,29 @@ async function waitForTcp(port, child, logs, timeoutMs = 30_000) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     if (child.exitCode !== null) throw new Error(`OpenCode server exited before ready.\n${logs()}`)
-    const ok = await new Promise((resolve) => {
+    const connected = await new Promise((resolve) => {
       const socket = net.createConnection({ host: "127.0.0.1", port })
       socket.once("connect", () => { socket.destroy(); resolve(true) })
       socket.once("error", () => resolve(false))
       socket.setTimeout(500, () => { socket.destroy(); resolve(false) })
     })
-    if (ok) return
+    if (connected) return
     await new Promise((resolve) => setTimeout(resolve, 100))
   }
   throw new Error(`timed out waiting for OpenCode server on ${port}\n${logs()}`)
+}
+
+async function stopProcess(child, timeoutMs = 2_000) {
+  if (!child || child.exitCode !== null) return
+  child.kill()
+  await new Promise((resolve) => {
+    if (child.exitCode !== null) return resolve()
+    const timer = setTimeout(resolve, timeoutMs)
+    child.once("close", () => {
+      clearTimeout(timer)
+      resolve()
+    })
+  })
 }
 
 function startProvider() {
@@ -64,6 +91,7 @@ function startProvider() {
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1")
     stats.paths.push(`${req.method} ${url.pathname}`)
+
     if (req.method === "GET" && url.pathname.endsWith("/models")) {
       res.writeHead(200, { "content-type": "application/json" })
       res.end(JSON.stringify({ object: "list", data: [{ id: "canary", object: "model", owned_by: "canary" }] }))
@@ -138,7 +166,7 @@ function startProvider() {
 }
 
 function spawnOpenCode(args, options = {}) {
-  return spawn(opencodeBin, args, { ...options, shell: isWindows, windowsHide: true })
+  return spawn(opencodeBin, args, { ...options, windowsHide: true })
 }
 
 async function runOpenCode(args, { cwd, env, timeoutMs = 60_000 }) {
@@ -146,23 +174,27 @@ async function runOpenCode(args, { cwd, env, timeoutMs = 60_000 }) {
     const child = spawnOpenCode(args, { cwd, env })
     let stdout = ""
     let stderr = ""
+    let settled = false
     child.stdout?.on("data", (chunk) => { stdout = appendLog(stdout, chunk) })
     child.stderr?.on("data", (chunk) => { stderr = appendLog(stderr, chunk) })
+
+    const finish = (fn, value) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      fn(value)
+    }
     const timer = setTimeout(() => {
-      child.kill()
-      reject(new Error(`OpenCode command timed out: ${args.join(" ")}\nstdout:\n${stdout}\nstderr:\n${stderr}`))
+      void stopProcess(child)
+      finish(reject, new Error(`OpenCode command timed out: ${args.join(" ")}\nstdout:\n${stdout}\nstderr:\n${stderr}`))
     }, timeoutMs)
-    child.once("error", (error) => {
-      clearTimeout(timer)
-      reject(error)
-    })
+    child.once("error", (error) => finish(reject, error))
     child.once("close", (code) => {
-      clearTimeout(timer)
       if (code !== 0) {
-        reject(new Error(`OpenCode command exited ${code}: ${args.join(" ")}\nstdout:\n${stdout}\nstderr:\n${stderr}`))
+        finish(reject, new Error(`OpenCode command exited ${code}: ${args.join(" ")}\nstdout:\n${stdout}\nstderr:\n${stderr}`))
         return
       }
-      resolve({ stdout, stderr })
+      finish(resolve, { stdout, stderr })
     })
   })
 }
@@ -368,7 +400,7 @@ async function main() {
       editState: { status: edited.status, revision: edited.revision, objective: edited.objective },
     }, null, 2))
   } finally {
-    server.kill()
+    await stopProcess(server)
     await provider.close().catch(() => undefined)
     await rm(workspace, { recursive: true, force: true }).catch(() => undefined)
   }

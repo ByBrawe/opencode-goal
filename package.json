@@ -19,6 +19,7 @@
     "test": "npm run build && node --test test/*.test.mjs",
     "canary:host": "node --import ./scripts/host-canary-bootstrap.mjs scripts/host-canary.mjs",
     "canary:semantic": "node --import ./scripts/host-canary-bootstrap.mjs scripts/host-semantic-canary.mjs",
+    "canary:steering": "node --import ./scripts/host-canary-bootstrap.mjs scripts/host-steering-canary.mjs",
     "pack:check": "npm pack --dry-run"
   },
   "keywords": ["opencode", "goal", "agent", "autonomous", "codex", "plugin"],

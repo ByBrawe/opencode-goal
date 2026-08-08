@@ -8,7 +8,7 @@ export type GoalStatus =
 
 export type RequirementStatus = "pending" | "proven" | "failed" | "unknown" | "blocked"
 export type EvidenceKind = "command" | "file" | "diff" | "artifact" | "runtime" | "external" | "manual" | "agent_note"
-export type EvidenceTrust = "host" | "user" | "agent"
+export type EvidenceTrust = "host" | "verifier" | "user" | "agent"
 export type VerificationKind = "semantic" | "command" | "file"
 
 export interface EvidenceRecord {

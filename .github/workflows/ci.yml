@@ -126,21 +126,17 @@ jobs:
       - name: Patch verifier detection and remove temporary workflow
         shell: python
         run: |
+          import re
           from pathlib import Path
 
           path = Path("scripts/host-semantic-canary.mjs")
           text = path.read_text()
-          old = '''    if (tools.has("opencode_goal_verifier_result")) {
-              const request = extractAuditRequest(text)
-          '''
-          new = '''    const isVerifierAudit = text.includes("Verification request:") && /"auditToken"\\s*:/.test(text)
-              if (isVerifierAudit) {
-              if (!tools.has("opencode_goal_verifier_result")) throw new Error("verifier audit is missing opencode_goal_verifier_result")
-              const request = extractAuditRequest(text)
-          '''
-          if old not in text:
-              raise SystemExit("expected verifier detection block not found")
-          path.write_text(text.replace(old, new, 1))
+          pattern = r'(?m)^    if \(tools\.has\("opencode_goal_verifier_result"\)\) \{\n      const request = extractAuditRequest\(text\)\n'
+          replacement = '    const isVerifierAudit = text.includes("Verification request:") && /"auditToken"\\s*:/.test(text)\n    if (isVerifierAudit) {\n      if (!tools.has("opencode_goal_verifier_result")) throw new Error("verifier audit is missing opencode_goal_verifier_result")\n      const request = extractAuditRequest(text)\n'
+          text, count = re.subn(pattern, lambda _match: replacement, text, count=1)
+          if count != 1:
+              raise SystemExit(f"expected one verifier detection block, patched {count}")
+          path.write_text(text)
           temporary = Path(".github/workflows/pr4-provider-patch.yml")
           if temporary.exists():
               temporary.unlink()

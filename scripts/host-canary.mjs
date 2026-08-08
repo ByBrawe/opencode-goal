@@ -149,7 +149,7 @@ async function readGoalState(workspace) {
   return JSON.parse(await readFile(file, "utf8"))
 }
 
-async function waitForState(workspace, predicate, description, timeoutMs = 30_000) {
+async function waitForState(workspace, predicate, description, diagnostic, timeoutMs = 30_000) {
   const deadline = Date.now() + timeoutMs
   let last = null
   while (Date.now() < deadline) {
@@ -157,16 +157,16 @@ async function waitForState(workspace, predicate, description, timeoutMs = 30_00
     if (last && predicate(last)) return last
     await new Promise((resolve) => setTimeout(resolve, 100))
   }
-  throw new Error(`timed out waiting for ${description}. Last state: ${JSON.stringify(last, null, 2)}`)
+  throw new Error(`timed out waiting for ${description}. Last state: ${JSON.stringify(last, null, 2)}\n${diagnostic()}`)
 }
 
-async function waitForNoGoalState(workspace, timeoutMs = 10_000) {
+async function waitForNoGoalState(workspace, diagnostic, timeoutMs = 10_000) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     if (!(await goalStateFile(workspace))) return
     await new Promise((resolve) => setTimeout(resolve, 100))
   }
-  throw new Error("goal state still exists after /goal clear")
+  throw new Error(`goal state still exists after /goal clear\n${diagnostic()}`)
 }
 
 async function main() {
@@ -232,22 +232,28 @@ async function main() {
     "content-type": "application/json",
     "x-opencode-directory": encodeURIComponent(workspace),
   }
+  const diagnostic = () => `provider=${JSON.stringify(provider.stats)}\nserver log:\n${serverLog}`
   const api = async (pathname, init = {}) => {
-    const response = await fetch(`${baseURL}${pathname}`, {
-      ...init,
-      headers: { ...headers, ...(init.headers ?? {}) },
-      signal: AbortSignal.timeout(60_000),
-    })
-    const text = await response.text()
-    if (!response.ok) {
-      throw new Error(`OpenCode API ${init.method ?? "GET"} ${pathname} returned ${response.status}: ${text}\nserver log:\n${serverLog}`)
+    try {
+      const response = await fetch(`${baseURL}${pathname}`, {
+        ...init,
+        headers: { ...headers, ...(init.headers ?? {}) },
+        signal: init.signal ?? AbortSignal.timeout(15_000),
+      })
+      const text = await response.text()
+      if (!response.ok) {
+        throw new Error(`OpenCode API ${init.method ?? "GET"} ${pathname} returned ${response.status}: ${text}`)
+      }
+      if (!text) return null
+      try { return JSON.parse(text) } catch { return text }
+    } catch (error) {
+      throw new Error(`OpenCode API ${init.method ?? "GET"} ${pathname} failed: ${String(error)}\n${diagnostic()}`)
     }
-    if (!text) return null
-    try { return JSON.parse(text) } catch { return text }
   }
 
   try {
     await waitForTcp(serverPort, server, () => serverLog)
+    console.log("canary: real OpenCode server is ready")
 
     const createdSessionPayload = await api("/session", {
       method: "POST",
@@ -256,40 +262,81 @@ async function main() {
     const session = createdSessionPayload?.data ?? createdSessionPayload
     const sessionID = String(session?.id ?? "")
     assert.ok(sessionID, `OpenCode did not create a canary session: ${JSON.stringify(createdSessionPayload)}`)
+    console.log(`canary: created real OpenCode session ${sessionID}`)
 
-    const command = async (argumentsText) => await api(`/session/${encodeURIComponent(sessionID)}/command`, {
-      method: "POST",
-      body: JSON.stringify({
-        agent: "build",
-        model: "canary/canary",
-        command: "goal",
-        arguments: argumentsText,
-      }),
-    })
+    const startCommand = (argumentsText) => {
+      const controller = new AbortController()
+      const promise = api(`/session/${encodeURIComponent(sessionID)}/command`, {
+        method: "POST",
+        body: JSON.stringify({
+          agent: "build",
+          model: "canary/canary",
+          command: "goal",
+          arguments: argumentsText,
+        }),
+        signal: controller.signal,
+      }).then(
+        (value) => ({ ok: true, value }),
+        (error) => ({ ok: false, error }),
+      )
+      return { controller, promise }
+    }
 
-    await command("ship canary --max-turns 8")
+    const settleCommand = async (started, label) => {
+      const settled = await Promise.race([
+        started.promise,
+        new Promise((resolve) => setTimeout(() => resolve(null), 2_000)),
+      ])
+      if (settled === null) {
+        started.controller.abort()
+        await started.promise
+        console.log(`canary: ${label} HTTP request remained open after lifecycle target; aborted client request`)
+        return
+      }
+      if (!settled.ok) throw settled.error
+      console.log(`canary: ${label} HTTP request completed`)
+    }
+
+    const createRequest = startCommand("ship canary --max-turns 8")
     const created = await waitForState(
       workspace,
       (state) => state.sessionID === sessionID && state.objective === "ship canary" && state.status === "paused" && state.stalledTurns >= 3,
       "real-host create + idle continuation + no-progress pause",
-    )
+      diagnostic,
+    ).catch(async (error) => {
+      createRequest.controller.abort()
+      await createRequest.promise
+      throw error
+    })
+    await settleCommand(createRequest, "create")
     assert.equal(created.revision, 1)
     assert.equal(created.status, "paused")
     assert.ok(created.usage.turns >= 1, "real host should account at least one assistant turn")
     const requestsAfterCreate = provider.stats.chatRequests
     assert.ok(requestsAfterCreate >= 3, `expected initial turn plus automatic continuations, got ${requestsAfterCreate} provider requests`)
 
-    await command("edit ship canary v2")
+    const editRequest = startCommand("edit ship canary v2")
     const edited = await waitForState(
       workspace,
       (state) => state.sessionID === sessionID && state.revision === 2 && state.objective === "ship canary v2" && state.status === "paused" && state.stalledTurns >= 3,
       "real-host goal edit + renewed continuation lifecycle",
-    )
+      diagnostic,
+    ).catch(async (error) => {
+      editRequest.controller.abort()
+      await editRequest.promise
+      throw error
+    })
+    await settleCommand(editRequest, "edit")
     assert.equal(edited.revision, 2)
     assert.ok(provider.stats.chatRequests > requestsAfterCreate, "goal edit should trigger fresh model work")
 
-    await command("clear")
-    await waitForNoGoalState(workspace)
+    const clearRequest = startCommand("clear")
+    await waitForNoGoalState(workspace, diagnostic).catch(async (error) => {
+      clearRequest.controller.abort()
+      await clearRequest.promise
+      throw error
+    })
+    await settleCommand(clearRequest, "clear")
 
     console.log(JSON.stringify({
       ok: true,

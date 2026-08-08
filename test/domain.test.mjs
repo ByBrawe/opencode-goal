@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import { createGoal, editGoal } from "../dist/domain/goal.js"
 import { auditCompletion, completeGoal } from "../dist/verification/audit.js"
 import { proveRequirementsFromEvidence, recordCommandEvidence } from "../dist/verification/evidence.js"
-import { addProgressNote, closeObservedTurn } from "../dist/runtime/progress.js"
+import { addProgressNote, closeObservedTurn, markHostActivity } from "../dist/runtime/progress.js"
 import { reportBlocker } from "../dist/runtime/blocker.js"
 import { accountAssistantUsage } from "../dist/runtime/accounting.js"
 
@@ -88,4 +88,14 @@ test("usage is deduplicated and budget limited instead of completed", () => {
   goal = accountAssistantUsage(goal, { messageID: "m2", inputTokens: 10, outputTokens: 5 })
   assert.equal(goal.status, "budget_limited")
   assert.equal(goal.usage.turns, 2)
+})
+
+test("host-observed mutating activity resets stalled-turn accounting", () => {
+  let goal = createGoal({ sessionID: "s1", objective: "work" })
+  goal = closeObservedTurn(goal)
+  assert.equal(goal.stalledTurns, 1)
+  goal = markHostActivity(goal, { source: "edit", summary: "changed source" })
+  goal = closeObservedTurn(goal)
+  assert.equal(goal.stalledTurns, 0)
+  assert.equal(goal.status, "active")
 })

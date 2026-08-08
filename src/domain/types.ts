@@ -71,6 +71,12 @@ export interface FileRequirementInput {
   contains?: string
 }
 
+export interface GoalExecutionContext {
+  agent?: string
+  model?: { providerID: string; modelID: string }
+  variant?: string
+}
+
 export interface GoalState {
   schemaVersion: 1
   id: string
@@ -81,6 +87,7 @@ export interface GoalState {
   requirements: GoalRequirement[]
   evidence: EvidenceRecord[]
   checks: string[]
+  execution?: GoalExecutionContext
   usage: GoalUsage
   budget: GoalBudget
   progressRevision: number

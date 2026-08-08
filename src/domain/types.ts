@@ -92,6 +92,8 @@ export interface GoalState {
   budget: GoalBudget
   progressRevision: number
   observedProgressRevision: number
+  /** Stable host-observed change fingerprints for this goal revision. */
+  progressFingerprints?: string[]
   stalledTurns: number
   blockerAudit?: BlockerAudit
   progressNotes: ProgressNote[]

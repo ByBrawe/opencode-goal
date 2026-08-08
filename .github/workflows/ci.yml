@@ -113,38 +113,3 @@ jobs:
         env:
           OPENCODE_PRINT_LOGS: "1"
           OPENCODE_LOG_LEVEL: DEBUG
-
-  pr4-provider-patch:
-    if: github.head_ref == 'ci/semantic-completion-canary' && github.actor != 'github-actions[bot]'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ci/semantic-completion-canary
-      - name: Patch verifier detection and remove temporary workflow
-        shell: python
-        run: |
-          import re
-          from pathlib import Path
-
-          path = Path("scripts/host-semantic-canary.mjs")
-          text = path.read_text()
-          pattern = r'(?m)^    if \(tools\.has\("opencode_goal_verifier_result"\)\) \{\n      const request = extractAuditRequest\(text\)\n'
-          replacement = '    const isVerifierAudit = text.includes("Verification request:") && /"auditToken"\\s*:/.test(text)\n    if (isVerifierAudit) {\n      if (!tools.has("opencode_goal_verifier_result")) throw new Error("verifier audit is missing opencode_goal_verifier_result")\n      const request = extractAuditRequest(text)\n'
-          text, count = re.subn(pattern, lambda _match: replacement, text, count=1)
-          if count != 1:
-              raise SystemExit(f"expected one verifier detection block, patched {count}")
-          path.write_text(text)
-          temporary = Path(".github/workflows/pr4-provider-patch.yml")
-          if temporary.exists():
-              temporary.unlink()
-      - name: Commit patch
-        shell: bash
-        run: |
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add scripts/host-semantic-canary.mjs .github/workflows/pr4-provider-patch.yml
-          git commit -m "ci: detect verifier requests by audit prompt"
-          git push origin HEAD:ci/semantic-completion-canary

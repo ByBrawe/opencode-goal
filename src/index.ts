@@ -1,22 +1,24 @@
 import { tool } from "@opencode-ai/plugin/tool"
 import { createGoal, editGoal, pauseGoal, resumeGoal } from "./domain/goal.js"
-import type { GoalState } from "./domain/types.js"
+import type { GoalExecutionContext, GoalState } from "./domain/types.js"
 import { GoalStore } from "./persistence/store.js"
 import { accountAssistantUsage } from "./runtime/accounting.js"
 import { reportBlocker } from "./runtime/blocker.js"
 import { runConfiguredChecks } from "./runtime/checks.js"
-import { addProgressNote, closeObservedTurn } from "./runtime/progress.js"
+import { addProgressNote, closeObservedTurn, markHostActivity } from "./runtime/progress.js"
 import { completeGoal } from "./verification/audit.js"
 import { proveRequirementsFromEvidence, recordFileEvidence } from "./verification/evidence.js"
 import { parseGoalCommand } from "./opencode/command.js"
 import { compactionContext, continuationPrompt } from "./opencode/prompt.js"
 
-const dispatching = new Map<string, number>()
-const pluginOwnedUserMessageUntil = new Map<string, number>()
-const sessionLocks = new Map<string, Promise<unknown>>()
+const MUTATING_TOOLS = new Set(["edit", "write", "patch", "apply_patch", "multiedit"])
 
 function replaceParts(parts: any[], text: string) {
   parts.splice(0, parts.length, { type: "text", text })
+}
+
+function textFromParts(parts: any[]): string {
+  return parts.filter((part) => part?.type === "text" && typeof part.text === "string").map((part) => part.text).join("\n")
 }
 
 function formatStatus(goal: GoalState | null): string {
@@ -25,48 +27,108 @@ function formatStatus(goal: GoalState | null): string {
   return `Goal: ${goal.objective}\nStatus: ${goal.status}\nRevision: ${goal.revision}\nUsage: ${goal.usage.turns} turns, ${goal.usage.tokens} tokens, cost ${goal.usage.cost.toFixed(4)}\nRequirements:\n${req}`
 }
 
-async function sdkPrompt(client: any, sessionID: string, text: string) {
-  const body = { parts: [{ type: "text", text }] }
+async function sdkPrompt(client: any, sessionID: string, text: string, execution?: GoalExecutionContext) {
+  const body = {
+    parts: [{ type: "text", text }],
+    ...(execution?.agent ? { agent: execution.agent } : {}),
+    ...(execution?.model ? { model: execution.model } : {}),
+    ...(execution?.variant ? { variant: execution.variant } : {}),
+  }
   const fn = client.session.prompt.bind(client.session)
   try { return await fn({ path: { id: sessionID }, body }) } catch {}
   try { return await fn({ path: { sessionID }, body }) } catch {}
   return await fn({ sessionID, ...body })
 }
 
-function serialize<T>(sessionID: string, fn: () => Promise<T>): Promise<T> {
-  const previous = sessionLocks.get(sessionID) ?? Promise.resolve()
-  const next = previous.catch(() => undefined).then(fn)
-  sessionLocks.set(sessionID, next)
-  return next.finally(() => { if (sessionLocks.get(sessionID) === next) sessionLocks.delete(sessionID) })
+async function sdkAbort(client: any, sessionID: string) {
+  const fn = client.session.abort?.bind(client.session)
+  if (!fn) return
+  try { return await fn({ path: { id: sessionID } }) } catch {}
+  try { return await fn({ path: { sessionID } }) } catch {}
+  try { return await fn({ sessionID }) } catch {}
 }
 
 export default async function OpenCodeGoalPlugin(input: any) {
   const { client, directory } = input
   const store = new GoalStore(directory)
+  const dispatching = new Map<string, number>()
+  const deferredIdle = new Set<string>()
+  const ownedMessages = new Map<string, Array<{ text: string; expiresAt: number }>>()
+  const sessionLocks = new Map<string, Promise<unknown>>()
+  const sessionContexts = new Map<string, GoalExecutionContext>()
+
+  function serialize<T>(sessionID: string, fn: () => Promise<T>): Promise<T> {
+    const previous = sessionLocks.get(sessionID) ?? Promise.resolve()
+    const next = previous.catch(() => undefined).then(fn)
+    sessionLocks.set(sessionID, next)
+    return next.finally(() => { if (sessionLocks.get(sessionID) === next) sessionLocks.delete(sessionID) })
+  }
+
+  function rememberOwnedMessage(sessionID: string, text: string) {
+    const now = Date.now()
+    const existing = (ownedMessages.get(sessionID) ?? []).filter((item) => item.expiresAt > now)
+    existing.push({ text, expiresAt: now + 60_000 })
+    ownedMessages.set(sessionID, existing.slice(-8))
+  }
+
+  function consumeOwnedMessage(sessionID: string, text: string): boolean {
+    const now = Date.now()
+    const existing = (ownedMessages.get(sessionID) ?? []).filter((item) => item.expiresAt > now)
+    const index = existing.findIndex((item) => item.text === text)
+    if (index < 0) {
+      if (existing.length) ownedMessages.set(sessionID, existing)
+      else ownedMessages.delete(sessionID)
+      return false
+    }
+    existing.splice(index, 1)
+    if (existing.length) ownedMessages.set(sessionID, existing)
+    else ownedMessages.delete(sessionID)
+    return true
+  }
 
   async function load(sessionID: string) { return await store.load(sessionID) }
   async function save(goal: GoalState) { await store.save(goal); return goal }
 
-  async function continueIfActive(sessionID: string) {
-    await serialize(sessionID, async () => {
+  async function prepareContinuation(sessionID: string): Promise<{ token: number; goal: GoalState; text: string } | null> {
+    return await serialize(sessionID, async () => {
+      if (dispatching.has(sessionID)) {
+        deferredIdle.add(sessionID)
+        return null
+      }
       let goal = await load(sessionID)
-      if (!goal || goal.status !== "active") return
-      if (dispatching.has(sessionID)) return
+      if (!goal || goal.status !== "active") return null
       goal = closeObservedTurn(goal)
       await save(goal)
-      if (goal.status !== "active") return
+      if (goal.status !== "active") return null
       const token = Date.now() + Math.random()
+      const text = continuationPrompt(goal)
       dispatching.set(sessionID, token)
-      pluginOwnedUserMessageUntil.set(sessionID, Date.now() + 10_000)
-      try {
-        await sdkPrompt(client, sessionID, continuationPrompt(goal))
-      } catch (error) {
-        const latest = await load(sessionID)
-        if (latest?.status === "active") await save(pauseGoal(latest, `Continuation dispatch failed: ${String(error)}`))
-      } finally {
-        if (dispatching.get(sessionID) === token) dispatching.delete(sessionID)
-      }
+      rememberOwnedMessage(sessionID, text)
+      return { token, goal, text }
     })
+  }
+
+  async function continueIfActive(sessionID: string) {
+    const prepared = await prepareContinuation(sessionID)
+    if (!prepared) return
+    void sdkPrompt(client, sessionID, prepared.text, prepared.goal.execution)
+      .catch(async (error) => {
+        await serialize(sessionID, async () => {
+          const latest = await load(sessionID)
+          if (latest?.status === "active" && dispatching.get(sessionID) === prepared.token) {
+            await save(pauseGoal(latest, `Continuation dispatch failed: ${String(error)}`))
+          }
+        })
+      })
+      .finally(() => {
+        if (dispatching.get(sessionID) === prepared.token) dispatching.delete(sessionID)
+        if (deferredIdle.delete(sessionID)) queueMicrotask(() => { void continueIfActive(sessionID) })
+      })
+  }
+
+  function markCommandOutputOwned(sessionID: string, output: any, text: string) {
+    replaceParts(output.parts, text)
+    rememberOwnedMessage(sessionID, text)
   }
 
   return {
@@ -75,7 +137,6 @@ export default async function OpenCodeGoalPlugin(input: any) {
       config.command.goal ||= {
         description: "Set or manage a persistent evidence-verified goal.",
         template: "$ARGUMENTS",
-        agent: "build",
       }
     },
 
@@ -86,27 +147,28 @@ export default async function OpenCodeGoalPlugin(input: any) {
         let goal = await load(event.sessionID)
         if (parsed.action === "status") {
           ;(output as any).noReply = true
-          replaceParts(output.parts, `${formatStatus(goal)}\nRespond with this status only; do not perform work.`)
+          markCommandOutputOwned(event.sessionID, output, `${formatStatus(goal)}\nRespond with this status only; do not perform work.`)
           return
         }
         if (parsed.action === "pause") {
           if (goal) goal = await save(pauseGoal(goal))
           ;(output as any).noReply = true
-          replaceParts(output.parts, `${formatStatus(goal)}\nRespond only with OK.`)
+          markCommandOutputOwned(event.sessionID, output, `${formatStatus(goal)}\nRespond only with OK.`)
           return
         }
         if (parsed.action === "resume") {
           if (goal) goal = await save(resumeGoal(goal))
-          replaceParts(output.parts, goal ? continuationPrompt(goal) : "No goal exists. Respond only with that fact.")
+          markCommandOutputOwned(event.sessionID, output, goal ? continuationPrompt(goal) : "No goal exists. Respond only with that fact.")
           return
         }
         if (parsed.action === "clear") {
           await store.clear(event.sessionID)
           ;(output as any).noReply = true
-          replaceParts(output.parts, "Goal cleared. Respond only with OK.")
+          markCommandOutputOwned(event.sessionID, output, "Goal cleared. Respond only with OK.")
           return
         }
         if (!parsed.objective) throw new Error("Usage: /goal <objective> [--accept \"criterion\"] [--check \"command\"]")
+        const execution = sessionContexts.get(event.sessionID)
         if (parsed.action === "edit") {
           if (!goal) throw new Error("No goal exists to edit")
           goal = editGoal(goal, {
@@ -114,6 +176,7 @@ export default async function OpenCodeGoalPlugin(input: any) {
             ...(parsed.acceptance.length ? { acceptance: parsed.acceptance } : {}),
             ...(parsed.checks.length ? { checks: parsed.checks } : {}),
             ...(parsed.files.length ? { files: parsed.files } : {}),
+            ...(execution ? { execution } : {}),
           })
         } else {
           if (goal && goal.status !== "completed") throw new Error("An unfinished goal already exists. Use /goal edit, /goal clear, or complete it first.")
@@ -123,6 +186,7 @@ export default async function OpenCodeGoalPlugin(input: any) {
             acceptance: parsed.acceptance,
             checks: parsed.checks,
             files: parsed.files,
+            ...(execution ? { execution } : {}),
             budget: {
               ...(parsed.maxTurns ? { maxTurns: parsed.maxTurns } : {}),
               ...(parsed.maxTokens ? { maxTokens: parsed.maxTokens } : {}),
@@ -132,16 +196,39 @@ export default async function OpenCodeGoalPlugin(input: any) {
           })
         }
         await save(goal)
-        replaceParts(output.parts, continuationPrompt(goal))
+        markCommandOutputOwned(event.sessionID, output, continuationPrompt(goal))
       })
     },
 
-    "chat.message": async (event: any) => {
-      const until = pluginOwnedUserMessageUntil.get(event.sessionID) ?? 0
-      if (until >= Date.now()) { pluginOwnedUserMessageUntil.delete(event.sessionID); return }
+    "chat.message": async (event: any, output: any) => {
+      const context: GoalExecutionContext = {
+        ...(event.agent ? { agent: event.agent } : {}),
+        ...(event.model ? { model: event.model } : {}),
+        ...(event.variant ? { variant: event.variant } : {}),
+      }
+      if (Object.keys(context).length) sessionContexts.set(event.sessionID, context)
+      const messageText = textFromParts(output?.parts ?? [])
+      if (consumeOwnedMessage(event.sessionID, messageText)) {
+        if (Object.keys(context).length) {
+          await serialize(event.sessionID, async () => {
+            const goal = await load(event.sessionID)
+            if (goal && goal.status !== "completed") await save({ ...goal, execution: context, updatedAt: Date.now() })
+          })
+        }
+        return
+      }
       await serialize(event.sessionID, async () => {
         const goal = await load(event.sessionID)
         if (goal?.status === "active") await save(pauseGoal(goal, "Paused because the user sent a new message."))
+      })
+      if (dispatching.has(event.sessionID)) void sdkAbort(client, event.sessionID)
+    },
+
+    "tool.execute.after": async (event: any) => {
+      if (!MUTATING_TOOLS.has(String(event.tool ?? "").toLowerCase())) return
+      await serialize(event.sessionID, async () => {
+        const goal = await load(event.sessionID)
+        if (goal?.status === "active") await save(markHostActivity(goal, { source: String(event.tool), summary: `Completed mutating tool call ${event.callID ?? ""}`.trim() }))
       })
     },
 
@@ -202,10 +289,8 @@ export default async function OpenCodeGoalPlugin(input: any) {
         }),
       }),
       opencode_goal_evidence_file: tool({
-        description: "Ask the host to verify a project file exists or contains exact text, then attach that evidence to a requirement.",
-        args: {
-          requirementID: tool.schema.string(),
-        },
+        description: "Ask the host to verify a predeclared project-file requirement.",
+        args: { requirementID: tool.schema.string() },
         execute: async (args: any, context: any) => await serialize(context.sessionID, async () => {
           let goal = await load(context.sessionID)
           if (!goal) return "No active goal."

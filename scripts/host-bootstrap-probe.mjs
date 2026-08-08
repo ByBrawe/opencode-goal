@@ -52,6 +52,11 @@ const env = {
   OPENCODE_DISABLE_AUTOUPDATE: "true",
   OPENCODE_PRINT_LOGS: "1",
   OPENCODE_LOG_LEVEL: "DEBUG",
+  OPENCODE_PURE: "true",
+  OPENCODE_DISABLE_DEFAULT_PLUGINS: "true",
+  OPENCODE_DISABLE_LSP_DOWNLOAD: "true",
+  OPENCODE_DISABLE_EXTERNAL_SKILLS: "true",
+  OPENCODE_DISABLE_EMBEDDED_WEB_UI: "true",
   CI: "true",
 }
 const child = spawn(binary, ["serve", "--hostname", "127.0.0.1", "--port", String(serverPort)], {
@@ -67,15 +72,16 @@ child.stderr?.on("data", append)
 
 try {
   await waitForTcp(serverPort, child, () => log)
+  console.log("clean probe: server reachable with pure/default-plugin/LSP-download disabled")
   const scoped = `http://127.0.0.1:${serverPort}/session?directory=${encodeURIComponent(workspace)}`
   const response = await fetch(scoped, { signal: AbortSignal.timeout(15_000) }).catch((error) => {
-    throw new Error(`clean instance bootstrap request failed: ${String(error)}\n${log}`)
+    throw new Error(`clean minimal instance bootstrap request failed: ${String(error)}\n${log}`)
   })
   const text = await response.text()
-  assert.equal(response.status, 200, `clean instance bootstrap returned ${response.status}: ${text}\n${log}`)
+  assert.equal(response.status, 200, `clean minimal instance bootstrap returned ${response.status}: ${text}\n${log}`)
   const parsed = JSON.parse(text)
   assert.ok(Array.isArray(parsed?.data ?? parsed), `clean session list was not an array: ${text}`)
-  console.log("clean OpenCode instance bootstrap probe passed")
+  console.log("clean minimal OpenCode instance bootstrap probe passed")
 } finally {
   child.kill()
   await rm(workspace, { recursive: true, force: true }).catch(() => undefined)

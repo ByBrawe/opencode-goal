@@ -345,6 +345,7 @@ async function main() {
   const provider = startProvider(targetPath)
   const providerPort = await provider.listen()
   let lastState = null
+  let commandTransportError = null
 
   await mkdir(pluginDir, { recursive: true })
   await seedConfigDependencies(projectConfig)
@@ -389,7 +390,7 @@ async function main() {
   server.stderr?.on("data", (chunk) => { serverLog = appendLog(serverLog, chunk) })
   const baseURL = `http://127.0.0.1:${port}`
   const directoryQuery = `directory=${encodeURIComponent(workspace)}`
-  const diagnostics = () => `provider=${JSON.stringify(provider.stats)}\nstate=${JSON.stringify(lastState, null, 2)}\nserver log:\n${serverLog}`
+  const diagnostics = () => `provider=${JSON.stringify(provider.stats)}\ncommandTransportError=${String(commandTransportError ?? "none")}\nstate=${JSON.stringify(lastState, null, 2)}\nserver log:\n${serverLog}`
 
   const api = async (pathname, init = {}) => {
     const separator = pathname.includes("?") ? "&" : "?"
@@ -419,6 +420,9 @@ async function main() {
       method: "POST",
       body: JSON.stringify({ agent: "build", model: "canary/canary", command: "goal", arguments: `${OBJECTIVE} --max-turns 8` }),
       signal: AbortSignal.timeout(60_000),
+    }).catch((error) => {
+      commandTransportError = error
+      return null
     })
 
     await waitFor(
@@ -453,6 +457,7 @@ async function main() {
     assert.equal(lastState.stalledTurns, 1, "the no-op turn should count as one stalled continuation")
     assert.equal(provider.stats.mutationWriteCalls, 1)
     assert.equal(provider.stats.noopWriteCalls, 1)
+    assert.equal(server.exitCode, null, `OpenCode server exited during progress assertions: ${diagnostics()}`)
 
     console.log(JSON.stringify({
       ok: true,
@@ -464,9 +469,10 @@ async function main() {
       progressRevision: lastState.progressRevision,
       progressFingerprints: lastState.progressFingerprints,
       stalledTurns: lastState.stalledTurns,
+      commandTransportError: commandTransportError ? String(commandTransportError) : null,
     }, null, 2))
 
-    void command.catch(() => undefined)
+    void command
   } finally {
     await stopProcess(server)
     await provider.close().catch(() => undefined)

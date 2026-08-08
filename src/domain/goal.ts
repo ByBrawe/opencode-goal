@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto"
-import type { FileRequirementInput, GoalBudget, GoalRequirement, GoalState, VerificationKind } from "./types.js"
+import type { FileRequirementInput, GoalBudget, GoalExecutionContext, GoalRequirement, GoalState, VerificationKind } from "./types.js"
 
 const DEFAULT_BUDGET: GoalBudget = {
   maxTurns: 30,
@@ -36,6 +36,7 @@ export function createGoal(input: {
   acceptance?: string[]
   checks?: string[]
   files?: FileRequirementInput[]
+  execution?: GoalExecutionContext
   budget?: Partial<GoalBudget>
   now?: number
 }): GoalState {
@@ -73,6 +74,7 @@ export function createGoal(input: {
     requirements,
     evidence: [],
     checks,
+    ...(input.execution ? { execution: input.execution } : {}),
     usage: { turns: 0, tokens: 0, cost: 0, runtimeMs: 0, seenMessageIDs: [] },
     budget: { ...DEFAULT_BUDGET, ...input.budget },
     progressRevision: 0,
@@ -89,6 +91,7 @@ export function editGoal(goal: GoalState, input: {
   acceptance?: string[]
   checks?: string[]
   files?: FileRequirementInput[]
+  execution?: GoalExecutionContext
   now?: number
 }): GoalState {
   const existingFiles = goal.requirements
@@ -100,6 +103,7 @@ export function editGoal(goal: GoalState, input: {
     ...(input.acceptance === undefined ? {} : { acceptance: input.acceptance }),
     checks: input.checks ?? goal.checks,
     files: input.files ?? existingFiles,
+    ...((input.execution ?? goal.execution) ? { execution: input.execution ?? goal.execution } : {}),
     budget: goal.budget,
     ...(input.now === undefined ? {} : { now: input.now }),
   })

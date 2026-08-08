@@ -85,6 +85,23 @@ async function waitForTcp(value, child, logs) {
   throw new Error(`clean probe server never became reachable\n${logs()}`)
 }
 
+async function fetchBootstrap(scoped, log) {
+  let lastError
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      const response = await fetch(scoped, { signal: AbortSignal.timeout(15_000) })
+      if (attempt > 1) console.log(`clean probe: lazy instance bootstrap recovered on attempt ${attempt}`)
+      return response
+    } catch (error) {
+      lastError = error
+      if (attempt === 2) break
+      console.warn("clean probe: first lazy instance bootstrap request timed out; retrying once")
+      await new Promise((resolve) => setTimeout(resolve, 250))
+    }
+  }
+  throw new Error(`clean instance bootstrap request failed after 2 bounded attempts: ${String(lastError)}\n${log()}`)
+}
+
 const workspace = await mkdtemp(path.join(os.tmpdir(), "opencode-clean-bootstrap-"))
 const serverPort = await port()
 const env = {
@@ -120,9 +137,7 @@ try {
     await waitForTcp(serverPort, child, () => log)
     console.log(`clean probe: server reachable using in-memory DB and runner HOME=${env.HOME ?? env.USERPROFILE ?? "unknown"}`)
     const scoped = `http://127.0.0.1:${serverPort}/session?directory=${encodeURIComponent(workspace)}`
-    const response = await fetch(scoped, { signal: AbortSignal.timeout(15_000) }).catch((error) => {
-      throw new Error(`clean instance bootstrap request failed after Config.Service succeeded: ${String(error)}\n${log}`)
-    })
+    const response = await fetchBootstrap(scoped, () => log)
     const text = await response.text()
     assert.equal(response.status, 200, `clean instance bootstrap returned ${response.status}: ${text}\n${log}`)
     const parsed = JSON.parse(text)

@@ -1,0 +1,44 @@
+name: PR4 Provider Patch
+
+on:
+  push:
+    branches: [ci/semantic-completion-canary]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ci/semantic-completion-canary
+      - name: Patch verifier request detection
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path("scripts/host-semantic-canary.mjs")
+          text = path.read_text()
+          old = '''    if (tools.has("opencode_goal_verifier_result")) {
+              const request = extractAuditRequest(text)
+          '''
+          new = '''    const isVerifierAudit = text.includes("Verification request:") && /"auditToken"\\s*:/.test(text)
+              if (isVerifierAudit) {
+              if (!tools.has("opencode_goal_verifier_result")) throw new Error("verifier audit is missing opencode_goal_verifier_result")
+              const request = extractAuditRequest(text)
+          '''
+          if old not in text:
+              raise SystemExit("expected verifier detection block not found")
+          path.write_text(text.replace(old, new, 1))
+      - name: Self-clean and commit
+        shell: bash
+        run: |
+          rm .github/workflows/pr4-provider-patch.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add scripts/host-semantic-canary.mjs .github/workflows/pr4-provider-patch.yml
+          git commit -m "ci: detect verifier requests by audit prompt"
+          git push origin HEAD:ci/semantic-completion-canary

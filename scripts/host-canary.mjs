@@ -141,6 +141,32 @@ function spawnOpenCode(args, options = {}) {
   return spawn(opencodeBin, args, { ...options, shell: isWindows, windowsHide: true })
 }
 
+async function runOpenCode(args, { cwd, env, timeoutMs = 60_000 }) {
+  return await new Promise((resolve, reject) => {
+    const child = spawnOpenCode(args, { cwd, env })
+    let stdout = ""
+    let stderr = ""
+    child.stdout?.on("data", (chunk) => { stdout = appendLog(stdout, chunk) })
+    child.stderr?.on("data", (chunk) => { stderr = appendLog(stderr, chunk) })
+    const timer = setTimeout(() => {
+      child.kill()
+      reject(new Error(`OpenCode command timed out: ${args.join(" ")}\nstdout:\n${stdout}\nstderr:\n${stderr}`))
+    }, timeoutMs)
+    child.once("error", (error) => {
+      clearTimeout(timer)
+      reject(error)
+    })
+    child.once("close", (code) => {
+      clearTimeout(timer)
+      if (code !== 0) {
+        reject(new Error(`OpenCode command exited ${code}: ${args.join(" ")}\nstdout:\n${stdout}\nstderr:\n${stderr}`))
+        return
+      }
+      resolve({ stdout, stderr })
+    })
+  })
+}
+
 async function goalFile(workspace) {
   const dir = path.join(workspace, ".opencode", "goals")
   try {
@@ -217,8 +243,14 @@ async function main() {
     XDG_DATA_HOME: path.join(home, ".local", "share"),
     XDG_CACHE_HOME: path.join(home, ".cache"),
     OPENCODE_DISABLE_AUTOUPDATE: "true",
+    OPENCODE_DB: ":memory:",
+    OPENCODE_DISABLE_LSP_DOWNLOAD: "true",
     CI: "true",
   }
+
+  const prewarm = await runOpenCode(["debug", "config"], { cwd: workspace, env, timeoutMs: 60_000 })
+  assert.match(prewarm.stdout, /\{[\s\S]*\}/, `OpenCode config prewarm returned no JSON\n${prewarm.stdout}\n${prewarm.stderr}`)
+  console.log("canary: OpenCode config/dependency prewarm completed")
 
   const port = await reservePort()
   const server = spawnOpenCode(["serve", "--hostname", "127.0.0.1", "--port", String(port)], { cwd: workspace, env })

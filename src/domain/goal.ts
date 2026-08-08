@@ -46,11 +46,10 @@ export function createGoal(input: {
   const acceptance = (input.acceptance ?? []).map((item) => item.trim()).filter(Boolean)
   const checks = (input.checks ?? []).map((item) => item.trim()).filter(Boolean)
   const files = (input.files ?? []).filter((item) => item.file.trim())
-  const requirements: GoalRequirement[] = []
+  const requirements: GoalRequirement[] = [
+    requirement({ text: `Objective achieved: ${objective}`, verification: "semantic" }),
+  ]
 
-  if (acceptance.length === 0 && checks.length === 0 && files.length === 0) {
-    requirements.push(requirement({ text: `Objective achieved: ${objective}`, verification: "semantic" }))
-  }
   for (const item of acceptance) requirements.push(requirement({ text: item, verification: "semantic" }))
   for (const command of checks) requirements.push(requirement({ text: `Verification command passes: ${command}`, verification: "command", command }))
   for (const item of files) {

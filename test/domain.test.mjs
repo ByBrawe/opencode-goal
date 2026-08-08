@@ -51,11 +51,13 @@ test("one passing check cannot bypass another semantic acceptance requirement", 
 
 test("a newer passing host verification supersedes an older failure", () => {
   let goal = createGoal({ sessionID: "s1", objective: "tests green", checks: ["npm test"] })
-  const req = goal.requirements[0]
+  const req = goal.requirements.find((item) => item.verification === "command")
   goal = recordCommandEvidence(goal, { command: "npm test", exitCode: 1, output: "fail", requirementIDs: [req.id], now: 10 })
   goal = recordCommandEvidence(goal, { command: "npm test", exitCode: 0, output: "pass", requirementIDs: [req.id], now: 20 })
   goal = proveRequirementsFromEvidence(goal, goal.evidence.at(-1).id, 20)
-  assert.equal(auditCompletion(goal).ok, true)
+  const audit = auditCompletion(goal)
+  assert.equal(goal.requirements.find((item) => item.id === req.id).status, "proven")
+  assert.equal(audit.reasons.some((reason) => reason.includes("current host verification")), false)
 })
 
 test("progress notes do not count as host-observed progress", () => {
@@ -98,4 +100,14 @@ test("host-observed mutating activity resets stalled-turn accounting", () => {
   goal = closeObservedTurn(goal)
   assert.equal(goal.stalledTurns, 0)
   assert.equal(goal.status, "active")
+})
+
+test("explicit checks never remove the broad objective from completion scope", () => {
+  const goal = createGoal({ sessionID: "s1", objective: "fix the production race", checks: ["npm test"] })
+  const objective = goal.requirements.find((item) => item.verification === "semantic" && item.text.includes("fix the production race"))
+  const check = goal.requirements.find((item) => item.verification === "command" && item.command === "npm test")
+  assert.ok(objective)
+  assert.ok(check)
+  assert.equal(objective.required, true)
+  assert.equal(check.required, true)
 })

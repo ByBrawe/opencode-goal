@@ -5,6 +5,8 @@ import { GoalStore } from "./persistence/store.js"
 import { accountAssistantUsage } from "./runtime/accounting.js"
 import { reportBlocker } from "./runtime/blocker.js"
 import { runConfiguredChecks } from "./runtime/checks.js"
+import { verifyDeclaredFiles } from "./verification/contracts.js"
+import { createSemanticVerifierRuntime } from "./opencode/verifier.js"
 import { addProgressNote, closeObservedTurn, markHostActivity } from "./runtime/progress.js"
 import { completeGoal } from "./verification/audit.js"
 import { proveRequirementsFromEvidence, recordFileEvidence } from "./verification/evidence.js"
@@ -34,23 +36,18 @@ async function sdkPrompt(client: any, sessionID: string, text: string, execution
     ...(execution?.model ? { model: execution.model } : {}),
     ...(execution?.variant ? { variant: execution.variant } : {}),
   }
-  const fn = client.session.prompt.bind(client.session)
-  try { return await fn({ path: { id: sessionID }, body }) } catch {}
-  try { return await fn({ path: { sessionID }, body }) } catch {}
-  return await fn({ sessionID, ...body })
+  return await client.session.prompt({ path: { id: sessionID }, body })
 }
 
 async function sdkAbort(client: any, sessionID: string) {
-  const fn = client.session.abort?.bind(client.session)
-  if (!fn) return
-  try { return await fn({ path: { id: sessionID } }) } catch {}
-  try { return await fn({ path: { sessionID } }) } catch {}
-  try { return await fn({ sessionID }) } catch {}
+  if (!client.session.abort) return
+  try { await client.session.abort({ path: { id: sessionID } }) } catch {}
 }
 
 export default async function OpenCodeGoalPlugin(input: any) {
   const { client, directory } = input
   const store = new GoalStore(directory)
+  const semanticVerifier = createSemanticVerifierRuntime(client, directory)
   const dispatching = new Map<string, number>()
   const deferredIdle = new Set<string>()
   const ownedMessages = new Map<string, Array<{ text: string; expiresAt: number }>>()
@@ -133,6 +130,7 @@ export default async function OpenCodeGoalPlugin(input: any) {
 
   return {
     config: async (config: any) => {
+      semanticVerifier.configure(config)
       config.command ||= {}
       config.command.goal ||= {
         description: "Set or manage a persistent evidence-verified goal.",
@@ -270,6 +268,7 @@ export default async function OpenCodeGoalPlugin(input: any) {
     },
 
     tool: {
+      opencode_goal_verifier_result: semanticVerifier.resultTool,
       opencode_goal_get: tool({
         description: "Read the current persistent goal and its verification state.",
         args: {},
@@ -302,16 +301,37 @@ export default async function OpenCodeGoalPlugin(input: any) {
         }),
       }),
       opencode_goal_complete: tool({
-        description: "Attempt verified completion. Configured checks run on the host; completion fails closed unless every required item has current trusted evidence.",
+        description: "Attempt verified completion. Host contracts run independently and semantic requirements are audited by a read-only verifier. Completion fails closed.",
         args: { summary: tool.schema.string() },
-        execute: async (args: any, context: any) => await serialize(context.sessionID, async () => {
-          let goal = await load(context.sessionID)
-          if (!goal) return "No active goal."
-          goal = await runConfiguredChecks(goal, directory)
-          const result = completeGoal(goal, args.summary)
-          await save(result.goal)
-          return result.audit.ok ? "Goal completed with verified evidence." : `Completion rejected:\n- ${result.audit.reasons.join("\n- ")}`
-        }),
+        execute: async (args: any, context: any) => {
+          const snapshot = await serialize(context.sessionID, async () => await load(context.sessionID))
+          if (!snapshot) return "No active goal."
+          if (snapshot.status !== "active") return `Completion rejected: goal status is ${snapshot.status}.`
+          let evaluated = await runConfiguredChecks(snapshot, directory)
+          evaluated = await verifyDeclaredFiles(evaluated, directory)
+          try {
+            evaluated = await semanticVerifier.verify(context.sessionID, evaluated)
+          } catch (error) {
+            return `Completion rejected: independent semantic verification failed closed (${String(error)}).`
+          }
+          return await serialize(context.sessionID, async () => {
+            const latest = await load(context.sessionID)
+            if (!latest || latest.id !== snapshot.id || latest.revision !== snapshot.revision || latest.status !== "active") {
+              return "Completion rejected: goal changed, paused, or stopped while verification was running."
+            }
+            const latestEvidenceIDs = new Set(latest.evidence.map((item) => item.id))
+            const merged: GoalState = {
+              ...latest,
+              requirements: evaluated.requirements,
+              evidence: [...latest.evidence, ...evaluated.evidence.filter((item) => !latestEvidenceIDs.has(item.id))].slice(-500),
+              progressRevision: Math.max(latest.progressRevision, evaluated.progressRevision),
+              updatedAt: Date.now(),
+            }
+            const result = completeGoal(merged, args.summary)
+            await save(result.goal)
+            return result.audit.ok ? "Goal completed with host and verifier-backed evidence." : `Completion rejected:\n- ${result.audit.reasons.join("\n- ")}`
+          })
+        },
       }),
       opencode_goal_blocked: tool({
         description: "Report a genuine blocker. The same blocker must recur on three distinct goal turns before the goal becomes blocked.",

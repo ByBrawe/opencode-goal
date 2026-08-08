@@ -3,7 +3,7 @@ import type { CompletionAudit, EvidenceRecord, GoalState } from "../domain/types
 function latestVerificationEvidence(goal: GoalState): EvidenceRecord[] {
   const latest = new Map<string, EvidenceRecord>()
   for (const item of goal.evidence) {
-    if (item.goalRevision !== goal.revision || item.trust !== "host" || item.kind === "agent_note") continue
+    if (item.goalRevision !== goal.revision || !["host", "verifier"].includes(item.trust) || item.kind === "agent_note") continue
     const key = `${item.kind}\u0000${item.source ?? ""}\u0000${[...item.requirementIDs].sort().join(",")}`
     const previous = latest.get(key)
     if (!previous || item.createdAt >= previous.createdAt) latest.set(key, item)
@@ -36,7 +36,7 @@ export function auditCompletion(goal: GoalState): CompletionAudit {
   }
 
   const currentFailures = latestVerificationEvidence(goal).filter((item) => item.passed === false)
-  if (currentFailures.length > 0) reasons.push(`${currentFailures.length} current host verification result(s) are failing`)
+  if (currentFailures.length > 0) reasons.push(`${currentFailures.length} current verification result(s) are failing`)
 
   return { ok: reasons.length === 0, reasons, missingRequirementIDs: [...new Set(missingRequirementIDs)] }
 }

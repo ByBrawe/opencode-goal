@@ -51,7 +51,7 @@ export function applySemanticVerifierResults(
     ]
     const evidence: EvidenceRecord = {
       id: randomUUID(),
-      kind: "runtime",
+      kind: evidenceItems.length > 0 ? "file" : "runtime",
       trust: "verifier",
       summary: `Independent verifier: ${result.verdict}. ${reason}${refs.length ? ` Evidence: ${refs.join("; ")}` : ""}`,
       createdAt: now,

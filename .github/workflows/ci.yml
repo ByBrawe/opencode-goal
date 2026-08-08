@@ -72,3 +72,6 @@ jobs:
         run: npx --no-install opencode --version
       - name: Run real-host lifecycle canary
         run: npm run canary:host
+        env:
+          OPENCODE_PRINT_LOGS: "1"
+          OPENCODE_LOG_LEVEL: DEBUG

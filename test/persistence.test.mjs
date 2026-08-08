@@ -26,11 +26,11 @@ test("host file evidence uses predeclared contract and can prove it", async () =
   try {
     await writeFile(path.join(root, "README.md"), "Verified Goal Mode\n", "utf8")
     let goal = createGoal({ sessionID: "s1", objective: "docs", files: [{ file: "README.md", contains: "Goal Mode" }] })
-    const req = goal.requirements[0]
+    const req = goal.requirements.find((item) => item.verification === "file")
     const checked = await recordFileEvidence(goal, { root, requirementID: req.id })
     assert.equal(checked.evidence.passed, true)
     goal = proveRequirementsFromEvidence(checked.goal, checked.evidence.id)
-    assert.equal(goal.requirements[0].status, "proven")
+    assert.equal(goal.requirements.find((item) => item.id === req.id).status, "proven")
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -40,7 +40,8 @@ test("file verification contract cannot escape project root", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-path-"))
   try {
     const goal = createGoal({ sessionID: "s1", objective: "bad", files: [{ file: "../secret.txt" }] })
-    await assert.rejects(() => recordFileEvidence(goal, { root, requirementID: goal.requirements[0].id }), /escapes the project root/)
+    const req = goal.requirements.find((item) => item.verification === "file")
+    await assert.rejects(() => recordFileEvidence(goal, { root, requirementID: req.id }), /escapes the project root/)
   } finally {
     await rm(root, { recursive: true, force: true })
   }

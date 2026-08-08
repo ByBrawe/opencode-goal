@@ -130,32 +130,6 @@ function spawnOpenCode(args, options = {}) {
   })
 }
 
-async function runOpenCode(args, { cwd, env, timeoutMs = 90_000 } = {}) {
-  return await new Promise((resolve, reject) => {
-    const child = spawnOpenCode(args, { cwd, env })
-    let stdout = ""
-    let stderr = ""
-    child.stdout?.on("data", (chunk) => { stdout = ringAppend(stdout, chunk) })
-    child.stderr?.on("data", (chunk) => { stderr = ringAppend(stderr, chunk) })
-    const timer = setTimeout(() => {
-      child.kill()
-      reject(new Error(`OpenCode command timed out: ${args.join(" ")}\nstdout:\n${stdout}\nstderr:\n${stderr}`))
-    }, timeoutMs)
-    child.once("error", (error) => {
-      clearTimeout(timer)
-      reject(error)
-    })
-    child.once("close", (code) => {
-      clearTimeout(timer)
-      if (code !== 0) {
-        reject(new Error(`OpenCode exited ${code}: ${args.join(" ")}\nstdout:\n${stdout}\nstderr:\n${stderr}`))
-        return
-      }
-      resolve({ stdout, stderr })
-    })
-  })
-}
-
 async function goalStateFile(workspace) {
   const dir = path.join(workspace, ".opencode", "goals")
   try {
@@ -175,7 +149,7 @@ async function readGoalState(workspace) {
   return JSON.parse(await readFile(file, "utf8"))
 }
 
-async function waitForState(workspace, predicate, description, timeoutMs = 45_000) {
+async function waitForState(workspace, predicate, description, timeoutMs = 30_000) {
   const deadline = Date.now() + timeoutMs
   let last = null
   while (Date.now() < deadline) {
@@ -186,7 +160,7 @@ async function waitForState(workspace, predicate, description, timeoutMs = 45_00
   throw new Error(`timed out waiting for ${description}. Last state: ${JSON.stringify(last, null, 2)}`)
 }
 
-async function waitForNoGoalState(workspace, timeoutMs = 15_000) {
+async function waitForNoGoalState(workspace, timeoutMs = 10_000) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     if (!(await goalStateFile(workspace))) return
@@ -196,8 +170,6 @@ async function waitForNoGoalState(workspace, timeoutMs = 15_000) {
 }
 
 async function main() {
-  await runOpenCode(["--version"], { cwd: repoRoot, env: process.env, timeoutMs: 30_000 })
-
   const provider = startDeterministicProvider()
   const providerPort = await provider.listen()
   const workspace = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-host-canary-"))
@@ -255,26 +227,50 @@ async function main() {
   server.stdout?.on("data", (chunk) => { serverLog = ringAppend(serverLog, chunk) })
   server.stderr?.on("data", (chunk) => { serverLog = ringAppend(serverLog, chunk) })
 
-  const attach = `http://127.0.0.1:${serverPort}`
-  const goalRunArgs = (argument) => [
-    "run",
-    "--attach", attach,
-    "--dir", workspace,
-    "--model", "canary/canary",
-    "--agent", "build",
-    "--command", "goal",
-    "--title", "opencode-goal host canary",
-    "--format", "json",
-    argument,
-  ]
+  const baseURL = `http://127.0.0.1:${serverPort}`
+  const headers = {
+    "content-type": "application/json",
+    "x-opencode-directory": encodeURIComponent(workspace),
+  }
+  const api = async (pathname, init = {}) => {
+    const response = await fetch(`${baseURL}${pathname}`, {
+      ...init,
+      headers: { ...headers, ...(init.headers ?? {}) },
+      signal: AbortSignal.timeout(60_000),
+    })
+    const text = await response.text()
+    if (!response.ok) {
+      throw new Error(`OpenCode API ${init.method ?? "GET"} ${pathname} returned ${response.status}: ${text}\nserver log:\n${serverLog}`)
+    }
+    if (!text) return null
+    try { return JSON.parse(text) } catch { return text }
+  }
 
   try {
     await waitForTcp(serverPort, server, () => serverLog)
 
-    await runOpenCode(goalRunArgs("ship canary --max-turns 8"), { cwd: workspace, env: isolatedEnv })
+    const createdSessionPayload = await api("/session", {
+      method: "POST",
+      body: JSON.stringify({ title: "opencode-goal host canary" }),
+    })
+    const session = createdSessionPayload?.data ?? createdSessionPayload
+    const sessionID = String(session?.id ?? "")
+    assert.ok(sessionID, `OpenCode did not create a canary session: ${JSON.stringify(createdSessionPayload)}`)
+
+    const command = async (argumentsText) => await api(`/session/${encodeURIComponent(sessionID)}/command`, {
+      method: "POST",
+      body: JSON.stringify({
+        agent: "build",
+        model: "canary/canary",
+        command: "goal",
+        arguments: argumentsText,
+      }),
+    })
+
+    await command("ship canary --max-turns 8")
     const created = await waitForState(
       workspace,
-      (state) => state.objective === "ship canary" && state.status === "paused" && state.stalledTurns >= 3,
+      (state) => state.sessionID === sessionID && state.objective === "ship canary" && state.status === "paused" && state.stalledTurns >= 3,
       "real-host create + idle continuation + no-progress pause",
     )
     assert.equal(created.revision, 1)
@@ -283,21 +279,22 @@ async function main() {
     const requestsAfterCreate = provider.stats.chatRequests
     assert.ok(requestsAfterCreate >= 3, `expected initial turn plus automatic continuations, got ${requestsAfterCreate} provider requests`)
 
-    await runOpenCode(goalRunArgs("edit ship canary v2"), { cwd: workspace, env: isolatedEnv })
+    await command("edit ship canary v2")
     const edited = await waitForState(
       workspace,
-      (state) => state.revision === 2 && state.objective === "ship canary v2" && state.status === "paused" && state.stalledTurns >= 3,
-      "real-host goal edit + resumed continuation lifecycle",
+      (state) => state.sessionID === sessionID && state.revision === 2 && state.objective === "ship canary v2" && state.status === "paused" && state.stalledTurns >= 3,
+      "real-host goal edit + renewed continuation lifecycle",
     )
     assert.equal(edited.revision, 2)
     assert.ok(provider.stats.chatRequests > requestsAfterCreate, "goal edit should trigger fresh model work")
 
-    await runOpenCode(goalRunArgs("clear"), { cwd: workspace, env: isolatedEnv })
+    await command("clear")
     await waitForNoGoalState(workspace)
 
     console.log(JSON.stringify({
       ok: true,
       platform: process.platform,
+      sessionID,
       providerRequests: provider.stats.chatRequests,
       providerPaths: [...new Set(provider.stats.paths)],
       createState: { status: created.status, stalledTurns: created.stalledTurns, turns: created.usage.turns },

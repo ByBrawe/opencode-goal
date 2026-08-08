@@ -10,7 +10,7 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const isWindows = process.platform === "win32"
-const OBJECTIVE = "real PatchPart progress canary"
+const OBJECTIVE = "real host progress canary"
 const TARGET_NAME = "goal-progress-canary.txt"
 const TARGET_CONTENT = "REAL_PATCH_PROGRESS\n"
 
@@ -359,9 +359,9 @@ async function main() {
     provider: {
       canary: {
         npm: "@ai-sdk/openai-compatible",
-        name: "Deterministic Patch Progress Canary",
+        name: "Deterministic Host Progress Canary",
         options: { baseURL: `http://127.0.0.1:${providerPort}/v1`, apiKey: "canary-key" },
-        models: { canary: { name: "Deterministic Patch Progress Canary", limit: { context: 100000, output: 4096 } } },
+        models: { canary: { name: "Deterministic Host Progress Canary", limit: { context: 100000, output: 4096 } } },
       },
     },
   }, null, 2)}\n`)
@@ -426,7 +426,7 @@ async function main() {
         lastState = await readGoal(workspace)
         return provider.stats.mutationWriteCalls === 1 && (lastState?.progressFingerprints?.length ?? 0) === 1
       },
-      "real file mutation to produce one revision-owned PatchPart fingerprint",
+      "real file mutation to produce one revision-owned host fingerprint",
       diagnostics,
     )
     const afterMutation = await readGoal(workspace)
@@ -434,7 +434,7 @@ async function main() {
     assert.equal(afterMutation.progressRevision, 1, `real mutation should increment progress once: ${JSON.stringify(afterMutation.progressFingerprints)}`)
     assert.equal(afterMutation.progressFingerprints.length, 1)
     const firstFingerprint = afterMutation.progressFingerprints[0]
-    assert.match(firstFingerprint, /^patch:/)
+    assert.match(firstFingerprint, /^file:goal-progress-canary\.txt:[a-f0-9]{64}$/)
 
     await waitFor(
       async () => {
@@ -449,7 +449,7 @@ async function main() {
 
     assert.equal(await readFile(targetPath, "utf8"), TARGET_CONTENT)
     assert.equal(lastState.progressRevision, 1, "writing identical content must not count as new progress")
-    assert.deepEqual(lastState.progressFingerprints, [firstFingerprint], "no-op write must not create a new patch fingerprint")
+    assert.deepEqual(lastState.progressFingerprints, [firstFingerprint], "no-op write must not create a new host-progress fingerprint")
     assert.equal(lastState.stalledTurns, 1, "the no-op turn should count as one stalled continuation")
     assert.equal(provider.stats.mutationWriteCalls, 1)
     assert.equal(provider.stats.noopWriteCalls, 1)

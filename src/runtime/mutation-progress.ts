@@ -12,6 +12,11 @@ interface Candidate {
   deleted?: boolean
 }
 
+interface SafePath {
+  absolute: string
+  relative: string
+}
+
 function asString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined
 }
@@ -41,21 +46,34 @@ function candidates(tool: string, args: any, metadata: any): Candidate[] {
   return []
 }
 
-function lexicalInside(root: string, candidate: string): { absolute: string; relative: string } | null {
-  const base = path.resolve(root)
-  const absolute = path.isAbsolute(candidate) ? path.resolve(candidate) : path.resolve(base, candidate)
-  const relative = path.relative(base, absolute)
+function relativeInside(realRoot: string, realCandidate: string): string | null {
+  const relative = path.relative(realRoot, realCandidate)
   if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) return null
-  return { absolute, relative: relative.split(path.sep).join("/") }
+  return relative.split(path.sep).join("/")
 }
 
-async function realInside(root: string, absolute: string): Promise<boolean> {
+async function canonicalInside(root: string, candidate: string, deleted = false): Promise<SafePath | null> {
   try {
-    const [realRoot, realFile] = await Promise.all([fs.realpath(root), fs.realpath(absolute)])
-    const relative = path.relative(realRoot, realFile)
-    return Boolean(relative) && !relative.startsWith("..") && !path.isAbsolute(relative)
+    const realRoot = await fs.realpath(root)
+    const unresolved = path.isAbsolute(candidate) ? candidate : path.resolve(root, candidate)
+
+    if (!deleted) {
+      // Resolve the file itself before containment. On Windows this normalizes
+      // 8.3 aliases such as RUNNER~1 to the same canonical path OpenCode uses,
+      // while also preventing symlinks inside the project from escaping it.
+      const absolute = await fs.realpath(unresolved)
+      const relative = relativeInside(realRoot, absolute)
+      return relative ? { absolute, relative } : null
+    }
+
+    // A deleted file cannot be realpath'ed. Canonicalize its still-existing
+    // parent instead, then reconstruct the deleted project-local path.
+    const realParent = await fs.realpath(path.dirname(unresolved))
+    const absolute = path.join(realParent, path.basename(unresolved))
+    const relative = relativeInside(realRoot, absolute)
+    return relative ? { absolute, relative } : null
   } catch {
-    return false
+    return null
   }
 }
 
@@ -70,7 +88,7 @@ export async function collectMutationFingerprints(input: {
   const seen = new Set<string>()
 
   for (const item of found) {
-    const safe = lexicalInside(input.root, item.filePath)
+    const safe = await canonicalInside(input.root, item.filePath, item.deleted === true)
     if (!safe || seen.has(safe.relative)) continue
     seen.add(safe.relative)
 
@@ -88,7 +106,6 @@ export async function collectMutationFingerprints(input: {
       continue
     }
 
-    if (!(await realInside(input.root, safe.absolute))) continue
     let bytes: Buffer
     try {
       bytes = await fs.readFile(safe.absolute)

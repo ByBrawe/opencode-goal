@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import net from "node:net"
 import { spawn } from "node:child_process"
-import { mkdtemp, mkdir, rm } from "node:fs/promises"
+import { mkdtemp, rm } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -39,16 +39,9 @@ async function waitForTcp(value, child, logs) {
 }
 
 const workspace = await mkdtemp(path.join(os.tmpdir(), "opencode-clean-bootstrap-"))
-const home = path.join(workspace, ".home")
-await mkdir(home, { recursive: true })
 const serverPort = await port()
 const env = {
   ...process.env,
-  HOME: home,
-  USERPROFILE: home,
-  XDG_CONFIG_HOME: path.join(home, ".config"),
-  XDG_DATA_HOME: path.join(home, ".local", "share"),
-  XDG_CACHE_HOME: path.join(home, ".cache"),
   OPENCODE_DISABLE_AUTOUPDATE: "true",
   OPENCODE_PRINT_LOGS: "1",
   OPENCODE_LOG_LEVEL: "DEBUG",
@@ -72,16 +65,16 @@ child.stderr?.on("data", append)
 
 try {
   await waitForTcp(serverPort, child, () => log)
-  console.log("clean probe: server reachable with pure/default-plugin/LSP-download disabled")
+  console.log(`clean probe: server reachable using runner HOME=${env.HOME ?? env.USERPROFILE ?? "unknown"}`)
   const scoped = `http://127.0.0.1:${serverPort}/session?directory=${encodeURIComponent(workspace)}`
   const response = await fetch(scoped, { signal: AbortSignal.timeout(15_000) }).catch((error) => {
-    throw new Error(`clean minimal instance bootstrap request failed: ${String(error)}\n${log}`)
+    throw new Error(`clean runner-home instance bootstrap request failed: ${String(error)}\n${log}`)
   })
   const text = await response.text()
-  assert.equal(response.status, 200, `clean minimal instance bootstrap returned ${response.status}: ${text}\n${log}`)
+  assert.equal(response.status, 200, `clean runner-home instance bootstrap returned ${response.status}: ${text}\n${log}`)
   const parsed = JSON.parse(text)
   assert.ok(Array.isArray(parsed?.data ?? parsed), `clean session list was not an array: ${text}`)
-  console.log("clean minimal OpenCode instance bootstrap probe passed")
+  console.log("clean runner-home OpenCode instance bootstrap probe passed")
 } finally {
   child.kill()
   await rm(workspace, { recursive: true, force: true }).catch(() => undefined)

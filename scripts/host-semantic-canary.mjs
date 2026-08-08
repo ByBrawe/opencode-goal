@@ -273,7 +273,9 @@ function startProvider(readPath) {
       return
     }
 
-    if (tools.has("opencode_goal_verifier_result")) {
+    const isVerifierAudit = text.includes("Verification request:") && /"auditToken"\s*:/.test(text)
+    if (isVerifierAudit) {
+      if (!tools.has("opencode_goal_verifier_result")) throw new Error("verifier audit is missing opencode_goal_verifier_result")
       const request = extractAuditRequest(text)
       if (tools.has("read") && !priorTools.includes("read")) {
         stats.verifierReadCalls += 1

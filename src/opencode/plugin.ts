@@ -171,7 +171,7 @@ export default async function OpenCodeGoalPlugin(input: any) {
         }
         if (parsed.action === "pause") {
           if (goal) goal = await save(pauseGoal(goal))
-          if (ownership.activeOwner(event.sessionID)) abortControl = "pause"
+          if (ownership.activeOwner(event.sessionID) || dispatching.has(event.sessionID)) abortControl = "pause"
           ;(output as any).noReply = true
           markCommandOutputOwned(event.sessionID, output, `${formatStatus(goal)}\nRespond only with OK.`)
           return
@@ -182,7 +182,7 @@ export default async function OpenCodeGoalPlugin(input: any) {
           return
         }
         if (parsed.action === "clear") {
-          if (ownership.activeOwner(event.sessionID)) abortControl = "pause"
+          if (ownership.activeOwner(event.sessionID) || dispatching.has(event.sessionID)) abortControl = "pause"
           await store.clear(event.sessionID)
           ;(output as any).noReply = true
           markCommandOutputOwned(event.sessionID, output, "Goal cleared. Respond only with OK.")
@@ -200,7 +200,7 @@ export default async function OpenCodeGoalPlugin(input: any) {
             ...(parsed.files.length ? { files: parsed.files } : {}),
             ...(execution ? { execution } : {}),
           })
-          if (sameGoalTurn(ownership.activeOwner(event.sessionID), previousOwner)) abortControl = "edit"
+          if (sameGoalTurn(ownership.activeOwner(event.sessionID), previousOwner) || dispatching.has(event.sessionID)) abortControl = "edit"
         } else {
           if (goal && goal.status !== "completed") throw new Error("An unfinished goal already exists. Use /goal edit, /goal clear, or complete it first.")
           goal = createGoal({

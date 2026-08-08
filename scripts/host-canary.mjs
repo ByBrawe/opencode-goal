@@ -15,6 +15,18 @@ function ringAppend(current, chunk, limit = 40_000) {
   return (current + String(chunk)).slice(-limit)
 }
 
+async function seedConfigDependencies(dir) {
+  await mkdir(path.join(dir, "node_modules"), { recursive: true })
+  const dependencies = { "@opencode-ai/plugin": "*" }
+  await writeFile(path.join(dir, "package.json"), `${JSON.stringify({ private: true, dependencies }, null, 2)}\n`, "utf8")
+  await writeFile(
+    path.join(dir, "package-lock.json"),
+    `${JSON.stringify({ name: "opencode-goal-canary-config", lockfileVersion: 3, requires: true, packages: { "": { dependencies } } }, null, 2)}\n`,
+    "utf8",
+  )
+  await writeFile(path.join(dir, ".gitignore"), "node_modules\npackage.json\npackage-lock.json\nbun.lock\n.gitignore\n", "utf8")
+}
+
 async function reservePort() {
   return await new Promise((resolve, reject) => {
     const server = net.createServer()
@@ -174,9 +186,13 @@ async function main() {
   const providerPort = await provider.listen()
   const workspace = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-host-canary-"))
   const home = path.join(workspace, ".home")
-  const pluginDir = path.join(workspace, ".opencode", "plugins")
+  const projectConfigDir = path.join(workspace, ".opencode")
+  const globalConfigDir = path.join(home, ".config", "opencode")
+  const pluginDir = path.join(projectConfigDir, "plugins")
   await mkdir(pluginDir, { recursive: true })
   await mkdir(home, { recursive: true })
+  await seedConfigDependencies(projectConfigDir)
+  await seedConfigDependencies(globalConfigDir)
 
   const pluginEntry = pathToFileURL(path.join(repoRoot, "dist", "index.js")).href
   await writeFile(

@@ -1,0 +1,258 @@
+import { tool } from "@opencode-ai/plugin/tool"
+import { createGoal, editGoal, pauseGoal, resumeGoal } from "./domain/goal.js"
+import type { GoalState } from "./domain/types.js"
+import { GoalStore } from "./persistence/store.js"
+import { accountAssistantUsage } from "./runtime/accounting.js"
+import { reportBlocker } from "./runtime/blocker.js"
+import { runConfiguredChecks } from "./runtime/checks.js"
+import { addProgressNote, closeObservedTurn } from "./runtime/progress.js"
+import { completeGoal } from "./verification/audit.js"
+import { proveRequirementsFromEvidence, recordFileEvidence } from "./verification/evidence.js"
+import { parseGoalCommand } from "./opencode/command.js"
+import { compactionContext, continuationPrompt } from "./opencode/prompt.js"
+
+const dispatching = new Map<string, number>()
+const pluginOwnedUserMessageUntil = new Map<string, number>()
+const sessionLocks = new Map<string, Promise<unknown>>()
+
+function replaceParts(parts: any[], text: string) {
+  parts.splice(0, parts.length, { type: "text", text })
+}
+
+function formatStatus(goal: GoalState | null): string {
+  if (!goal) return "No active goal."
+  const req = goal.requirements.map((item, i) => `${i + 1}. [${item.status}] ${item.text}`).join("\n")
+  return `Goal: ${goal.objective}\nStatus: ${goal.status}\nRevision: ${goal.revision}\nUsage: ${goal.usage.turns} turns, ${goal.usage.tokens} tokens, cost ${goal.usage.cost.toFixed(4)}\nRequirements:\n${req}`
+}
+
+async function sdkPrompt(client: any, sessionID: string, text: string) {
+  const body = { parts: [{ type: "text", text }] }
+  const fn = client.session.prompt.bind(client.session)
+  try { return await fn({ path: { id: sessionID }, body }) } catch {}
+  try { return await fn({ path: { sessionID }, body }) } catch {}
+  return await fn({ sessionID, ...body })
+}
+
+function serialize<T>(sessionID: string, fn: () => Promise<T>): Promise<T> {
+  const previous = sessionLocks.get(sessionID) ?? Promise.resolve()
+  const next = previous.catch(() => undefined).then(fn)
+  sessionLocks.set(sessionID, next)
+  return next.finally(() => { if (sessionLocks.get(sessionID) === next) sessionLocks.delete(sessionID) })
+}
+
+export default async function OpenCodeGoalPlugin(input: any) {
+  const { client, directory } = input
+  const store = new GoalStore(directory)
+
+  async function load(sessionID: string) { return await store.load(sessionID) }
+  async function save(goal: GoalState) { await store.save(goal); return goal }
+
+  async function continueIfActive(sessionID: string) {
+    await serialize(sessionID, async () => {
+      let goal = await load(sessionID)
+      if (!goal || goal.status !== "active") return
+      if (dispatching.has(sessionID)) return
+      goal = closeObservedTurn(goal)
+      await save(goal)
+      if (goal.status !== "active") return
+      const token = Date.now() + Math.random()
+      dispatching.set(sessionID, token)
+      pluginOwnedUserMessageUntil.set(sessionID, Date.now() + 10_000)
+      try {
+        await sdkPrompt(client, sessionID, continuationPrompt(goal))
+      } catch (error) {
+        const latest = await load(sessionID)
+        if (latest?.status === "active") await save(pauseGoal(latest, `Continuation dispatch failed: ${String(error)}`))
+      } finally {
+        if (dispatching.get(sessionID) === token) dispatching.delete(sessionID)
+      }
+    })
+  }
+
+  return {
+    config: async (config: any) => {
+      config.command ||= {}
+      config.command.goal ||= {
+        description: "Set or manage a persistent evidence-verified goal.",
+        template: "$ARGUMENTS",
+        agent: "build",
+      }
+    },
+
+    "command.execute.before": async (event: any, output: any) => {
+      if (event.command !== "goal") return
+      await serialize(event.sessionID, async () => {
+        const parsed = parseGoalCommand(event.arguments ?? "")
+        let goal = await load(event.sessionID)
+        if (parsed.action === "status") {
+          ;(output as any).noReply = true
+          replaceParts(output.parts, `${formatStatus(goal)}\nRespond with this status only; do not perform work.`)
+          return
+        }
+        if (parsed.action === "pause") {
+          if (goal) goal = await save(pauseGoal(goal))
+          ;(output as any).noReply = true
+          replaceParts(output.parts, `${formatStatus(goal)}\nRespond only with OK.`)
+          return
+        }
+        if (parsed.action === "resume") {
+          if (goal) goal = await save(resumeGoal(goal))
+          replaceParts(output.parts, goal ? continuationPrompt(goal) : "No goal exists. Respond only with that fact.")
+          return
+        }
+        if (parsed.action === "clear") {
+          await store.clear(event.sessionID)
+          ;(output as any).noReply = true
+          replaceParts(output.parts, "Goal cleared. Respond only with OK.")
+          return
+        }
+        if (!parsed.objective) throw new Error("Usage: /goal <objective> [--accept \"criterion\"] [--check \"command\"]")
+        if (parsed.action === "edit") {
+          if (!goal) throw new Error("No goal exists to edit")
+          goal = editGoal(goal, {
+            objective: parsed.objective,
+            ...(parsed.acceptance.length ? { acceptance: parsed.acceptance } : {}),
+            ...(parsed.checks.length ? { checks: parsed.checks } : {}),
+            ...(parsed.files.length ? { files: parsed.files } : {}),
+          })
+        } else {
+          if (goal && goal.status !== "completed") throw new Error("An unfinished goal already exists. Use /goal edit, /goal clear, or complete it first.")
+          goal = createGoal({
+            sessionID: event.sessionID,
+            objective: parsed.objective,
+            acceptance: parsed.acceptance,
+            checks: parsed.checks,
+            files: parsed.files,
+            budget: {
+              ...(parsed.maxTurns ? { maxTurns: parsed.maxTurns } : {}),
+              ...(parsed.maxTokens ? { maxTokens: parsed.maxTokens } : {}),
+              ...(parsed.maxRuntimeMs ? { maxRuntimeMs: parsed.maxRuntimeMs } : {}),
+              ...(parsed.maxCost ? { maxCost: parsed.maxCost } : {}),
+            },
+          })
+        }
+        await save(goal)
+        replaceParts(output.parts, continuationPrompt(goal))
+      })
+    },
+
+    "chat.message": async (event: any) => {
+      const until = pluginOwnedUserMessageUntil.get(event.sessionID) ?? 0
+      if (until >= Date.now()) { pluginOwnedUserMessageUntil.delete(event.sessionID); return }
+      await serialize(event.sessionID, async () => {
+        const goal = await load(event.sessionID)
+        if (goal?.status === "active") await save(pauseGoal(goal, "Paused because the user sent a new message."))
+      })
+    },
+
+    "experimental.session.compacting": async (event: any, output: any) => {
+      const goal = await load(event.sessionID)
+      if (goal) output.context.push(compactionContext(goal))
+    },
+
+    "experimental.compaction.autocontinue": async (event: any, output: any) => {
+      const goal = await load(event.sessionID)
+      if (goal?.status === "active") output.enabled = false
+    },
+
+    event: async ({ event }: any) => {
+      const type = String(event?.type ?? "")
+      const properties = event?.properties ?? {}
+      const sessionID = properties.sessionID ?? properties.info?.sessionID
+      if (!sessionID) return
+      if (type === "message.updated") {
+        const info = properties.info
+        if (info?.role === "assistant" && info?.time?.completed) {
+          await serialize(sessionID, async () => {
+            const goal = await load(sessionID)
+            if (!goal) return
+            await save(accountAssistantUsage(goal, {
+              messageID: info.id,
+              inputTokens: info.tokens?.input,
+              outputTokens: info.tokens?.output,
+              reasoningTokens: info.tokens?.reasoning,
+              cost: info.cost,
+              createdAt: info.time?.created,
+              completedAt: info.time?.completed,
+            }))
+          })
+        }
+        return
+      }
+      if (type === "session.idle") await continueIfActive(sessionID)
+    },
+
+    tool: {
+      opencode_goal_get: tool({
+        description: "Read the current persistent goal and its verification state.",
+        args: {},
+        execute: async (_args: any, context: any) => formatStatus(await load(context.sessionID)),
+      }),
+      opencode_goal_progress: tool({
+        description: "Record a checkpoint note. This does not count as verified progress by itself.",
+        args: {
+          summary: tool.schema.string(),
+          next: tool.schema.string().optional(),
+        },
+        execute: async (args: any, context: any) => await serialize(context.sessionID, async () => {
+          const goal = await load(context.sessionID)
+          if (!goal) return "No active goal."
+          await save(addProgressNote(goal, args))
+          return "Checkpoint recorded. Note: checkpoint text is not completion evidence."
+        }),
+      }),
+      opencode_goal_evidence_file: tool({
+        description: "Ask the host to verify a project file exists or contains exact text, then attach that evidence to a requirement.",
+        args: {
+          requirementID: tool.schema.string(),
+        },
+        execute: async (args: any, context: any) => await serialize(context.sessionID, async () => {
+          let goal = await load(context.sessionID)
+          if (!goal) return "No active goal."
+          const checked = await recordFileEvidence(goal, { root: directory, requirementID: args.requirementID })
+          goal = checked.goal
+          if (checked.evidence.passed) goal = proveRequirementsFromEvidence(goal, checked.evidence.id)
+          await save(goal)
+          return checked.evidence.summary
+        }),
+      }),
+      opencode_goal_complete: tool({
+        description: "Attempt verified completion. Configured checks run on the host; completion fails closed unless every required item has current trusted evidence.",
+        args: { summary: tool.schema.string() },
+        execute: async (args: any, context: any) => await serialize(context.sessionID, async () => {
+          let goal = await load(context.sessionID)
+          if (!goal) return "No active goal."
+          goal = await runConfiguredChecks(goal, directory)
+          const result = completeGoal(goal, args.summary)
+          await save(result.goal)
+          return result.audit.ok ? "Goal completed with verified evidence." : `Completion rejected:\n- ${result.audit.reasons.join("\n- ")}`
+        }),
+      }),
+      opencode_goal_blocked: tool({
+        description: "Report a genuine blocker. The same blocker must recur on three distinct goal turns before the goal becomes blocked.",
+        args: {
+          reason: tool.schema.string(),
+          needed: tool.schema.string().optional(),
+          key: tool.schema.string().optional(),
+        },
+        execute: async (args: any, context: any) => await serialize(context.sessionID, async () => {
+          const goal = await load(context.sessionID)
+          if (!goal) return "No active goal."
+          const next = reportBlocker(goal, { turnID: context.messageID ?? context.callID ?? String(Date.now()), ...args })
+          await save(next)
+          const count = next.blockerAudit?.consecutiveTurns ?? 0
+          return next.status === "blocked" ? `Goal blocked after ${count} repeated blocker turns.` : `Blocker recorded (${count}/3). Keep working on other useful paths if possible.`
+        }),
+      }),
+    },
+  }
+}
+
+export * from "./domain/types.js"
+export * from "./domain/goal.js"
+export * from "./verification/audit.js"
+export * from "./verification/evidence.js"
+export * from "./runtime/accounting.js"
+export * from "./runtime/blocker.js"
+export * from "./runtime/progress.js"
+export * from "./opencode/command.js"

@@ -17,6 +17,7 @@
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node --test test/*.test.mjs",
+    "canary:host": "node scripts/host-canary.mjs",
     "pack:check": "npm pack --dry-run"
   },
   "keywords": ["opencode", "goal", "agent", "autonomous", "codex", "plugin"],

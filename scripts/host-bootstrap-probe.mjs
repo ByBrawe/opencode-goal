@@ -45,11 +45,12 @@ const env = {
   OPENCODE_DISABLE_AUTOUPDATE: "true",
   OPENCODE_PRINT_LOGS: "1",
   OPENCODE_LOG_LEVEL: "DEBUG",
+  OPENCODE_DB: ":memory:",
   OPENCODE_PURE: "true",
   OPENCODE_DISABLE_DEFAULT_PLUGINS: "true",
   OPENCODE_DISABLE_LSP_DOWNLOAD: "true",
   OPENCODE_DISABLE_EXTERNAL_SKILLS: "true",
-  OPENCODE_DISABLE_EMBEDDED_WEB_UI: "true",
+  OPENCODE_DISABLE_EMEDDED_WEB_UI: "true",
   CI: "true",
 }
 const child = spawn(binary, ["serve", "--hostname", "127.0.0.1", "--port", String(serverPort)], {
@@ -65,16 +66,16 @@ child.stderr?.on("data", append)
 
 try {
   await waitForTcp(serverPort, child, () => log)
-  console.log(`clean probe: server reachable using runner HOME=${env.HOME ?? env.USERPROFILE ?? "unknown"}`)
+  console.log(`clean probe: server reachable using in-memory DB and runner HOME=${env.HOME ?? env.USERPROFILE ?? "unknown"}`)
   const scoped = `http://127.0.0.1:${serverPort}/session?directory=${encodeURIComponent(workspace)}`
   const response = await fetch(scoped, { signal: AbortSignal.timeout(15_000) }).catch((error) => {
-    throw new Error(`clean runner-home instance bootstrap request failed: ${String(error)}\n${log}`)
+    throw new Error(`clean in-memory instance bootstrap request failed: ${String(error)}\n${log}`)
   })
   const text = await response.text()
-  assert.equal(response.status, 200, `clean runner-home instance bootstrap returned ${response.status}: ${text}\n${log}`)
+  assert.equal(response.status, 200, `clean in-memory instance bootstrap returned ${response.status}: ${text}\n${log}`)
   const parsed = JSON.parse(text)
   assert.ok(Array.isArray(parsed?.data ?? parsed), `clean session list was not an array: ${text}`)
-  console.log("clean runner-home OpenCode instance bootstrap probe passed")
+  console.log("clean in-memory OpenCode instance bootstrap probe passed")
 } finally {
   child.kill()
   await rm(workspace, { recursive: true, force: true }).catch(() => undefined)

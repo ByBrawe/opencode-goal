@@ -62,6 +62,49 @@ async function createGoalThroughCommand(hooks, sessionID = "session-1") {
   return output
 }
 
+async function bindGoalTurn(hooks, output, {
+  sessionID = "session-1",
+  userMessageID = "user-r1",
+  assistantMessageID = "assistant-r1",
+} = {}) {
+  await hooks["chat.message"](
+    { sessionID, messageID: userMessageID, agent: "build", model: { providerID: "p", modelID: "m" }, variant: "high" },
+    { message: { id: userMessageID }, parts: output.parts },
+  )
+  await hooks.event({
+    event: {
+      type: "message.updated",
+      properties: {
+        info: {
+          id: assistantMessageID,
+          sessionID,
+          parentID: userMessageID,
+          role: "assistant",
+          time: { created: Date.now() },
+          tokens: { input: 0, output: 0, reasoning: 0 },
+          cost: 0,
+        },
+      },
+    },
+  })
+}
+
+async function emitPatch(hooks, {
+  sessionID = "session-1",
+  assistantMessageID = "assistant-r1",
+  hash = "patch-1",
+  files = ["src/a.ts"],
+} = {}) {
+  await hooks.event({
+    event: {
+      type: "message.part.updated",
+      properties: {
+        part: { type: "patch", sessionID, messageID: assistantMessageID, hash, files },
+      },
+    },
+  })
+}
+
 test("command-owned chat message does not pause its own goal", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-adapter-"))
   try {
@@ -69,8 +112,8 @@ test("command-owned chat message does not pause its own goal", async () => {
     const hooks = await OpenCodeGoalPlugin({ client: fake.client, directory: root })
     const output = await createGoalThroughCommand(hooks)
     await hooks["chat.message"](
-      { sessionID: "session-1", agent: "build", model: { providerID: "p", modelID: "m" }, variant: "high" },
-      { parts: output.parts },
+      { sessionID: "session-1", messageID: "user-r1", agent: "build", model: { providerID: "p", modelID: "m" }, variant: "high" },
+      { message: { id: "user-r1" }, parts: output.parts },
     )
     const goal = await readOnlyGoal(root)
     assert.equal(goal.status, "active")
@@ -86,13 +129,13 @@ test("human message pauses active goal and aborts an in-flight continuation", as
     const fake = fakeClient()
     const hooks = await OpenCodeGoalPlugin({ client: fake.client, directory: root })
     const output = await createGoalThroughCommand(hooks)
-    await hooks["chat.message"]({ sessionID: "session-1", agent: "build" }, { parts: output.parts })
+    await hooks["chat.message"]({ sessionID: "session-1", messageID: "user-r1", agent: "build" }, { message: { id: "user-r1" }, parts: output.parts })
 
     await hooks.event({ event: { type: "session.idle", properties: { sessionID: "session-1" } } })
     await tick()
     assert.equal(fake.promptCount, 1)
 
-    await hooks["chat.message"]({ sessionID: "session-1", agent: "build" }, { parts: [{ type: "text", text: "stop and do something else" }] })
+    await hooks["chat.message"]({ sessionID: "session-1", messageID: "human-2", agent: "build" }, { message: { id: "human-2" }, parts: [{ type: "text", text: "stop and do something else" }] })
     await tick()
     const goal = await readOnlyGoal(root)
     assert.equal(goal.status, "paused")
@@ -111,7 +154,7 @@ test("duplicate idle while prompt is pending does not dispatch concurrently", as
     const fake = fakeClient()
     const hooks = await OpenCodeGoalPlugin({ client: fake.client, directory: root })
     const output = await createGoalThroughCommand(hooks)
-    await hooks["chat.message"]({ sessionID: "session-1", agent: "build" }, { parts: output.parts })
+    await hooks["chat.message"]({ sessionID: "session-1", messageID: "user-r1", agent: "build" }, { message: { id: "user-r1" }, parts: output.parts })
 
     await Promise.all([
       hooks.event({ event: { type: "session.idle", properties: { sessionID: "session-1" } } }),
@@ -130,17 +173,125 @@ test("duplicate idle while prompt is pending does not dispatch concurrently", as
   }
 })
 
-test("mutating OpenCode tool activity counts as host-observed progress", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-tool-"))
+test("only revision-owned PatchPart changes count as host progress", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-patch-"))
   try {
     const fake = fakeClient()
     const hooks = await OpenCodeGoalPlugin({ client: fake.client, directory: root })
     const output = await createGoalThroughCommand(hooks)
-    await hooks["chat.message"]({ sessionID: "session-1", agent: "build" }, { parts: output.parts })
+    await bindGoalTurn(hooks, output)
+
     const before = await readOnlyGoal(root)
-    await hooks["tool.execute.after"]({ tool: "edit", sessionID: "session-1", callID: "call-1", args: {} }, { title: "", output: "", metadata: {} })
-    const after = await readOnlyGoal(root)
-    assert.equal(after.progressRevision, before.progressRevision + 1)
+    assert.equal(hooks["tool.execute.after"], undefined, "mutating tool completion alone must not count as progress")
+
+    await emitPatch(hooks)
+    const changed = await readOnlyGoal(root)
+    assert.equal(changed.progressRevision, before.progressRevision + 1)
+    assert.deepEqual(changed.progressFingerprints, ["patch:patch-1"])
+
+    await emitPatch(hooks)
+    const duplicate = await readOnlyGoal(root)
+    assert.equal(duplicate.progressRevision, changed.progressRevision, "duplicate patch delivery must not double-count progress")
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("goal edit aborts the old turn, suppresses abort-idle, and rejects stale revision activity", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-steer-"))
+  try {
+    const fake = fakeClient()
+    const hooks = await OpenCodeGoalPlugin({ client: fake.client, directory: root })
+    const original = await createGoalThroughCommand(hooks)
+    await bindGoalTurn(hooks, original)
+
+    const editOutput = { parts: [{ type: "text", text: "edit args" }] }
+    await hooks["command.execute.before"](
+      { command: "goal", sessionID: "session-1", arguments: "edit ship revised release" },
+      editOutput,
+    )
+    assert.equal(fake.abortCount, 1, "editing an active goal-owned turn must abort the old OpenCode run")
+    let revised = await readOnlyGoal(root)
+    assert.equal(revised.revision, 2)
+    assert.equal(revised.objective, "ship revised release")
+    const afterEditProgress = revised.progressRevision
+
+    await hooks.event({ event: { type: "session.idle", properties: { sessionID: "session-1" } } })
+    await tick()
+    assert.equal(fake.promptCount, 0, "idle emitted by the steering abort must not create a duplicate continuation")
+
+    await emitPatch(hooks, { assistantMessageID: "assistant-r1", hash: "old-revision-patch", files: ["old.ts"] })
+    revised = await readOnlyGoal(root)
+    assert.equal(revised.progressRevision, afterEditProgress, "old revision patch must not count for the edited goal")
+
+    const staleProgress = await hooks.tool.opencode_goal_progress.execute(
+      { summary: "old turn claims progress", next: "continue" },
+      { sessionID: "session-1", messageID: "assistant-r1", agent: "build" },
+    )
+    assert.match(staleProgress, /older goal revision/i)
+
+    await bindGoalTurn(hooks, editOutput, { userMessageID: "user-r2", assistantMessageID: "assistant-r2" })
+    await emitPatch(hooks, { assistantMessageID: "assistant-r2", hash: "new-revision-patch", files: ["new.ts"] })
+    revised = await readOnlyGoal(root)
+    assert.equal(revised.progressRevision, afterEditProgress + 1)
+    assert.deepEqual(revised.progressFingerprints, ["patch:new-revision-patch"])
+
+    const currentProgress = await hooks.tool.opencode_goal_progress.execute(
+      { summary: "new turn checkpoint", next: "verify" },
+      { sessionID: "session-1", messageID: "assistant-r2", agent: "build" },
+    )
+    assert.match(currentProgress, /Checkpoint recorded/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("non-goal assistant messages do not consume goal budget", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-usage-owner-"))
+  try {
+    const fake = fakeClient()
+    const hooks = await OpenCodeGoalPlugin({ client: fake.client, directory: root })
+    const output = await createGoalThroughCommand(hooks)
+    await bindGoalTurn(hooks, output)
+
+    await hooks.event({
+      event: {
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "assistant-r1",
+            sessionID: "session-1",
+            parentID: "user-r1",
+            role: "assistant",
+            time: { created: 1, completed: 11 },
+            tokens: { input: 10, output: 5, reasoning: 2 },
+            cost: 0.01,
+          },
+        },
+      },
+    })
+    const afterGoalTurn = await readOnlyGoal(root)
+    assert.equal(afterGoalTurn.usage.turns, 1)
+
+    await hooks.event({
+      event: {
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "assistant-human",
+            sessionID: "session-1",
+            parentID: "human-user",
+            role: "assistant",
+            time: { created: 20, completed: 30 },
+            tokens: { input: 1000, output: 1000, reasoning: 1000 },
+            cost: 99,
+          },
+        },
+      },
+    })
+    const afterHumanTurn = await readOnlyGoal(root)
+    assert.equal(afterHumanTurn.usage.turns, 1)
+    assert.equal(afterHumanTurn.usage.cost, afterGoalTurn.usage.cost)
   } finally {
     await rm(root, { recursive: true, force: true })
   }

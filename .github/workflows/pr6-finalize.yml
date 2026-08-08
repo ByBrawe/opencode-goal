@@ -1,0 +1,251 @@
+name: PR6 Finalize
+
+on:
+  pull_request_target:
+    types: [synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    if: github.event.pull_request.number == 6 && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ci/real-patch-progress
+      - name: Finalize hybrid progress canary and regressions
+        shell: python
+        run: |
+          from pathlib import Path
+
+          canary = Path("scripts/host-progress-canary.mjs")
+          text = canary.read_text()
+          text = text.replace('    holdStarted: 0,', '    noProgressTextTurns: 0,')
+          text = text.replace('  const held = new Set()\n', '')
+          old = '''    if (stats.phase === "noop-result") {
+              stats.phase = "hold"
+              streamText(res, { id, created, content: "NOOP_MUTATION_DONE" })
+              return
+            }
+            if (stats.phase === "hold") {
+              stats.phase = "holding"
+              stats.holdStarted += 1
+              held.add(res)
+              res.once("close", () => held.delete(res))
+              streamHeaders(res)
+              writeSse(res, {
+                id,
+                object: "chat.completion.chunk",
+                created,
+                model: "canary",
+                choices: [{ index: 0, delta: { role: "assistant", content: "HOLD_AFTER_NOOP" }, finish_reason: null }],
+              })
+              return
+            }
+          '''
+          new = '''    if (stats.phase === "noop-result") {
+              stats.phase = "stall"
+              streamText(res, { id, created, content: "NOOP_MUTATION_DONE" })
+              return
+            }
+            if (stats.phase === "stall") {
+              stats.noProgressTextTurns += 1
+              streamText(res, { id, created, content: "NO_FURTHER_PROGRESS" })
+              return
+            }
+          '''
+          if old not in text:
+              raise SystemExit("expected hold phase block not found")
+          text = text.replace(old, new, 1)
+          text = text.replace('      for (const response of held) response.destroy()\n', '')
+          text = text.replace('permission: { edit: "allow" },', 'permission: { edit: "allow", external_directory: "allow" },')
+          old_assert = '''    await waitFor(
+              async () => {
+                lastState = await readGoal(workspace)
+                return provider.stats.noopWriteCalls === 1 && provider.stats.holdStarted === 1
+              },
+              "no-op write turn to finish and next continuation to begin",
+              diagnostics,
+            )
+            await new Promise((resolve) => setTimeout(resolve, 250))
+            lastState = await readGoal(workspace)
+
+            assert.equal(await readFile(targetPath, "utf8"), TARGET_CONTENT)
+            assert.equal(lastState.progressRevision, 1, "writing identical content must not count as new progress")
+            assert.deepEqual(lastState.progressFingerprints, [firstFingerprint], "no-op write must not create a new host-progress fingerprint")
+            assert.equal(lastState.stalledTurns, 1, "the no-op turn should count as one stalled continuation")
+            assert.equal(provider.stats.mutationWriteCalls, 1)
+            assert.equal(provider.stats.noopWriteCalls, 1)
+            assert.equal(server.exitCode, null, `OpenCode server exited during progress assertions: ${diagnostics()}`)
+          '''
+          new_assert = '''    await waitFor(
+              async () => {
+                lastState = await readGoal(workspace)
+                return provider.stats.noopWriteCalls === 1
+                  && provider.stats.noProgressTextTurns >= 2
+                  && lastState?.status === "paused"
+                  && lastState?.stalledTurns === 3
+              },
+              "same-content no-op followed by the no-progress guard to pause the goal",
+              diagnostics,
+              45_000,
+            )
+
+            assert.equal(await readFile(targetPath, "utf8"), TARGET_CONTENT)
+            assert.equal(lastState.progressRevision, 1, "writing identical content must not count as new progress")
+            assert.deepEqual(lastState.progressFingerprints, [firstFingerprint], "no-op write must not create a new host-progress fingerprint")
+            assert.equal(lastState.status, "paused")
+            assert.equal(lastState.stalledTurns, 3, "two further no-progress turns after the no-op must trip the guard")
+            assert.equal(provider.stats.mutationWriteCalls, 1)
+            assert.equal(provider.stats.noopWriteCalls, 1)
+            assert.equal(provider.stats.noProgressTextTurns, 2, "the goal must stop before a third extra model turn")
+            assert.equal(server.exitCode, null, `OpenCode server exited during progress assertions: ${diagnostics()}`)
+          '''
+          if old_assert not in text:
+              raise SystemExit("expected no-op assertion block not found")
+          text = text.replace(old_assert, new_assert, 1)
+          text = text.replace('      holdStarted: provider.stats.holdStarted,', '      noProgressTextTurns: provider.stats.noProgressTextTurns,')
+          canary.write_text(text)
+
+          Path(".github/workflows/progress-canary.yml").write_text('''name: Real Host Progress
+
+          on:
+            pull_request:
+            push:
+              branches: [main]
+            workflow_dispatch:
+
+          jobs:
+            progress:
+              name: Host progress (${{ matrix.os }})
+              timeout-minutes: 12
+              strategy:
+                fail-fast: false
+                matrix:
+                  os: [ubuntu-latest, windows-latest]
+              runs-on: ${{ matrix.os }}
+              steps:
+                - uses: actions/checkout@v6
+                - uses: actions/setup-node@v6
+                  with:
+                    node-version: 24
+                - uses: oven-sh/setup-bun@v2
+                  with:
+                    bun-version: latest
+                - run: npm install
+                - run: npm run build
+                - name: Install current OpenCode CLI
+                  run: npm install --no-save --package-lock=false opencode-ai@latest
+                - name: Show OpenCode version
+                  run: npx --no-install opencode --version
+                - name: Probe clean OpenCode instance bootstrap
+                  run: node scripts/host-bootstrap-probe.mjs
+                  env:
+                    OPENCODE_PRINT_LOGS: "1"
+                    OPENCODE_LOG_LEVEL: DEBUG
+                - name: Run real host mutation/no-op progress canary
+                  run: npm run canary:progress
+                  env:
+                    OPENCODE_PRINT_LOGS: "1"
+                    OPENCODE_LOG_LEVEL: DEBUG
+          '''.replace("          ", ""))
+
+          diagnostic = Path("progress-canary-windows-failure.txt")
+          if diagnostic.exists():
+              diagnostic.unlink()
+
+          Path("test/tool-ownership.test.mjs").write_text('''import test from "node:test"
+          import assert from "node:assert/strict"
+          import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises"
+          import os from "node:os"
+          import path from "node:path"
+          import OpenCodeGoalPlugin from "../dist/index.js"
+
+          async function state(root) {
+            const dir = path.join(root, ".opencode", "goals")
+            const files = await readdir(dir)
+            assert.equal(files.length, 1)
+            return JSON.parse(await readFile(path.join(dir, files[0]), "utf8"))
+          }
+
+          async function bind(hooks, output, revision) {
+            const user = `user-r${revision}`
+            const assistant = `assistant-r${revision}`
+            await hooks["chat.message"]({ sessionID: "s1", messageID: user, agent: "build" }, { message: { id: user }, parts: output.parts })
+            await hooks.event({ event: { type: "message.updated", properties: { info: {
+              id: assistant, sessionID: "s1", parentID: user, role: "assistant",
+              time: { created: Date.now() }, tokens: { input: 0, output: 0, reasoning: 0 }, cost: 0,
+            } } } })
+            return assistant
+          }
+
+          test("old revision file tool completion cannot advance an edited goal", async () => {
+            const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-stale-tool-"))
+            try {
+              const hooks = await OpenCodeGoalPlugin({ directory: root, client: { session: {
+                async abort() { return true }, async prompt() { return {} },
+              } } })
+              const initial = { parts: [{ type: "text", text: "raw" }] }
+              await hooks["command.execute.before"]({ command: "goal", sessionID: "s1", arguments: "old objective" }, initial)
+              const oldMessage = await bind(hooks, initial, 1)
+              const file = path.join(root, "result.txt")
+              await hooks.event({ event: { type: "message.part.updated", properties: { part: {
+                type: "tool", sessionID: "s1", messageID: oldMessage, callID: "old-write", tool: "write", state: { status: "running" },
+              } } } })
+              await hooks["tool.execute.before"]({ tool: "write", sessionID: "s1", callID: "old-write" }, { args: { filePath: file } })
+
+              const edited = { parts: [{ type: "text", text: "edit" }] }
+              await hooks["command.execute.before"]({ command: "goal", sessionID: "s1", arguments: "edit new objective" }, edited)
+              const afterEdit = await state(root)
+              assert.equal(afterEdit.revision, 2)
+
+              await writeFile(file, "late old revision\\n")
+              await hooks["tool.execute.after"](
+                { tool: "write", sessionID: "s1", callID: "old-write", args: { filePath: file } },
+                { metadata: { filepath: file } },
+              )
+              const stale = await state(root)
+              assert.equal(stale.progressRevision, afterEdit.progressRevision)
+              assert.deepEqual(stale.progressFingerprints, [])
+
+              const currentMessage = await bind(hooks, edited, 2)
+              await hooks.event({ event: { type: "message.part.updated", properties: { part: {
+                type: "tool", sessionID: "s1", messageID: currentMessage, callID: "new-write", tool: "write", state: { status: "running" },
+              } } } })
+              await hooks["tool.execute.before"]({ tool: "write", sessionID: "s1", callID: "new-write" }, { args: { filePath: file } })
+              await writeFile(file, "current revision\\n")
+              await hooks["tool.execute.after"](
+                { tool: "write", sessionID: "s1", callID: "new-write", args: { filePath: file } },
+                { metadata: { filepath: file } },
+              )
+              const current = await state(root)
+              assert.equal(current.progressRevision, afterEdit.progressRevision + 1)
+              assert.equal(current.progressFingerprints.length, 1)
+              assert.match(current.progressFingerprints[0], /^file:result\\.txt:[a-f0-9]{64}$/)
+            } finally {
+              await rm(root, { recursive: true, force: true })
+            }
+          })
+          '''.replace("          ", ""))
+      - name: Commit branch changes
+        shell: bash
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add scripts/host-progress-canary.mjs .github/workflows/progress-canary.yml test/tool-ownership.test.mjs
+          git add -u progress-canary-windows-failure.txt || true
+          git commit -m "test: finalize hybrid host progress coverage"
+          git push origin HEAD:ci/real-patch-progress
+      - name: Remove temporary main workflow
+        shell: bash
+        run: |
+          git fetch origin main
+          git checkout main
+          rm .github/workflows/pr6-finalize.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -u .github/workflows/pr6-finalize.yml
+          git commit -m "ci: remove PR6 finalize helper"
+          git push origin main

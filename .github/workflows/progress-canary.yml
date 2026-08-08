@@ -56,7 +56,6 @@ jobs:
           tail -n 240 progress-canary.log > progress-canary-windows-failure.txt
           git fetch origin ci/real-patch-progress
           git checkout ci/real-patch-progress
-          cp "$GITHUB_WORKSPACE/progress-canary-windows-failure.txt" ./progress-canary-windows-failure.txt
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add progress-canary-windows-failure.txt

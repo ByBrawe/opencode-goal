@@ -23,3 +23,15 @@ export function closeObservedTurn(goal: GoalState, input: { maxStalledTurns?: nu
     updatedAt: now,
   }
 }
+
+export function markHostActivity(goal: GoalState, input: { source: string; summary?: string; now?: number }): GoalState {
+  const now = input.now ?? Date.now()
+  return {
+    ...goal,
+    progressRevision: goal.progressRevision + 1,
+    progressNotes: input.summary
+      ? [...goal.progressNotes, { time: now, summary: `[host:${input.source}] ${input.summary}`, next: "" }].slice(-50)
+      : goal.progressNotes,
+    updatedAt: now,
+  }
+}

@@ -160,7 +160,7 @@ export default async function OpenCodeGoalPlugin(input: any) {
 
     "command.execute.before": async (event: any, output: any) => {
       if (event.command !== "goal") return
-      let abortControl: "none" | "pause" | "edit" = "none"
+      let abortControl: string = "none"
       await serialize(event.sessionID, async () => {
         const parsed = parseGoalCommand(event.arguments ?? "")
         let goal = await load(event.sessionID)

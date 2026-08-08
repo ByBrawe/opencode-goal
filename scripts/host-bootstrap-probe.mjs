@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { existsSync } from "node:fs"
 import net from "node:net"
 import { spawn } from "node:child_process"
 import { mkdtemp, rm } from "node:fs/promises"
@@ -8,7 +9,20 @@ import { fileURLToPath } from "node:url"
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const isWindows = process.platform === "win32"
-const binary = path.join(root, "node_modules", ".bin", isWindows ? "opencode.cmd" : "opencode")
+
+function resolveOpenCodeBinary() {
+  if (!isWindows) return path.join(root, "node_modules", ".bin", "opencode")
+  const candidates = [
+    path.join(root, "node_modules", "opencode-windows-x64", "bin", "opencode.exe"),
+    path.join(root, "node_modules", "opencode-windows-x64-baseline", "bin", "opencode.exe"),
+    path.join(root, "node_modules", "opencode-windows-arm64", "bin", "opencode.exe"),
+  ]
+  const found = candidates.find((candidate) => existsSync(candidate))
+  if (!found) throw new Error(`OpenCode native Windows binary was not installed. Checked: ${candidates.join(", ")}`)
+  return found
+}
+
+const binary = resolveOpenCodeBinary()
 
 function appendLog(current, chunk, limit = 50_000) {
   return (current + String(chunk)).slice(-limit)
@@ -28,26 +42,29 @@ async function port() {
 
 async function runCli(args, { cwd, env, timeoutMs = 15_000 }) {
   return await new Promise((resolve, reject) => {
-    const child = spawn(binary, args, { cwd, env, shell: isWindows, windowsHide: true })
+    const child = spawn(binary, args, { cwd, env, windowsHide: true })
     let stdout = ""
     let stderr = ""
+    let settled = false
     child.stdout?.on("data", (chunk) => { stdout = appendLog(stdout, chunk) })
     child.stderr?.on("data", (chunk) => { stderr = appendLog(stderr, chunk) })
+    const finish = (fn, value) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      fn(value)
+    }
     const timer = setTimeout(() => {
       child.kill()
-      reject(new Error(`CLI timed out: opencode ${args.join(" ")}\nstdout:\n${stdout}\nstderr:\n${stderr}`))
+      finish(reject, new Error(`CLI timed out: opencode ${args.join(" ")}\nstdout:\n${stdout}\nstderr:\n${stderr}`))
     }, timeoutMs)
-    child.once("error", (error) => {
-      clearTimeout(timer)
-      reject(error)
-    })
+    child.once("error", (error) => finish(reject, error))
     child.once("close", (code) => {
-      clearTimeout(timer)
       if (code !== 0) {
-        reject(new Error(`CLI exited ${code}: opencode ${args.join(" ")}\nstdout:\n${stdout}\nstderr:\n${stderr}`))
+        finish(reject, new Error(`CLI exited ${code}: opencode ${args.join(" ")}\nstdout:\n${stdout}\nstderr:\n${stderr}`))
         return
       }
-      resolve({ stdout, stderr })
+      finish(resolve, { stdout, stderr })
     })
   })
 }
@@ -92,7 +109,6 @@ try {
   const child = spawn(binary, ["serve", "--hostname", "127.0.0.1", "--port", String(serverPort)], {
     cwd: workspace,
     env,
-    shell: isWindows,
     windowsHide: true,
   })
   let log = ""
@@ -114,6 +130,11 @@ try {
     console.log("clean OpenCode instance bootstrap probe passed")
   } finally {
     child.kill()
+    await new Promise((resolve) => {
+      if (child.exitCode !== null) return resolve()
+      const timer = setTimeout(resolve, 2_000)
+      child.once("close", () => { clearTimeout(timer); resolve() })
+    })
   }
 } finally {
   await rm(workspace, { recursive: true, force: true }).catch(() => undefined)

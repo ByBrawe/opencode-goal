@@ -6,6 +6,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   progress:
     name: PatchPart progress (${{ matrix.os }})
@@ -35,7 +38,27 @@ jobs:
           OPENCODE_PRINT_LOGS: "1"
           OPENCODE_LOG_LEVEL: DEBUG
       - name: Run real PatchPart/no-op progress canary
-        run: npm run canary:progress
+        id: canary
+        shell: bash
+        run: |
+          set +e
+          npm run canary:progress > progress-canary.log 2>&1
+          code=$?
+          cat progress-canary.log
+          exit $code
         env:
           OPENCODE_PRINT_LOGS: "1"
           OPENCODE_LOG_LEVEL: DEBUG
+      - name: Capture Windows failure diagnostics
+        if: failure() && matrix.os == 'windows-latest' && github.actor != 'github-actions[bot]'
+        shell: bash
+        run: |
+          tail -n 240 progress-canary.log > progress-canary-windows-failure.txt
+          git fetch origin ci/real-patch-progress
+          git checkout ci/real-patch-progress
+          cp "$GITHUB_WORKSPACE/progress-canary-windows-failure.txt" ./progress-canary-windows-failure.txt
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add progress-canary-windows-failure.txt
+          git commit -m "ci: capture Windows progress canary diagnostics"
+          git push origin HEAD:ci/real-patch-progress

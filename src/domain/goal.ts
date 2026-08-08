@@ -78,6 +78,7 @@ export function createGoal(input: {
     budget: { ...DEFAULT_BUDGET, ...input.budget },
     progressRevision: 0,
     observedProgressRevision: 0,
+    progressFingerprints: [],
     stalledTurns: 0,
     progressNotes: [],
     createdAt: now,
@@ -114,6 +115,7 @@ export function editGoal(goal: GoalState, input: {
     usage: goal.usage,
     progressRevision: goal.progressRevision + 1,
     observedProgressRevision: goal.progressRevision + 1,
+    progressFingerprints: [],
     progressNotes: goal.progressNotes,
     createdAt: goal.createdAt,
   }

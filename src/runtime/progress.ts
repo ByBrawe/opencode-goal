@@ -24,14 +24,34 @@ export function closeObservedTurn(goal: GoalState, input: { maxStalledTurns?: nu
   }
 }
 
-export function markHostActivity(goal: GoalState, input: { source: string; summary?: string; now?: number }): GoalState {
+export function markHostProgress(goal: GoalState, input: {
+  fingerprint: string
+  source: string
+  summary?: string
+  now?: number
+}): GoalState {
+  const fingerprint = input.fingerprint.trim()
+  if (!fingerprint) return goal
+  const existing = goal.progressFingerprints ?? []
+  if (existing.includes(fingerprint)) return goal
   const now = input.now ?? Date.now()
   return {
     ...goal,
     progressRevision: goal.progressRevision + 1,
+    progressFingerprints: [...existing, fingerprint].slice(-128),
     progressNotes: input.summary
       ? [...goal.progressNotes, { time: now, summary: `[host:${input.source}] ${input.summary}`, next: "" }].slice(-50)
       : goal.progressNotes,
     updatedAt: now,
   }
+}
+
+/** @deprecated Use markHostProgress with a stable host-observed fingerprint. */
+export function markHostActivity(goal: GoalState, input: { source: string; summary?: string; now?: number }): GoalState {
+  return markHostProgress(goal, {
+    fingerprint: `legacy:${input.source}:${goal.progressRevision + 1}`,
+    source: input.source,
+    ...(input.summary ? { summary: input.summary } : {}),
+    ...(input.now === undefined ? {} : { now: input.now }),
+  })
 }

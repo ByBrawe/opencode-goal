@@ -81,13 +81,13 @@ test("verifier config is hidden, read-only, idempotent, and collision-safe", asy
   const verifier = config.agent[DEFAULT_VERIFIER_AGENT]
   assert.equal(verifier.hidden, true)
   assert.equal(verifier.mode, "subagent")
+  assert.equal(verifier.tools, undefined)
+  assert.deepEqual(Object.keys(verifier.permission), ["*", "read", "glob", "grep", "opencode_goal_verifier_result"])
   assert.equal(verifier.permission["*"], "deny")
   assert.equal(verifier.permission.read, "allow")
-  assert.equal(verifier.tools.bash, false)
-  assert.equal(verifier.tools.edit, false)
-  assert.equal(verifier.tools.task, false)
-  assert.equal(verifier.tools.opencode_goal_complete, false)
-  assert.equal(verifier.tools.opencode_goal_verifier_result, true)
+  assert.equal(verifier.permission.glob, "allow")
+  assert.equal(verifier.permission.grep, "allow")
+  assert.equal(verifier.permission.opencode_goal_verifier_result, "allow")
 
   const collision = { agent: { [DEFAULT_VERIFIER_AGENT]: { prompt: "someone else's agent" } } }
   assert.throws(() => runtime.configure(collision), /name already exists/)

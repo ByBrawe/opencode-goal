@@ -1,5 +1,5 @@
 const originalFetch = globalThis.fetch.bind(globalThis)
-let firstScopedSessionList = true
+const bootstrappedOrigins = new Set()
 
 function requestURL(input) {
   if (typeof input === "string") return input
@@ -16,37 +16,38 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 globalThis.fetch = async (input, init = {}) => {
   const url = requestURL(input)
   const method = String(init.method ?? "GET").toUpperCase()
+  let origin = ""
+  try { origin = new URL(url).origin } catch {}
+
   const isScopedSessionBootstrap =
-    firstScopedSessionList &&
     method === "GET" &&
     url.includes("/session?") &&
-    url.includes("directory=")
+    url.includes("directory=") &&
+    origin &&
+    !bootstrappedOrigins.has(origin)
 
   if (!isScopedSessionBootstrap) return await originalFetch(input, init)
 
-  firstScopedSessionList = false
+  // A restart canary talks to more than one OpenCode server from the same Node
+  // process. Each server/port owns a separate lazy directory instance and may
+  // need its own one-time bounded bootstrap retry on hosted Linux runners.
+  bootstrappedOrigins.add(origin)
   const startedAt = Date.now()
   let lastError
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     try {
       const response = await originalFetch(input, {
         ...init,
-        // The first directory-scoped request lazily initializes OpenCode's
-        // project Config/Plugin/Provider instance. On hosted Linux runners we
-        // have observed that initialization occasionally outlives the HTTP
-        // request even though a clean prewarm succeeded. Retry only this
-        // bootstrap boundary once; every actual lifecycle API call keeps the
-        // canary's normal 15s timeout so runtime hangs are never masked.
         signal: AbortSignal.timeout(45_000),
       })
-      console.log(`canary: directory-scoped instance bootstrap HTTP completed in ${Date.now() - startedAt}ms (attempt ${attempt})`)
+      console.log(`canary: directory-scoped instance bootstrap HTTP completed in ${Date.now() - startedAt}ms (attempt ${attempt}, origin ${origin})`)
       return response
     } catch (error) {
       lastError = error
       if (!isTimeout(error) || attempt === 2) break
-      console.warn(`canary: directory-scoped instance bootstrap timed out on attempt ${attempt}; retrying once`)
+      console.warn(`canary: directory-scoped instance bootstrap timed out on attempt ${attempt} for ${origin}; retrying once`)
       await sleep(250)
     }
   }
-  throw new Error(`directory-scoped OpenCode instance bootstrap did not complete after 2 bounded attempts: ${String(lastError)}`)
+  throw new Error(`directory-scoped OpenCode instance bootstrap did not complete after 2 bounded attempts for ${origin}: ${String(lastError)}`)
 }

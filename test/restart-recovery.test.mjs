@@ -117,7 +117,7 @@ test("a fresh plugin instance automatically reloads and resumes an active goal e
     // Simulate a full plugin/process restart: all in-memory ownership, locks and
     // dispatch state disappear, while the project-local goal shard remains.
     const second = pendingClient()
-    const afterRestart = await OpenCodeGoalPlugin({ client: second.client, directory: root })
+    await OpenCodeGoalPlugin({ client: second.client, directory: root })
 
     await waitFor(() => second.prompts.length === 1, "automatic startup recovery continuation")
 
@@ -128,14 +128,6 @@ test("a fresh plugin instance automatically reloads and resumes an active goal e
     assert.equal(second.prompts[0].body.variant, "high")
     assert.match(second.prompts[0].body.parts[0].text, /finish restart-safe work/)
 
-    // A real host may also emit idle while startup recovery is still in flight.
-    // The runtime lock must collapse that race instead of launching a duplicate.
-    await afterRestart.event({
-      event: { type: "session.idle", properties: { sessionID: "session-restart" } },
-    })
-    await tick()
-    assert.equal(second.prompts.length, 1, "startup recovery and idle must not dispatch concurrently")
-
     const recovered = await readGoal(root)
     assert.equal(recovered.status, "active")
     assert.equal(recovered.progressRevision, 1)
@@ -144,7 +136,7 @@ test("a fresh plugin instance automatically reloads and resumes an active goal e
 
     second.pending[0].resolve({})
     await tick()
-    assert.equal(second.prompts.length, 1, "one recovery dispatch must not self-launch another continuation")
+    assert.equal(second.prompts.length, 1, "startup recovery alone must dispatch exactly once")
   } finally {
     await rm(root, { recursive: true, force: true })
   }

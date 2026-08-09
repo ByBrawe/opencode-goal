@@ -3,6 +3,7 @@ import { pauseGoal } from "../domain/goal.js"
 import type { GoalExecutionContext, GoalState } from "../domain/types.js"
 import { scanRecoverableGoalStates } from "../persistence/diagnostics.js"
 import { GoalStore } from "../persistence/store.js"
+import { isRestrictedGoalAgent, restrictedAgentStopReason } from "./agent-boundary.js"
 
 type PluginInput = Parameters<typeof CorePlugin>[0]
 type PluginHooks = Awaited<ReturnType<typeof CorePlugin>>
@@ -85,7 +86,18 @@ async function sdkRecoveryPrompt(
 }
 
 export async function captureStartupGoals(directory: string): Promise<GoalState[]> {
-  return (await scanRecoverableGoalStates(directory)).filter((goal) => goal.status === "active")
+  const store = new GoalStore(directory)
+  const active = (await scanRecoverableGoalStates(directory)).filter((goal) => goal.status === "active")
+  const recoverable: GoalState[] = []
+  for (const goal of active) {
+    const agent = goal.execution?.agent
+    if (isRestrictedGoalAgent(agent)) {
+      await store.save(pauseGoal(goal, restrictedAgentStopReason(agent)))
+      continue
+    }
+    recoverable.push(goal)
+  }
+  return recoverable
 }
 
 export function scheduleStartupRecovery(input: PluginInput, hooks: PluginHooks, startupGoals: GoalState[]): void {
@@ -183,6 +195,12 @@ async function recoverStartupGoals(
 
     const current = await store.load(sessionID)
     if (!current || current.id !== startup.id || current.revision !== startup.revision || current.status !== "active") {
+      runtime.pending.delete(sessionID)
+      continue
+    }
+    const currentAgent = current.execution?.agent
+    if (isRestrictedGoalAgent(currentAgent)) {
+      await store.save(pauseGoal(current, restrictedAgentStopReason(currentAgent)))
       runtime.pending.delete(sessionID)
       continue
     }

@@ -5,12 +5,13 @@ import { fileURLToPath } from "node:url"
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const workflowsRoot = path.join(root, ".github", "workflows")
+const npmPublishWorkflow = "publish-npm.yml"
 
 const forbidden = [
   ["pull_request_target trigger", /^\s*pull_request_target\s*:/m],
   ["workflow_run trigger", /^\s*workflow_run\s*:/m],
   ["write-all token permissions", /^\s*permissions\s*:\s*write-all\s*$/m],
-  ["write token permission", /^\s*(?:actions|attestations|checks|contents|deployments|discussions|id-token|issues|packages|pages|pull-requests|repository-projects|security-events|statuses)\s*:\s*write\s*$/m],
+  ["write token permission", /^\s*(?:actions|attestations|checks|contents|deployments|discussions|issues|packages|pages|pull-requests|repository-projects|security-events|statuses)\s*:\s*write\s*$/m],
   ["automatic git push", /(^|\s)git\s+push(?:\s|$)/m],
   ["automatic PR merge", /(^|\s)gh\s+pr\s+merge(?:\s|$)/m],
   ["GitHub API write method", /(^|\s)gh\s+api\b[^\n]*(?:--method|-X)\s+(?:POST|PUT|PATCH|DELETE)\b/im],
@@ -36,6 +37,14 @@ function checkoutBlocks(text) {
   return blocks
 }
 
+function validPermissions(name, text) {
+  if (name === npmPublishWorkflow) {
+    return /^permissions:\s*\n\s{2}contents:\s*read\s*\n\s{2}id-token:\s*write\s*$/m.test(text)
+  }
+  return /^permissions:\s*\n\s{2}contents:\s*read\s*$/m.test(text)
+    && !/^\s*id-token\s*:\s*write\s*$/m.test(text)
+}
+
 async function main() {
   const names = (await fs.readdir(workflowsRoot)).filter((name) => /\.ya?ml$/i.test(name)).sort()
   if (!names.length) throw new Error("no GitHub Actions workflows found")
@@ -45,8 +54,10 @@ async function main() {
     const file = path.join(workflowsRoot, name)
     const text = await fs.readFile(file, "utf8")
 
-    if (!/^permissions:\s*\n\s{2}contents:\s*read\s*$/m.test(text)) {
-      failures.push(`${name}: workflow must declare top-level permissions:\n  contents: read`)
+    if (!validPermissions(name, text)) {
+      failures.push(name === npmPublishWorkflow
+        ? `${name}: npm publisher must declare exactly contents: read plus id-token: write`
+        : `${name}: workflow must declare exactly top-level permissions:\n  contents: read`)
     }
 
     for (const [label, pattern] of forbidden) {
@@ -68,7 +79,7 @@ async function main() {
   }
 
   console.log(`GitHub Actions security gate PASS (${names.length} workflow files)`)
-  console.log("Policy: read-only contents token, no persisted checkout credentials, no target/workflow-run privilege boundary, no workflow push/merge/API mutation commands.")
+  console.log("Policy: read-only contents token everywhere; OIDC write is limited to publish-npm.yml; no persisted checkout credentials, target/workflow-run privilege boundary, workflow push/merge, or GitHub API mutation commands.")
 }
 
 main().catch((error) => {

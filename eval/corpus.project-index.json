@@ -1,7 +1,8 @@
 {
   "schemaVersion": 1,
   "requiredCategories": [
-    "project-index"
+    "project-index",
+    "audit"
   ],
   "cases": [
     {
@@ -19,6 +20,22 @@
       "testFile": "test/project-index.test.mjs",
       "testName": "project Goal list can inspect another session by Goal id prefix without adopting it",
       "expected": "A session with no Goal can inspect a foreign live Goal by id prefix without creating, adopting, pausing, or rewriting any Goal state."
+    },
+    {
+      "id": "audit.readonly-active-goal-preserves-state",
+      "category": "audit",
+      "weight": 3,
+      "testFile": "test/audit.test.mjs",
+      "testName": "Goal audit explains an active completion gate without mutating or pausing the Goal",
+      "expected": "The audit explains why the current Goal is not completion-ready while preserving the exact persisted live snapshot and command ownership."
+    },
+    {
+      "id": "audit.completed-proof-ledger-inspectable",
+      "category": "audit",
+      "weight": 3,
+      "testFile": "test/audit.test.mjs",
+      "testName": "Goal audit keeps a completed proof ledger inspectable without re-entering completion",
+      "expected": "A completed Goal is reported as completed with its current-revision host/verifier proof ledger instead of being misreported by re-running the pre-completion gate."
     }
   ]
 }

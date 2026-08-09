@@ -65,10 +65,10 @@ async function main() {
   const temp = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-host-"))
   const project = path.join(temp, "project")
   const home = path.join(temp, "home")
-  const config = path.join(temp, "config")
+  const config = path.join(home, ".config")
   const opencodeConfig = path.join(config, "opencode")
-  const data = path.join(temp, "data")
-  const state = path.join(temp, "state")
+  const data = path.join(home, ".local", "share")
+  const state = path.join(home, ".local", "state")
   const pluginFile = path.join(root, "dist", "opencode2", "experimental.js")
 
   await Promise.all([
@@ -85,7 +85,7 @@ async function main() {
     XDG_CONFIG_HOME: config,
     XDG_DATA_HOME: data,
     XDG_STATE_HOME: state,
-    OPENCODE_DB: path.join(data, "opencode-next.db"),
+    OPENCODE_DB: path.join(data, "opencode", "opencode-next.db"),
     OPENCODE_LOG_LEVEL: "DEBUG",
   }
 

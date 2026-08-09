@@ -1,7 +1,7 @@
 {
   "name": "@bybrawe/opencode-goal",
   "version": "0.1.0-beta.1",
-  "description": "Codex-style persistent Goal Mode for OpenCode with host-verified completion.",
+  "description": "Persistent, host-verified Goals for OpenCode.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -12,12 +12,26 @@
     }
   },
   "files": ["dist", "README.md", "LICENSE"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ByBrawe/opencode-goal.git"
+  },
+  "homepage": "https://github.com/ByBrawe/opencode-goal#readme",
+  "bugs": {
+    "url": "https://github.com/ByBrawe/opencode-goal/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "clean": "rm -rf dist",
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node --test test/*.test.mjs",
     "eval": "npm run build && node scripts/eval-corpus.mjs",
+    "package:smoke": "npm run build && node scripts/package-smoke.mjs",
+    "release:check": "npm run check && npm test && npm run eval && npm run package:smoke",
+    "prepublishOnly": "npm run release:check",
     "canary:host": "node --import ./scripts/host-canary-bootstrap.mjs scripts/host-canary.mjs",
     "canary:semantic": "node --import ./scripts/host-canary-bootstrap.mjs scripts/host-semantic-canary.mjs",
     "canary:steering": "node --import ./scripts/host-canary-bootstrap.mjs scripts/host-steering-canary.mjs",
@@ -25,7 +39,7 @@
     "canary:restart": "node --import ./scripts/host-canary-bootstrap.mjs --import ./scripts/host-restart-hard-crash.mjs scripts/host-restart-canary.mjs",
     "pack:check": "npm pack --dry-run"
   },
-  "keywords": ["opencode", "goal", "agent", "autonomous", "codex", "plugin"],
+  "keywords": ["opencode", "opencode-plugin", "goals", "goal", "agent", "autonomous", "codex", "plugin"],
   "license": "MIT",
   "engines": { "node": ">=20" },
   "peerDependencies": { "@opencode-ai/plugin": ">=1.4.0" },

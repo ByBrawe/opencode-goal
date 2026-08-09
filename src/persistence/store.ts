@@ -14,6 +14,12 @@ export interface GoalArchiveRecord {
   goal: GoalState
 }
 
+export interface GoalHistoryPruneResult {
+  keep: number
+  kept: GoalArchiveRecord[]
+  removed: GoalArchiveRecord[]
+}
+
 export type GoalRestoreResult =
   | { ok: true; goal: GoalState; source: GoalArchiveRecord }
   | { ok: false; reason: "not_found"; matches: [] }
@@ -76,6 +82,19 @@ async function writeAtomic(target: string, value: unknown): Promise<void> {
   }
 }
 
+async function removeArchiveFile(target: string): Promise<void> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await fs.rm(target, { force: true })
+      return
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (process.platform !== "win32" || !["EPERM", "EACCES"].includes(String(code)) || attempt >= 5) throw error
+      await new Promise((resolve) => setTimeout(resolve, 10 * (attempt + 1)))
+    }
+  }
+}
+
 export class GoalStore {
   readonly root: string
   #locks = new Map<string, Promise<unknown>>()
@@ -122,6 +141,19 @@ export class GoalStore {
   async history(sessionID: string, limit = 20): Promise<GoalArchiveRecord[]> {
     const records = await this.#history(sessionID)
     return records.slice(0, Math.max(0, limit))
+  }
+
+  async pruneHistory(sessionID: string, keep: number): Promise<GoalHistoryPruneResult> {
+    if (!Number.isInteger(keep) || keep < 1) throw new Error("history prune keep must be a positive integer")
+    return await this.#locked(sessionID, async () => {
+      const records = await this.#history(sessionID)
+      const kept = records.slice(0, keep)
+      const removed = records.slice(keep)
+      for (const record of removed) {
+        await removeArchiveFile(this.archiveFileFor(sessionID, record.goalID))
+      }
+      return { keep, kept, removed }
+    })
   }
 
   async restore(sessionID: string, goalIDPrefix: string, now = Date.now()): Promise<GoalRestoreResult> {

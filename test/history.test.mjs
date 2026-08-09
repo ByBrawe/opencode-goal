@@ -75,6 +75,45 @@ test("cleared goal remains inspectable and history lookup does not pause the cur
   }
 })
 
+test("history prune keeps newest archives and cannot pause or replace the live goal", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-history-prune-command-"))
+  try {
+    const sessionID = "history-prune-session"
+    const store = new GoalStore(root)
+    const hooks = await OpenCodeGoalPlugin({ client: fakeClient(), directory: root })
+
+    const firstOutput = await runGoalCommand(hooks, sessionID, "first archived objective")
+    await bindCommandMessage(hooks, sessionID, "first-create", firstOutput)
+    const first = await store.load(sessionID)
+    const firstClear = await runGoalCommand(hooks, sessionID, "clear")
+    await bindCommandMessage(hooks, sessionID, "first-clear", firstClear)
+
+    const secondOutput = await runGoalCommand(hooks, sessionID, "second archived objective")
+    await bindCommandMessage(hooks, sessionID, "second-create", secondOutput)
+    const second = await store.load(sessionID)
+    const secondClear = await runGoalCommand(hooks, sessionID, "clear")
+    await bindCommandMessage(hooks, sessionID, "second-clear", secondClear)
+
+    const liveOutput = await runGoalCommand(hooks, sessionID, "live objective")
+    await bindCommandMessage(hooks, sessionID, "live-create", liveOutput)
+    const live = await store.load(sessionID)
+    assert.equal(live.status, "active")
+    assert.deepEqual((await store.history(sessionID)).map((item) => item.goal.id), [second.id, first.id])
+
+    const pruneOutput = await runGoalCommand(hooks, sessionID, "history prune --keep 1")
+    assert.match(pruneOutput.parts[0].text, /kept 1 newest archived Goal\(s\); removed 1 older archive\(s\)/)
+    assert.match(pruneOutput.parts[0].text, new RegExp(first.id.slice(0, 12)))
+    await bindCommandMessage(hooks, sessionID, "prune-command", pruneOutput)
+
+    const unchanged = await store.load(sessionID)
+    assert.equal(unchanged.id, live.id)
+    assert.equal(unchanged.status, "active", "history prune must remain command-owned")
+    assert.deepEqual((await store.history(sessionID)).map((item) => item.goal.id), [second.id])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test("cleared unfinished goal restores paused and only resumes after explicit command", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-restore-"))
   try {

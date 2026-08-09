@@ -1,6 +1,6 @@
 import type CorePlugin from "./plugin.js"
 import type { GoalBudget, GoalState } from "../domain/types.js"
-import { GoalStore, type GoalArchiveRecord, type GoalRestoreResult } from "../persistence/store.js"
+import { GoalStore, type GoalArchiveRecord, type GoalHistoryPruneResult, type GoalRestoreResult } from "../persistence/store.js"
 import { applyGoalBudget, budgetLimitHits, formatGoalBudget } from "../runtime/accounting.js"
 import { parseGoalCommand } from "./command.js"
 import { continuationPrompt } from "./prompt.js"
@@ -48,6 +48,15 @@ export function formatGoalHistory(records: GoalArchiveRecord[], selector?: strin
 
   const record = matches[0]!
   return `Archived goal: ${record.goalID}\nArchive reason: ${record.reason}\nArchived at: ${new Date(record.archivedAt).toISOString()}\n${formatDetailedGoalStatus(record.goal)}`
+}
+
+function formatHistoryPrune(result: GoalHistoryPruneResult): string {
+  if (!result.removed.length) {
+    return `Goal history already fits the requested retention. Kept ${result.kept.length} archived Goal(s); removed 0.`
+  }
+  const shown = result.removed.slice(0, 10)
+  const more = result.removed.length > shown.length ? `\n… and ${result.removed.length - shown.length} more removed archive(s).` : ""
+  return `Pruned Goal history: kept ${result.kept.length} newest archived Goal(s); removed ${result.removed.length} older archive(s).\nRemoved:\n${shown.map(archiveLine).join("\n")}${more}`
 }
 
 function formatRestoreResult(result: GoalRestoreResult, selector: string): string {
@@ -127,6 +136,15 @@ export function enhanceGoalControls(input: PluginInput, hooks: PluginHooks): voi
       const ownedText = textFromParts(output.parts)
       const records = await store.history(event.sessionID, 500)
       const shown = `${formatGoalHistory(records, parsed.goalIDPrefix)}\nRespond with this history only; do not perform work.`
+      translatedOutput(output, shown, ownedText, translations, event.sessionID)
+      return
+    }
+
+    if (parsed.action === "history_prune") {
+      await commandHook({ ...event, arguments: "status" }, output)
+      const ownedText = textFromParts(output.parts)
+      const result = await store.pruneHistory(event.sessionID, parsed.historyKeep!)
+      const shown = `${formatHistoryPrune(result)}\nRespond with this history-prune status only; do not perform work.`
       translatedOutput(output, shown, ownedText, translations, event.sessionID)
       return
     }

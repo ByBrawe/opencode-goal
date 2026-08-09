@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { mkdtemp, writeFile, rm } from "node:fs/promises"
+import { access, mkdtemp, writeFile, rm } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { createGoal } from "../dist/domain/goal.js"
@@ -49,6 +49,37 @@ test("replaced and cleared goals are archived without polluting live recovery st
     assert.equal(history[1].goal.id, first.id)
     assert.equal(history[1].reason, "replaced")
     assert.match(store.archiveFileFor("session-a", first.id), /\.opencode[\\/]goals[\\/]history/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("history prune removes only oldest archives and leaves live goal untouched", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-history-prune-"))
+  try {
+    const store = new GoalStore(root)
+    const first = createGoal({ sessionID: "session-a", objective: "first", now: 100 })
+    const second = createGoal({ sessionID: "session-a", objective: "second", now: 200 })
+    const third = createGoal({ sessionID: "session-a", objective: "third", now: 300 })
+    const live = createGoal({ sessionID: "session-a", objective: "live", now: 400 })
+
+    await store.save(first)
+    await store.save(second)
+    await store.save(third)
+    await store.clear("session-a")
+    await store.save(live)
+
+    assert.deepEqual((await store.history("session-a")).map((item) => item.goal.id), [third.id, second.id, first.id])
+    const result = await store.pruneHistory("session-a", 2)
+    assert.equal(result.keep, 2)
+    assert.deepEqual(result.kept.map((item) => item.goal.id), [third.id, second.id])
+    assert.deepEqual(result.removed.map((item) => item.goal.id), [first.id])
+    assert.deepEqual((await store.history("session-a")).map((item) => item.goal.id), [third.id, second.id])
+    assert.equal((await store.load("session-a")).id, live.id)
+    await assert.rejects(() => access(store.archiveFileFor("session-a", first.id)))
+    await access(store.archiveFileFor("session-a", second.id))
+    await access(store.archiveFileFor("session-a", third.id))
+    await assert.rejects(() => store.pruneHistory("session-a", 0), /positive integer/)
   } finally {
     await rm(root, { recursive: true, force: true })
   }

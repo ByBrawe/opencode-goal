@@ -24,6 +24,17 @@ test("goal history accepts an optional id prefix and rejects extra arguments", (
   assert.throws(() => parseGoalCommand("history --all"), /unknown goal option/)
 })
 
+test("goal history prune requires explicit positive retention", () => {
+  const parsed = parseGoalCommand("history prune --keep 25")
+  assert.equal(parsed.action, "history_prune")
+  assert.equal(parsed.historyKeep, 25)
+  assert.throws(() => parseGoalCommand("history prune"), /expects --keep/)
+  assert.throws(() => parseGoalCommand("history prune --keep 0"), /positive integer/)
+  assert.throws(() => parseGoalCommand("history prune --keep -1"), /positive integer/)
+  assert.throws(() => parseGoalCommand("history prune --keep 1.5"), /positive integer/)
+  assert.throws(() => parseGoalCommand("history prune --all 10"), /expects --keep/)
+})
+
 test("goal restore requires exactly one id prefix", () => {
   const parsed = parseGoalCommand("restore a1b2c3d4")
   assert.equal(parsed.action, "restore")

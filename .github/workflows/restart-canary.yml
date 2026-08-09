@@ -49,6 +49,10 @@ jobs:
         env:
           OPENCODE_PRINT_LOGS: "1"
           OPENCODE_LOG_LEVEL: DEBUG
+      - name: Verify interrupted turn was not counted as stalled
+        shell: bash
+        run: |
+          node -e 'const fs=require("fs"); const t=fs.readFileSync("restart-canary.log","utf8"); const b=t.match(/"stalledBeforeRestart":\s*(\d+)/); const a=t.match(/"stalledAfterRestart":\s*(\d+)/); if(!b||!a) throw new Error("restart accounting fields missing from canary output"); if(Number(b[1])!==Number(a[1])) throw new Error(`restart changed stalledTurns ${b[1]} -> ${a[1]}`); console.log(`restart accounting preserved: stalledTurns=${a[1]}`)'
       - name: Upload failure diagnostics
         if: failure()
         uses: actions/upload-artifact@v4

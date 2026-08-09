@@ -95,6 +95,8 @@ async function main() {
   const discoveryFile = path.join(pluginDirectory, "opencode-goals-v2-canary.js")
   const sentinelFile = path.join(pluginDirectory, "opencode-goals-v2-sentinel.js")
   const projectConfig = path.join(project, "opencode.json")
+  const sentinelURL = pathToFileURL(sentinelFile).href
+  const adapterURL = pathToFileURL(discoveryFile).href
 
   await Promise.all([
     mkdir(pluginDirectory, { recursive: true }),
@@ -111,12 +113,15 @@ async function main() {
     XDG_STATE_HOME: state,
     OPENCODE_DB: path.join(data, "opencode", "opencode-next.db"),
     OPENCODE_LOG_LEVEL: "DEBUG",
+    OPENCODE_CONFIG_CONTENT: JSON.stringify({
+      plugins: [sentinelURL, adapterURL],
+    }),
   }
 
   // Current OpenCode project detection keeps an empty `git init` workspace in
   // the global project. A repository with a real root commit receives its own
-  // project ID. Use explicit local plugin entries in the project-root config so
-  // this canary independently distinguishes config loading from Goals setup.
+  // project ID. Use both project-root config and OPENCODE_CONFIG_CONTENT so a
+  // missing plugin cannot be blamed on filesystem config discovery alone.
   run("git", ["init", "-q"], { cwd: project, env })
   await writeFile(path.join(project, "README.md"), "# OpenCode 2 canary workspace\n")
   await writeFile(
@@ -152,10 +157,6 @@ async function main() {
     health = output(healthResult)
     if (!health) throw new Error("OpenCode 2 health API returned no output")
 
-    // OpenCode's location middleware reads bracket-form query keys directly:
-    // location[directory] and location[workspace]. The CLI raw method/path form
-    // forwards this query string unchanged while still handling service
-    // discovery and private authentication for us.
     const pluginPath = `/api/plugin?location%5Bdirectory%5D=${encodeURIComponent(project)}`
     const pluginResult = run("opencode2", ["api", "get", pluginPath], { cwd: project, env })
     const pluginResponse = parseJSONOutput(pluginResult, "GET /api/plugin at project Location")
@@ -172,7 +173,7 @@ async function main() {
 
     const ids = pluginIDs(pluginResponse)
     if (!ids.includes(sentinelID)) {
-      throw new Error(`OpenCode 2 did not load the explicit local sentinel plugin, so project config/plugin loading is not proven. Active IDs: ${JSON.stringify(ids)}\nRaw response: ${String(pluginResult.stdout ?? "")}`)
+      throw new Error(`OpenCode 2 did not load the sentinel even when supplied through project config and OPENCODE_CONFIG_CONTENT. The exact beta host is not activating this V2 local-plugin contract. Active IDs: ${JSON.stringify(ids)}\nRaw response: ${String(pluginResult.stdout ?? "")}`)
     }
     if (!ids.includes(pluginID)) {
       throw new Error(`OpenCode 2 loaded the sentinel but not ${pluginID}; the Goals adapter module/setup is incompatible with this host. Active IDs: ${JSON.stringify(ids)}\nRaw response: ${String(pluginResult.stdout ?? "")}`)
@@ -189,7 +190,7 @@ async function main() {
       pluginSpecifier: pathToFileURL(pluginFile).href,
       discoveryFile,
       sentinelFile,
-      configScope: "isolated-project-explicit-local-plugins",
+      configScope: "project-config-plus-opencode-config-content",
       projectLocation: project,
       projectID: pluginResponse.location.project.id,
       opencode2Version: version,

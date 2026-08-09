@@ -2,7 +2,6 @@ import { replaceGoalConstraints } from "../domain/goal.js"
 import { GoalStore } from "../persistence/store.js"
 import { parseGoalCommand } from "./command.js"
 import { continuationPrompt } from "./prompt.js"
-import { showGoalToast } from "./toast.js"
 
 type PromptTranslation = { shown: string; owned: string }
 
@@ -14,24 +13,10 @@ function replaceParts(parts: any[], text: string) {
   parts.splice(0, parts.length, { type: "text", text })
 }
 
-async function notifyCommand(client: any, store: GoalStore, sessionID: string, action: ReturnType<typeof parseGoalCommand>["action"]) {
-  if (!["create", "edit", "pause", "resume", "clear"].includes(action)) return
-  if (action === "clear") {
-    await showGoalToast(client, "Goal cleared.", "info")
-    return
-  }
-  const goal = await store.load(sessionID)
-  if (!goal) return
-  if (action === "create") await showGoalToast(client, `Goal active: ${goal.objective}`, "success")
-  else if (action === "edit") await showGoalToast(client, `Goal contract updated (revision ${goal.revision}).`, "info")
-  else if (action === "pause") await showGoalToast(client, "Goal paused.", "warning")
-  else if (action === "resume") await showGoalToast(client, goal.status === "active" ? "Goal resumed." : `Goal remains ${goal.status}.`, goal.status === "active" ? "success" : "warning")
-}
-
 /**
- * Adds structured contract flags and best-effort TUI feedback without changing the
- * core command ownership protocol. The translation layer composes with controls.ts,
- * so budget/create/edit prompt ownership stays exact.
+ * Adds structured Goal Contract flags without changing the core command
+ * ownership protocol. Lifecycle UI is finalized by the restricted-agent layer
+ * after the actual execution boundary is known.
  */
 export function installGoalContractUX(input: any, hooks: any): void {
   const commandHook = hooks["command.execute.before"]
@@ -64,8 +49,6 @@ export function installGoalContractUX(input: any, hooks: any): void {
         translations.set(event.sessionID, { shown, owned })
       }
     }
-
-    await notifyCommand(input.client, store, event.sessionID, parsed.action)
   }
 
   hooks["chat.message"] = async (event: any, output: any) => {

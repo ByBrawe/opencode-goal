@@ -91,11 +91,12 @@ export function applyGoalBudget(goal: GoalState, patch: Partial<GoalBudget>, now
     }
   }
 
+  const { stopReason: _previousStopReason, ...rest } = goal
   return {
-    ...goal,
+    ...rest,
     budget,
     status,
-    ...(stopReason ? { stopReason } : { stopReason: undefined }),
+    ...(stopReason ? { stopReason } : {}),
     updatedAt: now,
   }
 }

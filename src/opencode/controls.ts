@@ -3,6 +3,7 @@ import type { GoalBudget, GoalState } from "../domain/types.js"
 import { GoalStore } from "../persistence/store.js"
 import { applyGoalBudget, budgetLimitHits, formatGoalBudget } from "../runtime/accounting.js"
 import { parseGoalCommand } from "./command.js"
+import { continuationPrompt } from "./prompt.js"
 
 type PluginInput = Parameters<typeof CorePlugin>[0]
 type PluginHooks = Awaited<ReturnType<typeof CorePlugin>>
@@ -36,6 +37,32 @@ function budgetPatch(parsed: ReturnType<typeof parseGoalCommand>): Partial<GoalB
 function translatedOutput(output: any, text: string, ownedText: string, translations: Map<string, PromptTranslation>, sessionID: string) {
   replaceParts(output.parts, text)
   translations.set(sessionID, { shown: text, owned: ownedText })
+}
+
+async function applyParsedBudgetAfterCore(
+  store: GoalStore,
+  parsed: ReturnType<typeof parseGoalCommand>,
+  event: any,
+  output: any,
+  translations: Map<string, PromptTranslation>,
+): Promise<void> {
+  const patch = budgetPatch(parsed)
+  if (!Object.keys(patch).length) return
+  const current = await store.load(event.sessionID)
+  if (!current) return
+  const next = applyGoalBudget(current, patch)
+  await store.save(next)
+
+  const ownedText = textFromParts(output.parts)
+  if (next.status === "active") {
+    const shown = continuationPrompt(next)
+    if (shown !== ownedText) translatedOutput(output, shown, ownedText, translations, event.sessionID)
+    return
+  }
+
+  output.noReply = true
+  const shown = `${formatDetailedGoalStatus(next)}\nRespond with this status only; do not perform work.`
+  translatedOutput(output, shown, ownedText, translations, event.sessionID)
 }
 
 export function enhanceGoalControls(input: PluginInput, hooks: PluginHooks): void {
@@ -73,6 +100,12 @@ export function enhanceGoalControls(input: PluginInput, hooks: PluginHooks): voi
       return
     }
 
+    if (parsed.action === "create" || parsed.action === "edit") {
+      await commandHook(event, output)
+      await applyParsedBudgetAfterCore(store, parsed, event, output, translations)
+      return
+    }
+
     if (parsed.action !== "budget") {
       await commandHook(event, output)
       return
@@ -104,6 +137,9 @@ export function enhanceGoalControls(input: PluginInput, hooks: PluginHooks): voi
       // no-progress accounting that a budget change must not erase.
       await commandHook({ ...event, arguments: "resume" }, output)
       await store.save(next)
+      const ownedText = textFromParts(output.parts)
+      const shown = continuationPrompt(next)
+      if (shown !== ownedText) translatedOutput(output, shown, ownedText, translations, event.sessionID)
       return
     }
 

@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs"
 import path from "node:path"
 import type { GoalState } from "../domain/types.js"
-import { GoalStore, GoalStoreIntegrityError, type GoalStoreIntegrityKind } from "./store.js"
+import { assertGoalStoragePathSafe, GoalStore, GoalStoreIntegrityError, type GoalStoreIntegrityKind } from "./store.js"
 
 export interface GoalStorageDiagnosticIssue {
   scope: "live" | "archive"
@@ -67,9 +67,11 @@ export async function scanRecoverableGoalStates(directory: string): Promise<Goal
   const store = new GoalStore(directory)
   let names: string[]
   try {
+    await assertGoalStoragePathSafe(store.directory, store.root)
     names = await fs.readdir(store.root)
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return []
+    if (error instanceof GoalStoreIntegrityError) return []
     throw error
   }
 
@@ -79,9 +81,11 @@ export async function scanRecoverableGoalStates(directory: string): Promise<Goal
     const file = path.join(store.root, name)
     let raw: string
     try {
+      await assertGoalStoragePathSafe(store.directory, file)
       raw = await fs.readFile(file, "utf8")
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") continue
+      if (error instanceof GoalStoreIntegrityError) continue
       throw error
     }
 

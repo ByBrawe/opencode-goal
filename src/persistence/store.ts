@@ -4,7 +4,7 @@ import path from "node:path"
 import type { GoalState } from "../domain/types.js"
 
 export type GoalArchiveReason = "cleared" | "replaced"
-export type GoalStoreIntegrityKind = "invalid_json" | "invalid_state" | "invalid_archive"
+export type GoalStoreIntegrityKind = "invalid_json" | "invalid_state" | "invalid_archive" | "unsafe_path"
 
 export class GoalStoreIntegrityError extends Error {
   readonly code = "GOAL_STORE_INTEGRITY"
@@ -90,7 +90,49 @@ function archiveIntegrityDetail(value: unknown): string {
   return "stored archive shape or session binding is invalid"
 }
 
-async function readStateFile(file: string): Promise<GoalState | null> {
+function isWithin(base: string, candidate: string): boolean {
+  const relative = path.relative(base, candidate)
+  return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative))
+}
+
+async function lstatIfPresent(file: string) {
+  try {
+    return await fs.lstat(file)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null
+    throw error
+  }
+}
+
+export async function assertGoalStoragePathSafe(directory: string, target: string): Promise<void> {
+  const base = path.resolve(directory)
+  const resolvedTarget = path.resolve(target)
+  if (!isWithin(base, resolvedTarget)) {
+    throw new GoalStoreIntegrityError(target, "unsafe_path", "storage path escapes the project directory")
+  }
+
+  const baseReal = await fs.realpath(base)
+  const relative = path.relative(base, resolvedTarget)
+  const parts = relative.split(path.sep).filter(Boolean)
+  let current = base
+
+  for (const part of parts) {
+    current = path.join(current, part)
+    const stat = await lstatIfPresent(current)
+    if (!stat) break
+    if (stat.isSymbolicLink()) {
+      throw new GoalStoreIntegrityError(current, "unsafe_path", "storage path contains a symbolic link or junction")
+    }
+
+    const real = await fs.realpath(current)
+    if (!isWithin(baseReal, real)) {
+      throw new GoalStoreIntegrityError(current, "unsafe_path", "storage path resolves outside the project directory")
+    }
+  }
+}
+
+async function readStateFile(directory: string, file: string): Promise<GoalState | null> {
+  await assertGoalStoragePathSafe(directory, file)
   let raw: string
   try {
     raw = await fs.readFile(file, "utf8")
@@ -106,45 +148,55 @@ async function readStateFile(file: string): Promise<GoalState | null> {
   return state
 }
 
-async function writeAtomic(target: string, value: unknown): Promise<void> {
+async function writeAtomic(directory: string, target: string, value: unknown): Promise<void> {
+  await assertGoalStoragePathSafe(directory, target)
   await fs.mkdir(path.dirname(target), { recursive: true })
+  await assertGoalStoragePathSafe(directory, target)
+
   const temp = `${target}.${process.pid}.${randomUUID()}.tmp`
-  await fs.writeFile(temp, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", mode: 0o600 })
+  await assertGoalStoragePathSafe(directory, temp)
+  await fs.writeFile(temp, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", mode: 0o600, flag: "wx" })
+
   for (let attempt = 0; ; attempt += 1) {
     try {
+      await assertGoalStoragePathSafe(directory, target)
       await fs.rename(temp, target)
       break
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code
-      if (process.platform !== "win32" || !["EPERM", "EACCES", "EEXIST"].includes(String(code)) || attempt >= 5) {
+      if (error instanceof GoalStoreIntegrityError || process.platform !== "win32" || !["EPERM", "EACCES", "EEXIST"].includes(String(code)) || attempt >= 5) {
         await fs.rm(temp, { force: true }).catch(() => undefined)
         throw error
       }
       await new Promise((resolve) => setTimeout(resolve, 10 * (attempt + 1)))
+      await assertGoalStoragePathSafe(directory, target)
       await fs.rm(target, { force: true }).catch(() => undefined)
     }
   }
 }
 
-async function removeArchiveFile(target: string): Promise<void> {
+async function removeStorageFile(directory: string, target: string): Promise<void> {
   for (let attempt = 0; ; attempt += 1) {
     try {
+      await assertGoalStoragePathSafe(directory, target)
       await fs.rm(target, { force: true })
       return
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code
-      if (process.platform !== "win32" || !["EPERM", "EACCES"].includes(String(code)) || attempt >= 5) throw error
+      if (error instanceof GoalStoreIntegrityError || process.platform !== "win32" || !["EPERM", "EACCES"].includes(String(code)) || attempt >= 5) throw error
       await new Promise((resolve) => setTimeout(resolve, 10 * (attempt + 1)))
     }
   }
 }
 
 export class GoalStore {
+  readonly directory: string
   readonly root: string
   #locks = new Map<string, Promise<unknown>>()
 
   constructor(directory: string) {
-    this.root = path.join(directory, ".opencode", "goals")
+    this.directory = path.resolve(directory)
+    this.root = path.join(this.directory, ".opencode", "goals")
   }
 
   fileFor(sessionID: string): string {
@@ -160,10 +212,11 @@ export class GoalStore {
   }
 
   async load(sessionID: string): Promise<GoalState | null> {
-    return await readStateFile(this.fileFor(sessionID))
+    return await readStateFile(this.directory, this.fileFor(sessionID))
   }
 
   async list(): Promise<GoalState[]> {
+    await assertGoalStoragePathSafe(this.directory, this.root)
     let names: string[]
     try {
       names = await fs.readdir(this.root)
@@ -176,7 +229,7 @@ export class GoalStore {
     const states: GoalState[] = []
     for (const name of names) {
       if (!name.endsWith(".json")) continue
-      const state = await readStateFile(path.join(this.root, name))
+      const state = await readStateFile(this.directory, path.join(this.root, name))
       if (state) states.push(state)
     }
     return states
@@ -194,7 +247,7 @@ export class GoalStore {
       const kept = records.slice(0, keep)
       const removed = records.slice(keep)
       for (const record of removed) {
-        await removeArchiveFile(this.archiveFileFor(sessionID, record.goalID))
+        await removeStorageFile(this.directory, this.archiveFileFor(sessionID, record.goalID))
       }
       return { keep, kept, removed }
     })
@@ -209,7 +262,7 @@ export class GoalStore {
       if (matches.length > 1) return { ok: false, reason: "ambiguous", matches }
 
       const source = matches[0]!
-      const current = await readStateFile(this.fileFor(sessionID))
+      const current = await readStateFile(this.directory, this.fileFor(sessionID))
       if (current && current.status !== "completed") return { ok: false, reason: "live_unfinished", current }
       if (current?.id === source.goalID) return { ok: false, reason: "already_current", current }
       if (source.goal.status === "completed") return { ok: false, reason: "completed", source }
@@ -221,31 +274,33 @@ export class GoalStore {
         stopReason: "Restored from goal history. Use /goal resume to continue.",
         updatedAt: now,
       }
-      await writeAtomic(this.fileFor(sessionID), restored)
+      await writeAtomic(this.directory, this.fileFor(sessionID), restored)
       return { ok: true, goal: restored, source }
     })
   }
 
   async save(state: GoalState): Promise<void> {
     await this.#locked(state.sessionID, async () => {
-      const previous = await readStateFile(this.fileFor(state.sessionID))
+      const previous = await readStateFile(this.directory, this.fileFor(state.sessionID))
       if (previous && previous.id !== state.id) await this.#archive(previous, "replaced")
-      await writeAtomic(this.fileFor(state.sessionID), state)
+      await writeAtomic(this.directory, this.fileFor(state.sessionID), state)
     })
   }
 
   async clear(sessionID: string): Promise<void> {
     await this.#locked(sessionID, async () => {
-      const current = await readStateFile(this.fileFor(sessionID))
+      const current = await readStateFile(this.directory, this.fileFor(sessionID))
       if (current) await this.#archive(current, "cleared")
-      await fs.rm(this.fileFor(sessionID), { force: true })
+      await removeStorageFile(this.directory, this.fileFor(sessionID))
     })
   }
 
   async #history(sessionID: string): Promise<GoalArchiveRecord[]> {
+    const historyRoot = this.historyRootFor(sessionID)
+    await assertGoalStoragePathSafe(this.directory, historyRoot)
     let names: string[]
     try {
-      names = await fs.readdir(this.historyRootFor(sessionID))
+      names = await fs.readdir(historyRoot)
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code
       if (code === "ENOENT") return []
@@ -255,7 +310,8 @@ export class GoalStore {
     const records: GoalArchiveRecord[] = []
     for (const name of names) {
       if (!name.endsWith(".json")) continue
-      const file = path.join(this.historyRootFor(sessionID), name)
+      const file = path.join(historyRoot, name)
+      await assertGoalStoragePathSafe(this.directory, file)
       let raw: string
       try {
         raw = await fs.readFile(file, "utf8")
@@ -282,7 +338,7 @@ export class GoalStore {
       archivedAt,
       goal,
     }
-    await writeAtomic(this.archiveFileFor(goal.sessionID, goal.id), record)
+    await writeAtomic(this.directory, this.archiveFileFor(goal.sessionID, goal.id), record)
   }
 
   async #locked<T>(sessionID: string, fn: () => Promise<T>): Promise<T> {

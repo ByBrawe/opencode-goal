@@ -111,6 +111,22 @@
       "expected": "A corrupt shard is skipped without mutation while healthy active Goals remain eligible for restart recovery."
     },
     {
+      "id": "storage-integrity.live-symlink-escape-refused",
+      "category": "storage-integrity",
+      "weight": 3,
+      "testFile": "test/storage-path-safety.test.mjs",
+      "testName": "live Goal storage refuses symlink or junction escape before any external write",
+      "expected": "A symlink or junction in the live Goal storage path is classified unsafe before read/write/startup traversal and no external files are created."
+    },
+    {
+      "id": "storage-integrity.archive-symlink-escape-refused",
+      "category": "storage-integrity",
+      "weight": 3,
+      "testFile": "test/storage-path-safety.test.mjs",
+      "testName": "archive history refuses symlink or junction escape before read or prune",
+      "expected": "A symlink or junction in archive storage blocks history read/prune and leaves the external target untouched."
+    },
+    {
       "id": "provider-limit.explicit-quota-vs-transient-retry",
       "category": "provider-limit",
       "weight": 3,

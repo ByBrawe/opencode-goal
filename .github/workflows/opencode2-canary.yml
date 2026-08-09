@@ -26,14 +26,16 @@ jobs:
         run: npm install
       - name: Build OpenCode Goals
         run: npm run build
-      - name: Install current OpenCode 2 beta CLI
+      - name: Install current OpenCode 2 beta CLI and client
         env:
           GITHUB_TOKEN: ""
           NODE_AUTH_TOKEN: ""
-        run: npm install -g @opencode-ai/cli@next
+        run: |
+          npm install -g @opencode-ai/cli@next
+          npm install --no-save --package-lock=false @opencode-ai/client@next
       - name: Show OpenCode 2 version
         run: opencode2 --version
-      - name: Load experimental adapter in a real OpenCode 2 service
+      - name: Load experimental adapter in a real OpenCode 2 location
         env:
           GITHUB_TOKEN: ""
           NODE_AUTH_TOKEN: ""

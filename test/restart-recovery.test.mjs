@@ -10,6 +10,15 @@ async function tick() {
   await new Promise((resolve) => setTimeout(resolve, 0))
 }
 
+async function waitFor(predicate, description, timeoutMs = 2_000) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (predicate()) return
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  throw new Error(`timed out waiting for ${description}`)
+}
+
 async function readGoal(root) {
   const dir = path.join(root, ".opencode", "goals")
   const files = await readdir(dir)
@@ -30,6 +39,12 @@ function pendingClient() {
         abort() {
           return Promise.resolve(true)
         },
+        list() {
+          return Promise.resolve({ data: [{ id: "session-restart" }] })
+        },
+        status() {
+          return Promise.resolve({ data: {} })
+        },
       },
     },
     prompts,
@@ -37,7 +52,7 @@ function pendingClient() {
   }
 }
 
-test("a fresh plugin instance reloads an active goal and resumes it exactly once on idle", async () => {
+test("a fresh plugin instance automatically reloads and resumes an active goal exactly once", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-restart-"))
   try {
     const first = pendingClient()
@@ -104,10 +119,7 @@ test("a fresh plugin instance reloads an active goal and resumes it exactly once
     const second = pendingClient()
     const afterRestart = await OpenCodeGoalPlugin({ client: second.client, directory: root })
 
-    await afterRestart.event({
-      event: { type: "session.idle", properties: { sessionID: "session-restart" } },
-    })
-    await tick()
+    await waitFor(() => second.prompts.length === 1, "automatic startup recovery continuation")
 
     assert.equal(second.prompts.length, 1, "restart recovery must dispatch one continuation")
     assert.equal(second.prompts[0].path.id, "session-restart")
@@ -115,6 +127,14 @@ test("a fresh plugin instance reloads an active goal and resumes it exactly once
     assert.deepEqual(second.prompts[0].body.model, { providerID: "provider", modelID: "model" })
     assert.equal(second.prompts[0].body.variant, "high")
     assert.match(second.prompts[0].body.parts[0].text, /finish restart-safe work/)
+
+    // A real host may also emit idle while startup recovery is still in flight.
+    // The runtime lock must collapse that race instead of launching a duplicate.
+    await afterRestart.event({
+      event: { type: "session.idle", properties: { sessionID: "session-restart" } },
+    })
+    await tick()
+    assert.equal(second.prompts.length, 1, "startup recovery and idle must not dispatch concurrently")
 
     const recovered = await readGoal(root)
     assert.equal(recovered.status, "active")
@@ -124,7 +144,7 @@ test("a fresh plugin instance reloads an active goal and resumes it exactly once
 
     second.pending[0].resolve({})
     await tick()
-    assert.equal(second.prompts.length, 1, "one recovery idle must not self-dispatch a second continuation")
+    assert.equal(second.prompts.length, 1, "one recovery dispatch must not self-launch another continuation")
   } finally {
     await rm(root, { recursive: true, force: true })
   }

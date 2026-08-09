@@ -8,7 +8,7 @@ import path from "node:path"
 import { createGoal } from "../dist/domain/goal.js"
 import { GoalStore, GoalStoreConcurrencyError } from "../dist/persistence/store.js"
 
-const worker = fileURLToPath(new URL("./fixtures/store-concurrency-worker.mjs", import.meta.url))
+const worker = fileURLToPath(new URL("../scripts/store-concurrency-worker.mjs", import.meta.url))
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))

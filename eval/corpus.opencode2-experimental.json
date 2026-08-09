@@ -9,8 +9,8 @@
       "category": "opencode2-experimental",
       "weight": 3,
       "testFile": "test/opencode2-experimental.test.mjs",
-      "testName": "V2 control is request-scoped exact-argument-bound and single-use",
-      "expected": "Ordinary model requests cannot see or invoke the mutating Goal control; an authorized /goal request binds exact raw arguments once, so changed or replayed tool input fails before storage mutation."
+      "testName": "V2 control is context-scoped exact-argument-bound and single-use",
+      "expected": "Ordinary model contexts cannot see or invoke the mutating Goal control; an authorized /goal context binds exact raw arguments once, so changed or replayed tool input fails before storage mutation."
     },
     {
       "id": "opencode2.plan-contract-paused-build-resume",
@@ -29,12 +29,12 @@
       "expected": "A V2 control without stable parity refuses explicitly and leaves the exact live Goal snapshot unchanged."
     },
     {
-      "id": "opencode2.request-plan-boundary",
+      "id": "opencode2.context-plan-boundary",
       "category": "opencode2-experimental",
       "weight": 3,
       "testFile": "test/opencode2-experimental.test.mjs",
-      "testName": "V2 request hook injects persisted state and pauses an active Goal selected through Plan",
-      "expected": "Persisted Goal state reaches the current V2 model request while Plan remains a hard execution boundary and mutating Goal control stays hidden from ordinary requests."
+      "testName": "V2 context hook injects persisted state and pauses an active Goal selected through Plan",
+      "expected": "Persisted Goal state reaches the current V2 model context while Plan remains a hard execution boundary and mutating Goal control stays hidden from ordinary contexts."
     },
     {
       "id": "opencode2.workspace-resolution-fail-closed",

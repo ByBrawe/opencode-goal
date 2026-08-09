@@ -217,7 +217,7 @@ export class GoalStore {
   constructor(directory: string, options: GoalStoreOptions = {}) {
     this.directory = path.resolve(directory)
     this.root = path.join(this.directory, ".opencode", "goals")
-    this.locksRoot = path.join(this.root, "locks")
+    this.locksRoot = path.join(this.directory, ".opencode", "goal-locks")
     this.processLockTimeoutMs = options.processLockTimeoutMs ?? 5_000
     if (!Number.isFinite(this.processLockTimeoutMs) || this.processLockTimeoutMs < 1) throw new Error("processLockTimeoutMs must be positive")
   }

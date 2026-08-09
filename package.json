@@ -21,6 +21,7 @@
     "canary:semantic": "node --import ./scripts/host-canary-bootstrap.mjs scripts/host-semantic-canary.mjs",
     "canary:steering": "node --import ./scripts/host-canary-bootstrap.mjs scripts/host-steering-canary.mjs",
     "canary:progress": "node --import ./scripts/host-canary-bootstrap.mjs scripts/host-progress-canary.mjs",
+    "canary:restart": "node --import ./scripts/host-canary-bootstrap.mjs scripts/host-restart-canary.mjs",
     "pack:check": "npm pack --dry-run"
   },
   "keywords": ["opencode", "goal", "agent", "autonomous", "codex", "plugin"],

@@ -1,4 +1,4 @@
-name: Publish npm beta
+name: Publish npm stable
 
 on:
   workflow_dispatch:
@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - .github/workflows/publish-npm.yml
+      - package.json
 
 permissions:
   contents: read
@@ -13,7 +14,7 @@ permissions:
 
 jobs:
   publish:
-    name: Publish 0.1.0-beta.2
+    name: Publish 1.0.0
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -33,14 +34,14 @@ jobs:
           NPM_VERSION="$(npm --version)"
           echo "npm $NPM_VERSION"
           NPM_VERSION="$NPM_VERSION" node -e 'const [major, minor] = process.env.NPM_VERSION.split(".").map(Number); if (major < 11 || (major === 11 && minor < 5)) { console.error("npm >= 11.5.1 is required for trusted publishing"); process.exit(1) }'
-      - name: Decide whether beta needs publishing
+      - name: Decide whether stable needs publishing
         id: release
         shell: bash
         run: |
-          EXPECTED="0.1.0-beta.2"
+          EXPECTED="1.0.0"
           ACTUAL="$(node -p "JSON.parse(require('fs').readFileSync('package.json', 'utf8')).version")"
           if [ "$ACTUAL" != "$EXPECTED" ]; then
-            echo "Package version $ACTUAL is not the one-shot beta $EXPECTED; skipping."
+            echo "Package version $ACTUAL is not the one-shot stable $EXPECTED; skipping."
             echo "publish=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -53,6 +54,6 @@ jobs:
       - name: Install release dependencies
         if: steps.release.outputs.publish == 'true'
         run: npm install
-      - name: Publish beta with npm trusted publishing
+      - name: Publish stable with npm trusted publishing
         if: steps.release.outputs.publish == 'true'
-        run: npm publish --tag beta --access public
+        run: npm publish --tag latest --access public

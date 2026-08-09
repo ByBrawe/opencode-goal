@@ -1,6 +1,6 @@
 {
   "name": "@bybrawe/opencode-goal",
-  "version": "0.1.0-beta.2",
+  "version": "1.0.0",
   "description": "Persistent, host-verified Goals for OpenCode.",
   "type": "module",
   "main": "./dist/index.js",
@@ -11,7 +11,7 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist", "README.md", "LICENSE"],
+  "files": ["dist", "README.md", "CHANGELOG.md", "LICENSE"],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/ByBrawe/opencode-goal.git"

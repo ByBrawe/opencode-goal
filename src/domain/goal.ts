@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto"
-import type { FileRequirementInput, GoalBudget, GoalExecutionContext, GoalRequirement, GoalState, VerificationKind } from "./types.js"
+import type { FileRequirementInput, GoalBudget, GoalExecutionContext, GoalRequirement, GoalRequirementSource, GoalState, VerificationKind } from "./types.js"
 
 const DEFAULT_BUDGET: GoalBudget = {
   maxTurns: 30,
@@ -11,6 +11,7 @@ const DEFAULT_BUDGET: GoalBudget = {
 function requirement(input: {
   text: string
   verification: VerificationKind
+  source: GoalRequirementSource
   command?: string
   file?: string
   contains?: string
@@ -23,6 +24,7 @@ function requirement(input: {
     status: "pending",
     evidenceIDs: [],
     verification: input.verification,
+    source: input.source,
     ...(input.command ? { command: input.command } : {}),
     ...(input.file ? { file: input.file } : {}),
     ...(input.contains ? { contains: input.contains } : {}),
@@ -30,10 +32,26 @@ function requirement(input: {
   }
 }
 
+function existingAcceptance(goal: GoalState): string[] {
+  const semantic = goal.requirements.filter((item) => item.verification === "semantic")
+  return semantic
+    .filter((item, index) => item.source === "acceptance" || (!item.source && index > 0))
+    .map((item) => item.text)
+}
+
+function existingConstraints(goal: GoalState): string[] {
+  if (Array.isArray(goal.constraints)) return [...goal.constraints]
+  return goal.requirements
+    .filter((item) => item.source === "constraint")
+    .map((item) => item.text.replace(/^Constraint preserved:\s*/i, "").trim())
+    .filter(Boolean)
+}
+
 export function createGoal(input: {
   sessionID: string
   objective: string
   acceptance?: string[]
+  constraints?: string[]
   checks?: string[]
   files?: FileRequirementInput[]
   execution?: GoalExecutionContext
@@ -44,20 +62,23 @@ export function createGoal(input: {
   const objective = input.objective.trim()
   if (!objective) throw new Error("goal objective must not be empty")
   const acceptance = (input.acceptance ?? []).map((item) => item.trim()).filter(Boolean)
+  const constraints = (input.constraints ?? []).map((item) => item.trim()).filter(Boolean)
   const checks = (input.checks ?? []).map((item) => item.trim()).filter(Boolean)
   const files = (input.files ?? []).filter((item) => item.file.trim())
   const requirements: GoalRequirement[] = [
-    requirement({ text: `Objective achieved: ${objective}`, verification: "semantic" }),
+    requirement({ text: `Objective achieved: ${objective}`, verification: "semantic", source: "objective" }),
   ]
 
-  for (const item of acceptance) requirements.push(requirement({ text: item, verification: "semantic" }))
-  for (const command of checks) requirements.push(requirement({ text: `Verification command passes: ${command}`, verification: "command", command }))
+  for (const item of acceptance) requirements.push(requirement({ text: item, verification: "semantic", source: "acceptance" }))
+  for (const item of constraints) requirements.push(requirement({ text: `Constraint preserved: ${item}`, verification: "semantic", source: "constraint" }))
+  for (const command of checks) requirements.push(requirement({ text: `Verification command passes: ${command}`, verification: "command", source: "check", command }))
   for (const item of files) {
     const file = item.file.trim()
     const contains = item.contains?.trim()
     requirements.push(requirement({
       text: contains ? `File ${file} contains: ${contains}` : `File exists: ${file}`,
       verification: "file",
+      source: "file",
       file,
       ...(contains ? { contains } : {}),
     }))
@@ -68,6 +89,7 @@ export function createGoal(input: {
     id: randomUUID(),
     sessionID: input.sessionID,
     objective,
+    constraints,
     revision: 1,
     status: "active",
     requirements,
@@ -90,6 +112,7 @@ export function createGoal(input: {
 export function editGoal(goal: GoalState, input: {
   objective: string
   acceptance?: string[]
+  constraints?: string[]
   checks?: string[]
   files?: FileRequirementInput[]
   execution?: GoalExecutionContext
@@ -101,7 +124,8 @@ export function editGoal(goal: GoalState, input: {
   const next = createGoal({
     sessionID: goal.sessionID,
     objective: input.objective,
-    ...(input.acceptance === undefined ? {} : { acceptance: input.acceptance }),
+    acceptance: input.acceptance ?? existingAcceptance(goal),
+    constraints: input.constraints ?? existingConstraints(goal),
     checks: input.checks ?? goal.checks,
     files: input.files ?? existingFiles,
     ...((input.execution ?? goal.execution) ? { execution: input.execution ?? goal.execution } : {}),

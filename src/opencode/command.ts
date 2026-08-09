@@ -1,7 +1,7 @@
 import type { FileRequirementInput } from "../domain/types.js"
 
 export interface ParsedGoalCommand {
-  action: "create" | "status" | "contract" | "pause" | "resume" | "clear" | "edit" | "budget" | "history" | "history_prune" | "restore" | "doctor" | "list"
+  action: "create" | "status" | "contract" | "audit" | "pause" | "resume" | "clear" | "edit" | "budget" | "history" | "history_prune" | "restore" | "doctor" | "list"
   objective: string
   acceptance: string[]
   constraints: string[]
@@ -69,6 +69,10 @@ export function parseGoalCommand(input: string): ParsedGoalCommand {
   if (sub === "contract") {
     if (list.length !== 1) throw new Error("/goal contract does not accept arguments")
     return empty("contract")
+  }
+  if (sub === "audit") {
+    if (list.length !== 1) throw new Error("/goal audit does not accept arguments")
+    return empty("audit")
   }
   if (["status", "pause", "resume", "clear"].includes(sub)) {
     return empty(sub as ParsedGoalCommand["action"])

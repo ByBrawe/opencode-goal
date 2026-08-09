@@ -10,7 +10,7 @@ async function tick() {
   await new Promise((resolve) => setTimeout(resolve, 0))
 }
 
-async function waitFor(predicate, description, timeoutMs = 4_000) {
+async function waitFor(predicate, description, timeoutMs = 2_000) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     if (predicate()) return
@@ -32,12 +32,6 @@ function pendingClient() {
   return {
     client: {
       session: {
-        list() {
-          return Promise.resolve({ data: [{ id: "session-restart" }] })
-        },
-        status() {
-          return Promise.resolve({ data: {} })
-        },
         prompt(arg) {
           prompts.push(arg)
           return new Promise((resolve, reject) => pending.push({ resolve, reject }))
@@ -52,7 +46,7 @@ function pendingClient() {
   }
 }
 
-test("a fresh plugin instance automatically reloads and resumes an active goal exactly once", async () => {
+test("a fresh plugin instance resumes an active goal only after the host config lifecycle", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-restart-"))
   try {
     const first = pendingClient()
@@ -114,14 +108,21 @@ test("a fresh plugin instance automatically reloads and resumes an active goal e
       variant: "high",
     })
 
-    // Simulate a full plugin/process restart: all in-memory ownership, locks and
-    // dispatch state disappear, while the project-local goal shard remains.
-    // Recovery first waits for an abortable read-only session probe to prove the
-    // lazy directory instance can service requests before it sends a prompt.
+    // Simulate a full plugin/process restart. Plugin construction happens while
+    // OpenCode still owns its lazy directory-instance bootstrap, so recovery is
+    // forbidden from calling back into the host at this point.
     const second = pendingClient()
-    await OpenCodeGoalPlugin({ client: second.client, directory: root })
+    const afterRestart = await OpenCodeGoalPlugin({ client: second.client, directory: root })
+    await tick()
+    assert.equal(second.prompts.length, 0, "plugin construction must not dispatch restart recovery")
 
-    await waitFor(() => second.prompts.length === 1, "automatic startup recovery continuation")
+    // OpenCode invokes config hooks near the end of plugin initialization. The
+    // recovery wrapper chains the existing config work, then defers one
+    // macrotask so instance initialization can finish before prompting.
+    const config = {}
+    await afterRestart.config?.(config)
+    assert.ok(config.command?.goal, "existing goal command registration must be preserved")
+    await waitFor(() => second.prompts.length === 1, "post-config startup recovery continuation")
 
     assert.equal(second.prompts.length, 1, "restart recovery must dispatch one continuation")
     assert.equal(second.prompts[0].path.id, "session-restart")

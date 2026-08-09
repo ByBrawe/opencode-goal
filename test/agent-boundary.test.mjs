@@ -85,7 +85,7 @@ test("Plan cannot resume a Goal but Build can explicitly resume and repin execut
     const stillPaused = await store.load(sessionID)
     assert.equal(stillPaused.status, "paused")
     assert.equal(stillPaused.execution.agent, "plan")
-    assert.match(planResume.parts[0].text, /Switch to Build and run \/goal resume/)
+    assert.match(planResume.parts[0].text, /switch to Build and run \/goal resume/i)
 
     const buildResume = await runGoalCommand(hooks, sessionID, "resume")
     await bindCommandMessage(hooks, sessionID, "build-resume", buildResume, "build")
@@ -114,7 +114,7 @@ test("idle cannot auto-continue an active Goal bound to Plan", async () => {
     const paused = await store.load(sessionID)
     assert.equal(paused.status, "paused")
     assert.equal(paused.execution.agent, "plan")
-    assert.match(paused.stopReason, /Switch to Build and run \/goal resume/)
+    assert.match(paused.stopReason, /switch to Build and run \/goal resume/i)
     assert.equal(runtime.prompts.length, 0, "restricted idle must never dispatch a continuation prompt")
   } finally {
     await rm(root, { recursive: true, force: true })

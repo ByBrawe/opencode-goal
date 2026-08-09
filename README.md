@@ -50,6 +50,11 @@ If the verifier does not submit a complete typed verdict, returns ambiguous evid
 - `/goal resume` while Plan is selected cannot activate autonomous work. The user must switch to Build and explicitly run `/goal resume`; that turn re-pins future continuation to Build.
 - A Plan-bound active Goal cannot escape through `session.idle` or process restart recovery. Both paths pause it without dispatching an implementation prompt.
 - Goal/objective/requirement text is treated as user task data and cannot override system/developer instructions, repository policy, OpenCode permissions, or the selected agent/mode.
+- A parent Goal does not start a new autonomous idle continuation while a tracked delegated `task` is still running.
+- Foreground task deferral follows the real tool-call lifetime. Background task deferral follows OpenCode's child-session lifecycle metadata/events; it does not poll `/session/status`.
+- Waiting on delegated work keeps the Goal `active`; it is not counted as a stalled turn and does not consume a fake continuation turn.
+- Multiple background children keep the parent deferred until every tracked child is terminal.
+- Host-generated synthetic background-task completion/error messages are treated as delegated-task lifecycle input rather than user intervention. Plain user text cannot spoof that path because only `synthetic: true` task results are trusted.
 - Explicit requirement ledger with `pending`, `proven`, `failed`, `unknown`, and `blocked` states.
 - Evidence records carry trust (`host`, `verifier`, `user`, or `agent`) and the goal revision that produced them.
 - Agent-written notes **cannot** prove requirements.
@@ -87,7 +92,7 @@ If the verifier does not submit a complete typed verdict, returns ambiguous evid
 - Active Goals recover after a real OpenCode process restart using the persisted session and execution context; the interrupted turn is not falsely counted as stalled.
 - Goal state — including Goal Contract constraints — is injected into OpenCode compaction context; OpenCode's generic post-compaction continue is disabled while the goal runtime owns continuation.
 - Duplicate idle events cannot launch concurrent continuation prompts.
-- When a compatible OpenCode TUI is attached, explicit create/edit/pause/resume/clear commands may emit a best-effort **OpenCode Goals** toast. Toast delivery is optional UI only: missing/disconnected TUI support can never fail Goal persistence or verification.
+- When a compatible OpenCode TUI is attached, explicit create/edit/pause/resume/clear commands may emit a best-effort **OpenCode Goals** toast. Delegated-task waiting may also emit a one-time informational toast. Toast delivery is optional UI only: missing/disconnected TUI support can never fail Goal persistence or verification.
 
 ## Install
 
@@ -187,9 +192,22 @@ OpenCode Goals treats `plan` case-insensitively as a planning-only execution bou
 - If OpenCode restarts with an active persisted Plan-bound Goal, startup capture pauses it before any recovery prompt. Recovery also re-checks the agent immediately before dispatch.
 - Plan safety is state-machine enforcement, not merely wording in the continuation prompt.
 
+## Delegated task coordination
+
+OpenCode's `task` tool can delegate work to child/subagent sessions. OpenCode Goals coordinates its own idle continuation with that lifecycle so the parent Goal does not race a still-running child with a fresh autonomous turn.
+
+- Foreground tasks defer the parent from `tool.execute.before` until the matching `tool.execute.after`.
+- Background tasks are tracked by the child `sessionId` OpenCode returns in task metadata and released by child terminal session events or a host-marked synthetic task completion/error message.
+- If several background children are active, all tracked children must be terminal before parent idle auto-continue is allowed again.
+- Deferral does not change Goal status, revision, evidence, usage, or stalled-turn accounting.
+- OpenCode Goals deliberately does **not** poll `/session/status` to decide task completion. Parent coordination is event/lifecycle driven so a stale `busy` status cannot become an unbounded Goal lock.
+- A synthetic task result bypasses the ordinary "new user message pauses the Goal" path only when OpenCode marks the text part `synthetic: true`; user-authored lookalike text remains normal user intervention.
+
+For foreground tasks, the current assistant turn naturally receives the child result before the tool call finishes. For background tasks, OpenCode itself injects the completed child result back into the parent session; OpenCode Goals only prevents an unrelated idle-driven parent turn from racing that work.
+
 ## OpenCode CLI, TUI, web, and future V2
 
-OpenCode Goals keeps the authoritative state in the server/plugin/session layer rather than in a visual widget. That makes `/goal`, `/goal status`, `/goal contract`, history, restore, agent-boundary state, and verification usable from normal OpenCode session surfaces without making correctness depend on a particular UI client.
+OpenCode Goals keeps the authoritative state in the server/plugin/session layer rather than in a visual widget. That makes `/goal`, `/goal status`, `/goal contract`, history, restore, agent-boundary state, delegated-task coordination, and verification usable from normal OpenCode session surfaces without making correctness depend on a particular UI client.
 
 The current V1 integration can additionally use the documented TUI toast endpoint for lightweight lifecycle feedback. It intentionally does **not** require an experimental third-party sidebar API, because the package still validates a broad minimum OpenCode plugin peer and headless/server workflows must remain first-class. Lifecycle toasts are finalized after restricted-agent enforcement, so Plan cannot first report a misleading active/resumed state and then be paused.
 
@@ -197,17 +215,17 @@ OpenCode 2 uses a new plugin API and is still beta. A V1 plugin implementation i
 
 ## Architecture
 
-The project is intentionally split into domain state, verification, runtime/accounting, persistence, agent/mode boundaries, and the OpenCode adapter. The domain layer has no dependency on OpenCode, so state invariants can be tested deterministically. Semantic verification is also a separate runtime boundary instead of being embedded in executor prompts.
+The project is intentionally split into domain state, verification, runtime/accounting, persistence, agent/mode boundaries, delegated-task coordination, and the OpenCode adapter. The domain layer has no dependency on OpenCode, so state invariants can be tested deterministically. Semantic verification is also a separate runtime boundary instead of being embedded in executor prompts.
 
 ## Test philosophy
 
-The suite is adversarial by default. It covers false-complete attempts, Goal Contract boundary bypass attempts, Plan create/resume/idle/restart escape attempts, read-only contract ownership, stale evidence, narrow-check scope bypass, hallucinated verifier quotes, invented host-evidence IDs, parent-session result forgery, user-interrupt races, duplicate idle events, blocker repetition, fake progress, usage deduplication, budget exhaustion/bypass attempts, provider quota classification, fatal/transient provider errors, persistence, unsupported/corrupt storage fail-closed behavior, read-only storage diagnostics, corrupt-shard startup isolation, storage symlink/junction escapes, cross-process live-lock contention, optimistic stale-write races, dead-owner lease recovery, archive/history isolation, explicit live-safe history pruning, safe paused restore, compaction ownership, process restart recovery, optional-TUI failure, and project-root path traversal.
+The suite is adversarial by default. It covers false-complete attempts, Goal Contract boundary bypass attempts, Plan create/resume/idle/restart escape attempts, delegated foreground/background/multi-child races, synthetic task-result spoof attempts, read-only contract ownership, stale evidence, narrow-check scope bypass, hallucinated verifier quotes, invented host-evidence IDs, parent-session result forgery, user-interrupt races, duplicate idle events, blocker repetition, fake progress, usage deduplication, budget exhaustion/bypass attempts, provider quota classification, fatal/transient provider errors, persistence, unsupported/corrupt storage fail-closed behavior, read-only storage diagnostics, corrupt-shard startup isolation, storage symlink/junction escapes, cross-process live-lock contention, optimistic stale-write races, dead-owner lease recovery, archive/history isolation, explicit live-safe history pruning, safe paused restore, compaction ownership, process restart recovery, optional-TUI failure, and project-root path traversal.
 
 Real-host canaries exercise lifecycle, semantic verification, active steering, mutation/no-op progress, and persistent SQLite restart recovery on Windows and Ubuntu. CI also checks Bun loading, the minimum declared OpenCode plugin peer, and `@opencode-ai/plugin@latest`.
 
 ## Eval corpus
 
-The adversarial regression suite is also exposed as a machine-readable evaluation corpus. The required categories are **false-complete, contract, agent-boundary, stall, blocker, compaction, restart, restore, storage-integrity, storage-concurrency, provider-limit, budget, and race**.
+The adversarial regression suite is also exposed as a machine-readable evaluation corpus. The required categories are **false-complete, contract, agent-boundary, delegation, stall, blocker, compaction, restart, restore, storage-integrity, storage-concurrency, provider-limit, budget, and race**.
 
 Run the full corpus:
 
@@ -219,12 +237,12 @@ Write a JSON report or focus one category:
 
 ```text
 npm run eval -- --json eval-report.json
-npm run eval -- --category agent-boundary
+npm run eval -- --category delegation
 ```
 
 Each corpus case points at an exact underlying regression test and declares its expected safety outcome. The runner anchors the exact test name and requires exactly one passing target, so renamed or deleted tests cannot silently score as green. It reports per-case results, per-category scores, and a weighted overall score. CI runs the corpus on both Ubuntu and Windows and uploads the JSON reports as workflow artifacts.
 
-The beta gate requires every listed case and every required category to pass. The current corpus contains twenty-six adversarial cases across thirteen required categories and requires **100% (75/75 weighted)** on every CI platform.
+The beta gate requires every listed case and every required category to pass. The current corpus contains thirty adversarial cases across fourteen required categories and requires **100% (87/87 weighted)** on every CI platform.
 
 ## Roadmap to stable
 
@@ -233,7 +251,7 @@ The beta gate requires every listed case and every required category to pass. Th
 3. ✅ Active objective steering plus hybrid diff/file content progress fingerprints.
 4. ✅ Token/time/cost budget UX plus host-backed provider usage-limit states.
 5. ✅ Real OpenCode process canaries on Windows/Linux, including persistent restart recovery.
-6. ✅ Machine-readable adversarial eval corpus covering false-complete, contract, agent-boundary, stall, blocker, compaction, restart, restore, storage, provider-limit, budget, and race scenarios.
+6. ✅ Machine-readable adversarial eval corpus covering false-complete, contract, agent-boundary, delegation, stall, blocker, compaction, restart, restore, storage, provider-limit, budget, and race scenarios.
 7. ✅ Durable per-session archive/history for replaced and cleared Goals.
 8. ✅ Safe paused restore for unfinished archived Goals.
 9. ✅ Explicit live-safe archive retention/pruning without automatic history loss.
@@ -244,7 +262,7 @@ The beta gate requires every listed case and every required category to pass. Th
 14. ✅ First npm beta (`0.1.0-beta.1`) with GitHub Actions trusted publishing/OIDC wiring.
 15. ✅ Verified Goal Contracts: success criteria, hard constraints/non-goals, read-only contract view, and portable best-effort TUI feedback.
 16. ✅ Plan/restricted-agent safety so an autonomous Goal cannot silently escape a planning-only execution boundary.
-17. Child-task-aware continuation deferral so parent Goals do not race still-running delegated work.
+17. ✅ Child-task-aware continuation deferral so parent Goals do not race still-running delegated work.
 18. Experimental OpenCode V2 adapter after the beta plugin API is sufficiently stable for the same compatibility and real-host gates.
 19. Continue hardening toward the next beta and stable release.
 

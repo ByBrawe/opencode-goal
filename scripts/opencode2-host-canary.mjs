@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const pluginID = "bybrawe.open-code-goals.v2-experimental"
+const sentinelID = "bybrawe.open-code-goals.v2-canary-sentinel"
 
 function parseArgs(argv) {
   const options = { jsonPath: null }
@@ -87,12 +88,13 @@ async function main() {
   const project = path.join(temp, "project")
   const home = path.join(temp, "home")
   const config = path.join(home, ".config")
-  const projectConfig = path.join(project, ".opencode")
-  const pluginDirectory = path.join(projectConfig, "plugins")
+  const pluginDirectory = path.join(project, ".opencode", "plugins")
   const data = path.join(home, ".local", "share")
   const state = path.join(home, ".local", "state")
   const pluginFile = path.join(root, "dist", "opencode2", "experimental.js")
   const discoveryFile = path.join(pluginDirectory, "opencode-goals-v2-canary.js")
+  const sentinelFile = path.join(pluginDirectory, "opencode-goals-v2-sentinel.js")
+  const projectConfig = path.join(project, "opencode.json")
 
   await Promise.all([
     mkdir(pluginDirectory, { recursive: true }),
@@ -113,20 +115,28 @@ async function main() {
 
   // Current OpenCode project detection keeps an empty `git init` workspace in
   // the global project. A repository with a real root commit receives its own
-  // project ID, which is required before project-local .opencode/plugins
-  // discovery can be meaningfully exercised.
+  // project ID. Use explicit local plugin entries in the project-root config so
+  // this canary independently distinguishes config loading from Goals setup.
   run("git", ["init", "-q"], { cwd: project, env })
   await writeFile(path.join(project, "README.md"), "# OpenCode 2 canary workspace\n")
-  await writeFile(path.join(projectConfig, "opencode.json"), `${JSON.stringify({
-    $schema: "https://opencode.ai/config.json",
-  }, null, 2)}\n`)
+  await writeFile(
+    sentinelFile,
+    `export default { id: ${JSON.stringify(sentinelID)}, setup: async () => {} }\n`,
+  )
   await writeFile(
     discoveryFile,
     `export { default } from ${JSON.stringify(pathToFileURL(pluginFile).href)}\n`,
   )
+  await writeFile(projectConfig, `${JSON.stringify({
+    $schema: "https://opencode.ai/config.json",
+    plugins: [
+      "./.opencode/plugins/opencode-goals-v2-sentinel.js",
+      "./.opencode/plugins/opencode-goals-v2-canary.js",
+    ],
+  }, null, 2)}\n`)
   run("git", ["config", "user.name", "OpenCode Goals Canary"], { cwd: project, env })
   run("git", ["config", "user.email", "opencode-goals-canary@example.invalid"], { cwd: project, env })
-  run("git", ["add", "README.md", ".opencode/opencode.json", ".opencode/plugins/opencode-goals-v2-canary.js"], { cwd: project, env })
+  run("git", ["add", "README.md", "opencode.json", ".opencode/plugins/opencode-goals-v2-sentinel.js", ".opencode/plugins/opencode-goals-v2-canary.js"], { cwd: project, env })
   run("git", ["commit", "-q", "-m", "initialize canary workspace"], { cwd: project, env })
 
   let version = ""
@@ -159,9 +169,13 @@ async function main() {
     if (pluginResponse?.location?.project?.id === "global") {
       throw new Error(`OpenCode 2 still classified the committed git canary workspace as global: ${JSON.stringify(pluginResponse.location)}`)
     }
+
     const ids = pluginIDs(pluginResponse)
+    if (!ids.includes(sentinelID)) {
+      throw new Error(`OpenCode 2 did not load the explicit local sentinel plugin, so project config/plugin loading is not proven. Active IDs: ${JSON.stringify(ids)}\nRaw response: ${String(pluginResult.stdout ?? "")}`)
+    }
     if (!ids.includes(pluginID)) {
-      throw new Error(`OpenCode 2 project Location did not activate ${pluginID}. Active IDs: ${JSON.stringify(ids)}\nRaw response: ${String(pluginResult.stdout ?? "")}`)
+      throw new Error(`OpenCode 2 loaded the sentinel but not ${pluginID}; the Goals adapter module/setup is incompatible with this host. Active IDs: ${JSON.stringify(ids)}\nRaw response: ${String(pluginResult.stdout ?? "")}`)
     }
 
     const report = {
@@ -171,13 +185,16 @@ async function main() {
       arch: process.arch,
       node: process.version,
       pluginID,
+      sentinelID,
       pluginSpecifier: pathToFileURL(pluginFile).href,
       discoveryFile,
-      configScope: "isolated-project-auto-discovery",
+      sentinelFile,
+      configScope: "isolated-project-explicit-local-plugins",
       projectLocation: project,
       projectID: pluginResponse.location.project.id,
       opencode2Version: version,
       health,
+      sentinelLoaded: true,
       pluginAPIContainsExpectedID: true,
       gate: true,
     }
@@ -186,6 +203,7 @@ async function main() {
     console.log(`health: ${health}`)
     console.log(`location: ${project}`)
     console.log(`project: ${report.projectID}`)
+    console.log(`sentinel ${sentinelID}: LOADED`)
     console.log(`plugin ${pluginID}: LOADED`)
     console.log("real OpenCode 2 plugin canary PASS")
 

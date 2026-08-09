@@ -38,6 +38,32 @@ export class GoalStore {
     }
   }
 
+  async list(): Promise<GoalState[]> {
+    let names: string[]
+    try {
+      names = await fs.readdir(this.root)
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (code === "ENOENT") return []
+      throw error
+    }
+
+    const states: GoalState[] = []
+    for (const name of names) {
+      if (!name.endsWith(".json")) continue
+      try {
+        const raw = await fs.readFile(path.join(this.root, name), "utf8")
+        const state = validateState(JSON.parse(raw))
+        if (state) states.push(state)
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code
+        if (code === "ENOENT") continue
+        throw error
+      }
+    }
+    return states
+  }
+
   async save(state: GoalState): Promise<void> {
     const key = state.sessionID
     const previous = this.#locks.get(key) ?? Promise.resolve()

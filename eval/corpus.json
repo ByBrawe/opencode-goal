@@ -3,6 +3,7 @@
   "requiredCategories": [
     "false-complete",
     "contract",
+    "agent-boundary",
     "stall",
     "blocker",
     "compaction",
@@ -47,6 +48,38 @@
       "testFile": "test/contract.test.mjs",
       "testName": "goal contract exposes success criteria and enforced constraints without pausing work",
       "expected": "The contract view exposes outcome, success criteria, constraints and host checks while remaining read-only and command-owned."
+    },
+    {
+      "id": "agent-boundary.plan-create-paused",
+      "category": "agent-boundary",
+      "weight": 3,
+      "testFile": "test/agent-boundary.test.mjs",
+      "testName": "goal created from Plan is persisted paused instead of executing",
+      "expected": "Plan can define the Goal Contract but the resulting Goal is persisted paused and receives planning-only guidance rather than an implementation continuation."
+    },
+    {
+      "id": "agent-boundary.plan-resume-refused-build-repins",
+      "category": "agent-boundary",
+      "weight": 3,
+      "testFile": "test/agent-boundary.test.mjs",
+      "testName": "Plan cannot resume a Goal but Build can explicitly resume and repin execution",
+      "expected": "Plan cannot activate execution; after the user switches to Build, an explicit resume activates the same Goal and pins future continuation to Build."
+    },
+    {
+      "id": "agent-boundary.plan-idle-autocontinue-refused",
+      "category": "agent-boundary",
+      "weight": 3,
+      "testFile": "test/agent-boundary.test.mjs",
+      "testName": "idle cannot auto-continue an active Goal bound to Plan",
+      "expected": "A legacy or raced active Goal bound to Plan is paused on idle and no continuation prompt is dispatched."
+    },
+    {
+      "id": "agent-boundary.plan-restart-recovery-refused",
+      "category": "agent-boundary",
+      "weight": 3,
+      "testFile": "test/agent-boundary.test.mjs",
+      "testName": "startup recovery pauses an active persisted Plan Goal before any prompt",
+      "expected": "Process restart cannot recover a persisted Plan-bound Goal into autonomous execution; it is paused before any host prompt."
     },
     {
       "id": "stall.agent-notes-do-not-reset-guard",

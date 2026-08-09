@@ -1,6 +1,7 @@
 import OpenCodeGoalCorePlugin from "./opencode/plugin.js"
 import { enhanceGoalControls } from "./opencode/controls.js"
 import { installGoalContractUX } from "./opencode/contract-ux.js"
+import { installRestrictedAgentSafety } from "./opencode/agent-boundary.js"
 import { installHostLimitHandling } from "./opencode/host-limits.js"
 import { captureStartupGoals, scheduleStartupRecovery } from "./opencode/recovery.js"
 
@@ -12,6 +13,7 @@ export default async function OpenCodeGoalPlugin(input: Parameters<typeof OpenCo
   const hooks = await OpenCodeGoalCorePlugin(input)
   enhanceGoalControls(input, hooks)
   installGoalContractUX(input, hooks)
+  installRestrictedAgentSafety(input, hooks)
   installHostLimitHandling(input, hooks)
   scheduleStartupRecovery(input, hooks, startupGoals)
   return hooks
@@ -26,3 +28,4 @@ export * from "./runtime/blocker.js"
 export * from "./runtime/limits.js"
 export * from "./runtime/progress.js"
 export * from "./opencode/command.js"
+export * from "./opencode/agent-boundary.js"

@@ -46,6 +46,10 @@ If the verifier does not submit a complete typed verdict, returns ambiguous evid
 - `--constraint` / `--constraints` / `--non-goal` / `--non-goals` create required semantic boundaries; they cannot be bypassed by narrower passing checks.
 - `/goal edit` preserves existing success criteria and constraints when their flags are omitted.
 - `/goal contract` is a read-only contract view and cannot pause the current Goal.
+- `plan` is a hard execution boundary. A Goal may be defined or edited there, but any resulting active Goal is persisted as `paused` before implementation can proceed.
+- `/goal resume` while Plan is selected cannot activate autonomous work. The user must switch to Build and explicitly run `/goal resume`; that turn re-pins future continuation to Build.
+- A Plan-bound active Goal cannot escape through `session.idle` or process restart recovery. Both paths pause it without dispatching an implementation prompt.
+- Goal/objective/requirement text is treated as user task data and cannot override system/developer instructions, repository policy, OpenCode permissions, or the selected agent/mode.
 - Explicit requirement ledger with `pending`, `proven`, `failed`, `unknown`, and `blocked` states.
 - Evidence records carry trust (`host`, `verifier`, `user`, or `agent`) and the goal revision that produced them.
 - Agent-written notes **cannot** prove requirements.
@@ -144,9 +148,9 @@ Useful lifecycle commands:
 /goal clear
 ```
 
-`/goal contract` renders the full objective, semantic success criteria, constraints/non-goals, host verification contracts, budget, status, and revision. It is read-only and keeps an active Goal active.
+`/goal contract` renders the full objective, semantic success criteria, constraints/non-goals, host verification contracts, budget, status, and revision. It is read-only and keeps an active Goal active unless the currently selected agent itself is a restricted execution mode such as Plan; in that case the agent boundary pauses execution independently of the read-only command.
 
-`/goal doctor` performs a read-only integrity check for the current session's live snapshot and archive storage. It reports `OK` or `ISSUES FOUND`, identifies `invalid_json`, `invalid_state`, `invalid_archive`, or `unsafe_path` failures with a project-relative path, and never modifies storage. There is intentionally no `--fix` mode; recovery from unknown, corrupt, or redirected storage remains an explicit user decision outside the Goal state machine.
+`/goal doctor` performs a read-only integrity check for the current session's live snapshot and archive storage. It reports `OK` or `ISSUES FOUND`, identifies `invalid_json`, `invalid_state`, `invalid_archive`, or `unsafe_path` failures with a project-relative path, and never modifies storage. There is intentionally no `--fix` mode; recovery from unknown, corrupt, or redirected storage remains an explicit user decision outside the Goal state machine. Doctor remains available even when the normal live-state parser cannot load an unknown/corrupt snapshot.
 
 `/goal history` lists the most recent archived Goals for the current OpenCode session. Use the displayed goal ID prefix to inspect the archived objective, terminal status, requirements, budget, stop reason, and whether it was archived because it was `cleared` or `replaced`. The current live Goal stays in `/goal status`; it enters history when it is cleared or displaced by a later Goal.
 
@@ -172,27 +176,38 @@ Inspect or change the active goal's budget without changing its objective revisi
 
 Host-verifiable file contracts can be declared with `--file path` or `--contains "path::exact text"`. `--success`/`--accept` criteria, constraints, and the objective itself are semantic requirements; the independent verifier must prove them from current, host-corroborated evidence.
 
+## Plan / restricted-agent safety
+
+OpenCode Goals treats `plan` case-insensitively as a planning-only execution boundary. Plan can be used to define or refine the Goal Contract, but the plugin will not let that Goal become an autonomous implementation loophole.
+
+- Creating or editing a Goal from Plan saves the state but persists it as `paused` before implementation continuation.
+- `/goal resume` from Plan is re-paused and receives planning-only guidance.
+- To execute, switch to Build and explicitly run `/goal resume`; the Goal is then pinned to Build for subsequent autonomous continuation/restart context.
+- If an old/raced snapshot is somehow active while still bound to Plan, `session.idle` pauses it instead of dispatching another turn.
+- If OpenCode restarts with an active persisted Plan-bound Goal, startup capture pauses it before any recovery prompt. Recovery also re-checks the agent immediately before dispatch.
+- Plan safety is state-machine enforcement, not merely wording in the continuation prompt.
+
 ## OpenCode CLI, TUI, web, and future V2
 
-OpenCode Goals keeps the authoritative state in the server/plugin/session layer rather than in a visual widget. That makes `/goal`, `/goal status`, `/goal contract`, history, restore, and the verification state usable from normal OpenCode session surfaces without making correctness depend on a particular UI client.
+OpenCode Goals keeps the authoritative state in the server/plugin/session layer rather than in a visual widget. That makes `/goal`, `/goal status`, `/goal contract`, history, restore, agent-boundary state, and verification usable from normal OpenCode session surfaces without making correctness depend on a particular UI client.
 
-The current V1 integration can additionally use the documented TUI toast endpoint for lightweight lifecycle feedback. It intentionally does **not** require an experimental third-party sidebar API, because the package still validates a broad minimum OpenCode plugin peer and headless/server workflows must remain first-class.
+The current V1 integration can additionally use the documented TUI toast endpoint for lightweight lifecycle feedback. It intentionally does **not** require an experimental third-party sidebar API, because the package still validates a broad minimum OpenCode plugin peer and headless/server workflows must remain first-class. Lifecycle toasts are finalized after restricted-agent enforcement, so Plan cannot first report a misleading active/resumed state and then be paused.
 
 OpenCode 2 uses a new plugin API and is still beta. A V1 plugin implementation is not treated as V2-compatible merely because command/config files migrate. The roadmap therefore keeps V2 as a separate experimental adapter/compatibility track until its plugin contracts are stable enough for the same real-host and package gates used by the V1 adapter.
 
 ## Architecture
 
-The project is intentionally split into domain state, verification, runtime/accounting, persistence, and the OpenCode adapter. The domain layer has no dependency on OpenCode, so state invariants can be tested deterministically. Semantic verification is also a separate runtime boundary instead of being embedded in executor prompts.
+The project is intentionally split into domain state, verification, runtime/accounting, persistence, agent/mode boundaries, and the OpenCode adapter. The domain layer has no dependency on OpenCode, so state invariants can be tested deterministically. Semantic verification is also a separate runtime boundary instead of being embedded in executor prompts.
 
 ## Test philosophy
 
-The suite is adversarial by default. It covers false-complete attempts, Goal Contract boundary bypass attempts, read-only contract ownership, stale evidence, narrow-check scope bypass, hallucinated verifier quotes, invented host-evidence IDs, parent-session result forgery, user-interrupt races, duplicate idle events, blocker repetition, fake progress, usage deduplication, budget exhaustion/bypass attempts, provider quota classification, fatal/transient provider errors, persistence, unsupported/corrupt storage fail-closed behavior, read-only storage diagnostics, corrupt-shard startup isolation, storage symlink/junction escapes, cross-process live-lock contention, optimistic stale-write races, dead-owner lease recovery, archive/history isolation, explicit live-safe history pruning, safe paused restore, compaction ownership, process restart recovery, optional-TUI failure, and project-root path traversal.
+The suite is adversarial by default. It covers false-complete attempts, Goal Contract boundary bypass attempts, Plan create/resume/idle/restart escape attempts, read-only contract ownership, stale evidence, narrow-check scope bypass, hallucinated verifier quotes, invented host-evidence IDs, parent-session result forgery, user-interrupt races, duplicate idle events, blocker repetition, fake progress, usage deduplication, budget exhaustion/bypass attempts, provider quota classification, fatal/transient provider errors, persistence, unsupported/corrupt storage fail-closed behavior, read-only storage diagnostics, corrupt-shard startup isolation, storage symlink/junction escapes, cross-process live-lock contention, optimistic stale-write races, dead-owner lease recovery, archive/history isolation, explicit live-safe history pruning, safe paused restore, compaction ownership, process restart recovery, optional-TUI failure, and project-root path traversal.
 
 Real-host canaries exercise lifecycle, semantic verification, active steering, mutation/no-op progress, and persistent SQLite restart recovery on Windows and Ubuntu. CI also checks Bun loading, the minimum declared OpenCode plugin peer, and `@opencode-ai/plugin@latest`.
 
 ## Eval corpus
 
-The adversarial regression suite is also exposed as a machine-readable evaluation corpus. The required categories are **false-complete, contract, stall, blocker, compaction, restart, restore, storage-integrity, storage-concurrency, provider-limit, budget, and race**.
+The adversarial regression suite is also exposed as a machine-readable evaluation corpus. The required categories are **false-complete, contract, agent-boundary, stall, blocker, compaction, restart, restore, storage-integrity, storage-concurrency, provider-limit, budget, and race**.
 
 Run the full corpus:
 
@@ -204,12 +219,12 @@ Write a JSON report or focus one category:
 
 ```text
 npm run eval -- --json eval-report.json
-npm run eval -- --category contract
+npm run eval -- --category agent-boundary
 ```
 
 Each corpus case points at an exact underlying regression test and declares its expected safety outcome. The runner anchors the exact test name and requires exactly one passing target, so renamed or deleted tests cannot silently score as green. It reports per-case results, per-category scores, and a weighted overall score. CI runs the corpus on both Ubuntu and Windows and uploads the JSON reports as workflow artifacts.
 
-The beta gate requires every listed case and every required category to pass. The current corpus contains twenty-two adversarial cases across twelve required categories and requires **100% (63/63 weighted)** on every CI platform.
+The beta gate requires every listed case and every required category to pass. The current corpus contains twenty-six adversarial cases across thirteen required categories and requires **100% (75/75 weighted)** on every CI platform.
 
 ## Roadmap to stable
 
@@ -218,7 +233,7 @@ The beta gate requires every listed case and every required category to pass. Th
 3. ✅ Active objective steering plus hybrid diff/file content progress fingerprints.
 4. ✅ Token/time/cost budget UX plus host-backed provider usage-limit states.
 5. ✅ Real OpenCode process canaries on Windows/Linux, including persistent restart recovery.
-6. ✅ Machine-readable adversarial eval corpus covering false-complete, contract, stall, blocker, compaction, restart, restore, storage, provider-limit, budget, and race scenarios.
+6. ✅ Machine-readable adversarial eval corpus covering false-complete, contract, agent-boundary, stall, blocker, compaction, restart, restore, storage, provider-limit, budget, and race scenarios.
 7. ✅ Durable per-session archive/history for replaced and cleared Goals.
 8. ✅ Safe paused restore for unfinished archived Goals.
 9. ✅ Explicit live-safe archive retention/pruning without automatic history loss.
@@ -228,9 +243,10 @@ The beta gate requires every listed case and every required category to pass. Th
 13. ✅ Cross-process persistence lease plus optimistic generation/CAS stale-write refusal.
 14. ✅ First npm beta (`0.1.0-beta.1`) with GitHub Actions trusted publishing/OIDC wiring.
 15. ✅ Verified Goal Contracts: success criteria, hard constraints/non-goals, read-only contract view, and portable best-effort TUI feedback.
-16. Plan/restricted-agent safety so an autonomous Goal cannot silently escape a planning-only execution boundary.
-17. Experimental OpenCode V2 adapter after the beta plugin API is sufficiently stable for the same compatibility and real-host gates.
-18. Continue hardening toward the next beta and stable release.
+16. ✅ Plan/restricted-agent safety so an autonomous Goal cannot silently escape a planning-only execution boundary.
+17. Child-task-aware continuation deferral so parent Goals do not race still-running delegated work.
+18. Experimental OpenCode V2 adapter after the beta plugin API is sufficiently stable for the same compatibility and real-host gates.
+19. Continue hardening toward the next beta and stable release.
 
 ## License
 

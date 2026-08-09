@@ -1,7 +1,7 @@
 import type { FileRequirementInput } from "../domain/types.js"
 
 export interface ParsedGoalCommand {
-  action: "create" | "status" | "contract" | "pause" | "resume" | "clear" | "edit" | "budget" | "history" | "history_prune" | "restore" | "doctor" | "list"
+  action: "create" | "draft" | "status" | "contract" | "pause" | "resume" | "clear" | "edit" | "budget" | "history" | "history_prune" | "restore" | "doctor" | "list"
   objective: string
   acceptance: string[]
   constraints: string[]
@@ -97,7 +97,7 @@ export function parseGoalCommand(input: string): ParsedGoalCommand {
   }
 
   let action: ParsedGoalCommand["action"] = "create"
-  if (sub === "edit" || sub === "budget") {
+  if (sub === "draft" || sub === "edit" || sub === "budget") {
     action = sub
     list.shift()
   }

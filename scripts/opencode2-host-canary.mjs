@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import process from "node:process"
-import { fileURLToPath } from "node:url"
+import { fileURLToPath, pathToFileURL } from "node:url"
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const pluginID = "bybrawe.open-code-goals.v2-experimental"
@@ -51,13 +51,19 @@ function output(result) {
 }
 
 async function failureLog(env) {
-  const file = path.join(env.XDG_DATA_HOME, "opencode", "log", "opencode.log")
-  try {
-    const raw = await readFile(file, "utf8")
-    return raw.slice(-16_000)
-  } catch {
-    return ""
+  const candidates = [
+    path.join(env.XDG_DATA_HOME, "opencode", "log", "opencode.log"),
+    path.join(env.XDG_STATE_HOME, "opencode", "log", "opencode.log"),
+  ]
+  for (const file of candidates) {
+    try {
+      const raw = await readFile(file, "utf8")
+      return raw.slice(-16_000)
+    } catch {
+      // Try the next documented/legacy state location.
+    }
   }
+  return ""
 }
 
 async function main() {
@@ -66,15 +72,15 @@ async function main() {
   const project = path.join(temp, "project")
   const home = path.join(temp, "home")
   const config = path.join(home, ".config")
-  const opencodeConfig = path.join(config, "opencode")
+  const pluginDirectory = path.join(config, "opencode", "plugins")
   const data = path.join(home, ".local", "share")
   const state = path.join(home, ".local", "state")
   const pluginFile = path.join(root, "dist", "opencode2", "experimental.js")
+  const discoveryFile = path.join(pluginDirectory, "opencode-goals-v2-canary.mjs")
 
   await Promise.all([
     mkdir(project, { recursive: true }),
-    mkdir(home, { recursive: true }),
-    mkdir(opencodeConfig, { recursive: true }),
+    mkdir(pluginDirectory, { recursive: true }),
     mkdir(data, { recursive: true }),
     mkdir(state, { recursive: true }),
   ])
@@ -89,15 +95,14 @@ async function main() {
     OPENCODE_LOG_LEVEL: "DEBUG",
   }
 
-  // The first real-host gate deliberately uses the isolated global V2 config.
-  // `/api/plugin` is location-scoped and the bare CLI API command defaults to
-  // the global location; project-location routing is a separate compatibility
-  // concern and should not be guessed here. OpenCode V2 explicitly supports
-  // absolute local plugin paths in configured `plugins` entries.
-  await writeFile(path.join(opencodeConfig, "opencode.json"), `${JSON.stringify({
-    $schema: "https://opencode.ai/config.json",
-    plugins: [pluginFile],
-  }, null, 2)}\n`)
+  // V2 documents ~/.config/opencode/plugins as the global auto-discovery
+  // directory. The tiny wrapper keeps the canary discovery path isolated while
+  // importing the repository's actual compiled adapter in place, so its normal
+  // relative imports continue to resolve from dist/.
+  await writeFile(
+    discoveryFile,
+    `export { default } from ${JSON.stringify(pathToFileURL(pluginFile).href)}\n`,
+  )
 
   let version = ""
   let health = ""
@@ -126,8 +131,9 @@ async function main() {
       arch: process.arch,
       node: process.version,
       pluginID,
-      pluginSpecifier: pluginFile,
-      configScope: "isolated-global",
+      pluginSpecifier: pathToFileURL(pluginFile).href,
+      discoveryFile,
+      configScope: "isolated-global-auto-discovery",
       opencode2Version: version,
       health,
       pluginAPIContainsExpectedID: true,

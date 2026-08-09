@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "requiredCategories": [
+    "project-index"
+  ],
+  "cases": [
+    {
+      "id": "project-index.cross-session-readonly-list",
+      "category": "project-index",
+      "weight": 3,
+      "testFile": "test/project-index.test.mjs",
+      "testName": "project Goal list exposes live snapshots across sessions without mutating either Goal",
+      "expected": "The project index shows both session-local live Goal snapshots, marks the current session, and leaves both exact persisted states unchanged."
+    },
+    {
+      "id": "project-index.foreign-inspect-no-adopt",
+      "category": "project-index",
+      "weight": 3,
+      "testFile": "test/project-index.test.mjs",
+      "testName": "project Goal list can inspect another session by Goal id prefix without adopting it",
+      "expected": "A session with no Goal can inspect a foreign live Goal by id prefix without creating, adopting, pausing, or rewriting any Goal state."
+    }
+  ]
+}

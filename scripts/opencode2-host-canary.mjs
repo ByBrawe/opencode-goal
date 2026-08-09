@@ -50,6 +50,12 @@ function output(result) {
   return `${String(result.stdout ?? "")}\n${String(result.stderr ?? "")}`.trim()
 }
 
+function pluginIDs(value) {
+  if (Array.isArray(value)) return value.map(String)
+  if (Array.isArray(value?.data)) return value.data.map(String)
+  return []
+}
+
 async function failureLog(env) {
   const candidates = [
     path.join(env.XDG_DATA_HOME, "opencode", "log", "opencode.log"),
@@ -58,7 +64,7 @@ async function failureLog(env) {
   for (const file of candidates) {
     try {
       const raw = await readFile(file, "utf8")
-      return raw.slice(-16_000)
+      return raw.slice(-20_000)
     } catch {
       // Try the next documented/legacy state location.
     }
@@ -72,15 +78,16 @@ async function main() {
   const project = path.join(temp, "project")
   const home = path.join(temp, "home")
   const config = path.join(home, ".config")
-  const pluginDirectory = path.join(config, "opencode", "plugins")
+  const projectConfig = path.join(project, ".opencode")
+  const pluginDirectory = path.join(projectConfig, "plugins")
   const data = path.join(home, ".local", "share")
   const state = path.join(home, ".local", "state")
   const pluginFile = path.join(root, "dist", "opencode2", "experimental.js")
   const discoveryFile = path.join(pluginDirectory, "opencode-goals-v2-canary.js")
 
   await Promise.all([
-    mkdir(project, { recursive: true }),
     mkdir(pluginDirectory, { recursive: true }),
+    mkdir(config, { recursive: true }),
     mkdir(data, { recursive: true }),
     mkdir(state, { recursive: true }),
   ])
@@ -95,10 +102,13 @@ async function main() {
     OPENCODE_LOG_LEVEL: "DEBUG",
   }
 
-  // V2 documents ~/.config/opencode/plugins as the global auto-discovery
-  // directory and scans direct .ts/.js children. The tiny wrapper keeps the
-  // canary discovery path isolated while importing the repository's actual
-  // compiled adapter in place, so its normal relative imports resolve from dist/.
+  // V2 documents .opencode/plugins as project-local auto-discovery. The tiny
+  // wrapper imports the repository's actual compiled adapter in place, so the
+  // adapter keeps its normal dist-relative imports and the canary exercises the
+  // same module that would later become a V2 package entrypoint.
+  await writeFile(path.join(projectConfig, "opencode.json"), `${JSON.stringify({
+    $schema: "https://opencode.ai/config.json",
+  }, null, 2)}\n`)
   await writeFile(
     discoveryFile,
     `export { default } from ${JSON.stringify(pathToFileURL(pluginFile).href)}\n`,
@@ -106,7 +116,6 @@ async function main() {
 
   let version = ""
   let health = ""
-  let plugins = ""
   try {
     run("opencode2", ["service", "stop"], { cwd: project, env, allowFailure: true, timeout: 15_000 })
 
@@ -114,14 +123,34 @@ async function main() {
     version = output(versionResult)
     if (!version) throw new Error("opencode2 --version returned no output")
 
+    // This starts the isolated shared service if needed. The typed client below
+    // then reuses that exact registered endpoint and asks for plugin state in
+    // the explicit project Location rather than the CLI's default global one.
     const healthResult = run("opencode2", ["api", "get", "/api/health"], { cwd: project, env })
     health = output(healthResult)
     if (!health) throw new Error("OpenCode 2 health API returned no output")
 
-    const pluginResult = run("opencode2", ["api", "get", "/api/plugin"], { cwd: project, env })
-    plugins = output(pluginResult)
-    if (!plugins.includes(pluginID)) {
-      throw new Error(`OpenCode 2 plugin API did not report ${pluginID}.\n${plugins}`)
+    const [{ OpenCode }, { Service }] = await Promise.all([
+      import("@opencode-ai/client"),
+      import("@opencode-ai/client/service"),
+    ])
+    const endpoint = await Service.discover()
+    if (!endpoint) throw new Error("OpenCode 2 client could not discover the isolated service started by the CLI")
+
+    const client = OpenCode.make({
+      baseUrl: endpoint.url,
+      headers: Service.headers(endpoint),
+    })
+    if (typeof client?.plugin?.list !== "function") {
+      throw new Error("Current @opencode-ai/client@next does not expose client.plugin.list")
+    }
+
+    const pluginResponse = await client.plugin.list({
+      location: { directory: project },
+    })
+    const ids = pluginIDs(pluginResponse)
+    if (!ids.includes(pluginID)) {
+      throw new Error(`OpenCode 2 project Location did not activate ${pluginID}. Active IDs: ${JSON.stringify(ids)}`)
     }
 
     const report = {
@@ -133,7 +162,8 @@ async function main() {
       pluginID,
       pluginSpecifier: pathToFileURL(pluginFile).href,
       discoveryFile,
-      configScope: "isolated-global-auto-discovery",
+      configScope: "isolated-project-auto-discovery",
+      projectLocation: project,
       opencode2Version: version,
       health,
       pluginAPIContainsExpectedID: true,
@@ -142,6 +172,7 @@ async function main() {
 
     console.log(`OpenCode 2 version: ${version}`)
     console.log(`health: ${health}`)
+    console.log(`location: ${project}`)
     console.log(`plugin ${pluginID}: LOADED`)
     console.log("real OpenCode 2 plugin canary PASS")
 

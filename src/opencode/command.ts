@@ -1,7 +1,7 @@
 import type { FileRequirementInput } from "../domain/types.js"
 
 export interface ParsedGoalCommand {
-  action: "create" | "status" | "pause" | "resume" | "clear" | "edit"
+  action: "create" | "status" | "pause" | "resume" | "clear" | "edit" | "budget"
   objective: string
   acceptance: string[]
   checks: string[]
@@ -25,14 +25,28 @@ function parseContainsContract(value: string): FileRequirementInput {
   return { file: value.slice(0, split), contains: value.slice(split + 2) }
 }
 
+function parseLimit(option: string, raw: string | undefined, integer = false): number {
+  if (raw === undefined) throw new Error(`${option} expects a non-negative number`)
+  const value = integer ? Number(raw) : Number.parseFloat(raw)
+  if (!Number.isFinite(value) || value < 0 || (integer && !Number.isInteger(value))) {
+    throw new Error(`${option} expects a non-negative ${integer ? "integer" : "number"}`)
+  }
+  return value
+}
+
 export function parseGoalCommand(input: string): ParsedGoalCommand {
   const list = tokens(input.trim())
   const sub = (list[0] ?? "").toLowerCase()
   if (["status", "pause", "resume", "clear"].includes(sub)) {
     return { action: sub as ParsedGoalCommand["action"], objective: "", acceptance: [], checks: [], files: [] }
   }
+
   let action: ParsedGoalCommand["action"] = "create"
-  if (sub === "edit") { action = "edit"; list.shift() }
+  if (sub === "edit" || sub === "budget") {
+    action = sub
+    list.shift()
+  }
+
   const acceptance: string[] = []
   const checks: string[] = []
   const files: FileRequirementInput[] = []
@@ -41,6 +55,7 @@ export function parseGoalCommand(input: string): ParsedGoalCommand {
   let maxTokens: number | undefined
   let maxRuntimeMs: number | undefined
   let maxCost: number | undefined
+
   for (let i = 0; i < list.length; i += 1) {
     const current = list[i]!
     const next = list[i + 1]
@@ -48,17 +63,22 @@ export function parseGoalCommand(input: string): ParsedGoalCommand {
     if (current === "--check" && next) { checks.push(next); i += 1; continue }
     if (current === "--file" && next) { files.push({ file: next }); i += 1; continue }
     if (current === "--contains" && next) { files.push(parseContainsContract(next)); i += 1; continue }
-    if (current === "--max-turns" && next) { maxTurns = Number.parseInt(next, 10); i += 1; continue }
-    if (current === "--max-tokens" && next) { maxTokens = Number.parseInt(next, 10); i += 1; continue }
-    if (current === "--max-minutes" && next) { maxRuntimeMs = Number.parseFloat(next) * 60_000; i += 1; continue }
-    if (current === "--max-cost" && next) { maxCost = Number.parseFloat(next); i += 1; continue }
+    if (current === "--max-turns") { maxTurns = parseLimit(current, next, true); i += 1; continue }
+    if (current === "--max-tokens") { maxTokens = parseLimit(current, next, true); i += 1; continue }
+    if (current === "--max-minutes") { maxRuntimeMs = parseLimit(current, next) * 60_000; i += 1; continue }
+    if (current === "--max-cost") { maxCost = parseLimit(current, next); i += 1; continue }
     if (current.startsWith("--")) throw new Error(`unknown goal option: ${current}`)
     objective.push(current)
   }
+
+  if (action === "budget" && (objective.length || acceptance.length || checks.length || files.length)) {
+    throw new Error("/goal budget accepts only --max-turns, --max-tokens, --max-minutes, and --max-cost")
+  }
+
   const parsed: ParsedGoalCommand = { action, objective: objective.join(" ").trim(), acceptance, checks, files }
-  if (maxTurns !== undefined && Number.isFinite(maxTurns) && maxTurns > 0) parsed.maxTurns = maxTurns
-  if (maxTokens !== undefined && Number.isFinite(maxTokens) && maxTokens > 0) parsed.maxTokens = maxTokens
-  if (maxRuntimeMs !== undefined && Number.isFinite(maxRuntimeMs) && maxRuntimeMs > 0) parsed.maxRuntimeMs = maxRuntimeMs
-  if (maxCost !== undefined && Number.isFinite(maxCost) && maxCost > 0) parsed.maxCost = maxCost
+  if (maxTurns !== undefined) parsed.maxTurns = maxTurns
+  if (maxTokens !== undefined) parsed.maxTokens = maxTokens
+  if (maxRuntimeMs !== undefined) parsed.maxRuntimeMs = maxRuntimeMs
+  if (maxCost !== undefined) parsed.maxCost = maxCost
   return parsed
 }

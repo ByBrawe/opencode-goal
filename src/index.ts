@@ -1,5 +1,6 @@
 import OpenCodeGoalCorePlugin from "./opencode/plugin.js"
 import { enhanceGoalControls } from "./opencode/controls.js"
+import { installGoalContractUX } from "./opencode/contract-ux.js"
 import { installHostLimitHandling } from "./opencode/host-limits.js"
 import { captureStartupGoals, scheduleStartupRecovery } from "./opencode/recovery.js"
 
@@ -10,6 +11,7 @@ export default async function OpenCodeGoalPlugin(input: Parameters<typeof OpenCo
   const startupGoals = await captureStartupGoals(input.directory)
   const hooks = await OpenCodeGoalCorePlugin(input)
   enhanceGoalControls(input, hooks)
+  installGoalContractUX(input, hooks)
   installHostLimitHandling(input, hooks)
   scheduleStartupRecovery(input, hooks, startupGoals)
   return hooks

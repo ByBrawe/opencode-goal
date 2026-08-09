@@ -2,6 +2,7 @@
   "schemaVersion": 1,
   "requiredCategories": [
     "false-complete",
+    "contract",
     "stall",
     "blocker",
     "compaction",
@@ -30,6 +31,22 @@
       "testFile": "test/domain.test.mjs",
       "testName": "one passing check cannot bypass another semantic acceptance requirement",
       "expected": "A passing mechanical check cannot complete a goal with an unproven semantic requirement."
+    },
+    {
+      "id": "contract.constraint-cannot-be-traded-away",
+      "category": "contract",
+      "weight": 3,
+      "testFile": "test/domain.test.mjs",
+      "testName": "goal constraints are mandatory semantic completion requirements",
+      "expected": "Passing mechanical checks cannot complete a Goal while a declared contract constraint remains unproven."
+    },
+    {
+      "id": "contract.readonly-inspection-preserves-active-goal",
+      "category": "contract",
+      "weight": 3,
+      "testFile": "test/contract.test.mjs",
+      "testName": "goal contract exposes success criteria and enforced constraints without pausing work",
+      "expected": "The contract view exposes outcome, success criteria, constraints and host checks while remaining read-only and command-owned."
     },
     {
       "id": "stall.agent-notes-do-not-reset-guard",

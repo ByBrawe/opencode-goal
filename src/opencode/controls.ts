@@ -1,5 +1,5 @@
 import type CorePlugin from "./plugin.js"
-import type { GoalBudget, GoalState } from "../domain/types.js"
+import type { GoalBudget, GoalRequirement, GoalState } from "../domain/types.js"
 import { diagnoseGoalStorage, type GoalStorageDiagnosticReport } from "../persistence/diagnostics.js"
 import { GoalStore, type GoalArchiveRecord, type GoalHistoryPruneResult, type GoalRestoreResult } from "../persistence/store.js"
 import { applyGoalBudget, budgetLimitHits, formatGoalBudget } from "../runtime/accounting.js"
@@ -24,6 +24,33 @@ export function formatDetailedGoalStatus(goal: GoalState | null): string {
   const req = goal.requirements.map((item, i) => `${i + 1}. [${item.status}] ${item.text}`).join("\n")
   const stop = goal.stopReason ? `\nStop reason: ${goal.stopReason}` : ""
   return `Goal: ${goal.objective}\nStatus: ${goal.status}\nRevision: ${goal.revision}\nBudget: ${formatGoalBudget(goal)}${stop}\nRequirements:\n${req}`
+}
+
+function acceptanceRequirements(goal: GoalState): GoalRequirement[] {
+  const semantic = goal.requirements.filter((item) => item.verification === "semantic")
+  return semantic.filter((item, index) => item.source === "acceptance" || (!item.source && index > 0))
+}
+
+function goalConstraints(goal: GoalState): string[] {
+  if (Array.isArray(goal.constraints)) return goal.constraints
+  return goal.requirements
+    .filter((item) => item.source === "constraint")
+    .map((item) => item.text.replace(/^Constraint preserved:\s*/i, "").trim())
+    .filter(Boolean)
+}
+
+function requirementLines(items: GoalRequirement[], emptyText: string): string {
+  if (!items.length) return `- ${emptyText}`
+  return items.map((item) => `- [${item.status}] ${item.text}`).join("\n")
+}
+
+export function formatGoalContract(goal: GoalState | null): string {
+  if (!goal) return "No active goal contract."
+  const acceptance = acceptanceRequirements(goal)
+  const constraints = goalConstraints(goal)
+  const hostContracts = goal.requirements.filter((item) => item.verification === "command" || item.verification === "file")
+  const constraintLines = constraints.length ? constraints.map((item) => `- ${item}`).join("\n") : "- none declared"
+  return `Goal Contract\nObjective: ${goal.objective}\nStatus: ${goal.status}\nRevision: ${goal.revision}\n\nSuccess criteria:\n${requirementLines(acceptance, "none declared beyond the full objective")}\n\nConstraints / non-goals:\n${constraintLines}\n\nHost verification contracts:\n${requirementLines(hostContracts, "none declared")}\n\nBudget: ${formatGoalBudget(goal)}\n\nThe full objective and every declared constraint remain required for completion.`
 }
 
 function archiveLine(record: GoalArchiveRecord): string {
@@ -154,6 +181,14 @@ export function enhanceGoalControls(input: PluginInput, hooks: PluginHooks): voi
     const parsed = parseGoalCommand(event.arguments ?? "")
     if (parsed.action === "doctor") {
       const shown = `${formatGoalDoctor(await diagnoseGoalStorage(input.directory, event.sessionID))}\nRespond with this diagnostic only; do not perform work.`
+      output.noReply = true
+      replaceParts(output.parts, shown)
+      readOnlyResponses.set(event.sessionID, shown)
+      return
+    }
+
+    if (parsed.action === "contract") {
+      const shown = `${formatGoalContract(await store.load(event.sessionID))}\nRespond with this contract only; do not perform work.`
       output.noReply = true
       replaceParts(output.parts, shown)
       readOnlyResponses.set(event.sessionID, shown)

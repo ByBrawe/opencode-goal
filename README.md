@@ -4,7 +4,7 @@
 
 The design rule is simple: **keep working until the goal is proven done.** The executor cannot complete its own goal merely by saying it is finished.
 
-> `0.1.0-beta.1` is published on npm. The repository is now developing `0.1.0-beta.2`; APIs and commands may still change while the verification and durability model is hardened.
+> `0.1.0-beta.1` is published on npm. The repository is now developing `0.1.0-beta.2`; APIs and commands may still change while the verification, durability, and OpenCode integration model is hardened.
 
 ## Why this exists
 
@@ -12,15 +12,27 @@ OpenCode is already good at doing a turn of coding work. **OpenCode Goals** adds
 
 This implementation is independently designed for OpenCode. It borrows product principles from durable goal workflows such as **Codex Goals**, but it does not copy their implementation or prompts.
 
+## Goal Contract
+
+A Goal is more than an objective string. Its persisted **Goal Contract** contains:
+
+- the full outcome/objective;
+- optional semantic success criteria (`--success` or `--accept`);
+- optional hard constraints/non-goals (`--constraint` or `--non-goal`);
+- host-verifiable command and file contracts;
+- execution budget and current revision/state.
+
+Every declared constraint is promoted to a **required semantic requirement**. A green test suite therefore cannot complete a Goal if, for example, the Goal also requires the public API to remain compatible and that boundary is still unproven. `/goal contract` renders the current contract read-only without pausing or otherwise mutating an active Goal.
+
 ## What makes completion different
 
-Every goal keeps the **full objective itself** as a required semantic item. Extra `--check`, `--file`, `--contains`, and `--accept` contracts add evidence; they never silently replace the broad objective. A narrow green test therefore cannot, by itself, prove a broader goal.
+Every goal keeps the **full objective itself** as a required semantic item. Extra `--check`, `--file`, `--contains`, `--success`/`--accept`, and constraint contracts add requirements; they never silently replace the broad objective. A narrow green test therefore cannot, by itself, prove a broader goal or trade away a declared boundary.
 
 Completion runs as an audit pipeline:
 
 1. The plugin runs declared shell checks itself and records the real exit code and output digest as host evidence.
 2. The plugin re-reads declared file contracts itself, confines paths to the project root, and hashes current contents.
-3. Semantic requirements are sent to a separate hidden **read-only verifier** session. It has read/glob/grep access but no shell, edit, write, patch, delegation, or goal-mutation tools.
+3. Semantic requirements — including the full objective, success criteria, and Goal Contract constraints — are sent to a separate hidden **read-only verifier** session. It has read/glob/grep access but no shell, edit, write, patch, delegation, or goal-mutation tools.
 4. A verifier `proven` verdict must cite either an exact `{path, quote}` from the current workspace or a current passing host-evidence ID. The plugin independently re-reads every quoted file and rejects hallucinated paths, quotes, stale evidence, and invented IDs.
 5. The goal becomes `completed` only if every required ledger item is proven on the current goal revision and no current verification is failing.
 
@@ -29,6 +41,11 @@ If the verifier does not submit a complete typed verdict, returns ambiguous evid
 ## Beta guarantees
 
 - One unfinished goal per session. Starting another fails closed.
+- Persisted Goal Contract with full objective, success criteria, hard constraints/non-goals, host verification contracts, budget, and revision.
+- `--success` and `--accept` both create semantic success criteria.
+- `--constraint` / `--constraints` / `--non-goal` / `--non-goals` create required semantic boundaries; they cannot be bypassed by narrower passing checks.
+- `/goal edit` preserves existing success criteria and constraints when their flags are omitted.
+- `/goal contract` is a read-only contract view and cannot pause the current Goal.
 - Explicit requirement ledger with `pending`, `proven`, `failed`, `unknown`, and `blocked` states.
 - Evidence records carry trust (`host`, `verifier`, `user`, or `agent`) and the goal revision that produced them.
 - Agent-written notes **cannot** prove requirements.
@@ -64,8 +81,9 @@ If the verifier does not submit a complete typed verdict, returns ambiguous evid
 - An unfinished archived Goal can be restored only when no unfinished live Goal exists. Restore is atomic, preserves its evidence/usage/revision/execution state, and always returns it as `paused`; the user must explicitly run `/goal resume` before work continues.
 - Completed archived Goals cannot be restored.
 - Active Goals recover after a real OpenCode process restart using the persisted session and execution context; the interrupted turn is not falsely counted as stalled.
-- Goal state is injected into OpenCode compaction context; OpenCode's generic post-compaction continue is disabled while the goal runtime owns continuation.
+- Goal state — including Goal Contract constraints — is injected into OpenCode compaction context; OpenCode's generic post-compaction continue is disabled while the goal runtime owns continuation.
 - Duplicate idle events cannot launch concurrent continuation prompts.
+- When a compatible OpenCode TUI is attached, explicit create/edit/pause/resume/clear commands may emit a best-effort **OpenCode Goals** toast. Toast delivery is optional UI only: missing/disconnected TUI support can never fail Goal persistence or verification.
 
 ## Install
 
@@ -87,20 +105,34 @@ The repository can be ahead of the published beta. For unreleased development ch
 
 ## Usage
 
+A mechanical goal:
+
 ```text
 /goal fix the failing tests --check "npm test" --contains "README.md::OpenCode Goals"
 ```
 
-Add semantic acceptance criteria when the requested end state needs more than a mechanical check:
+A Goal Contract with explicit success and boundaries:
 
 ```text
-/goal refactor auth --accept "public behavior remains compatible" --check "npm test"
+/goal refactor auth \
+  --success "all auth tests pass" \
+  --success "existing callers remain compatible" \
+  --constraint "do not add a runtime dependency" \
+  --non-goal "do not redesign unrelated session code" \
+  --check "npm test"
+```
+
+Inspect the exact persisted contract at any point:
+
+```text
+/goal contract
 ```
 
 Useful lifecycle commands:
 
 ```text
 /goal status
+/goal contract
 /goal doctor
 /goal pause
 /goal resume
@@ -112,13 +144,15 @@ Useful lifecycle commands:
 /goal clear
 ```
 
+`/goal contract` renders the full objective, semantic success criteria, constraints/non-goals, host verification contracts, budget, status, and revision. It is read-only and keeps an active Goal active.
+
 `/goal doctor` performs a read-only integrity check for the current session's live snapshot and archive storage. It reports `OK` or `ISSUES FOUND`, identifies `invalid_json`, `invalid_state`, `invalid_archive`, or `unsafe_path` failures with a project-relative path, and never modifies storage. There is intentionally no `--fix` mode; recovery from unknown, corrupt, or redirected storage remains an explicit user decision outside the Goal state machine.
 
 `/goal history` lists the most recent archived Goals for the current OpenCode session. Use the displayed goal ID prefix to inspect the archived objective, terminal status, requirements, budget, stop reason, and whether it was archived because it was `cleared` or `replaced`. The current live Goal stays in `/goal status`; it enters history when it is cleared or displaced by a later Goal.
 
 History does not expire automatically. If a project accumulates more archived snapshots than you want to retain, `/goal history prune --keep N` explicitly keeps the newest `N` archives for the current session and removes only older records. `N` must be at least `1`; the command cannot be used as an implicit "delete everything" path and it never changes or pauses the live Goal.
 
-`/goal restore <goal-id-prefix>` recovers an unfinished archived Goal without silently restarting autonomous work. The restored snapshot keeps its goal ID, revision, evidence, usage, progress accounting, budget, and execution context, but is written back as `paused`. Run `/goal resume` explicitly when you are ready to continue. Restore fails closed if another unfinished Goal is live, if the prefix is ambiguous, or if the archived Goal is already completed.
+`/goal restore <goal-id-prefix>` recovers an unfinished archived Goal without silently restarting autonomous work. The restored snapshot keeps its goal ID, revision, evidence, usage, progress accounting, budget, Goal Contract, and execution context, but is written back as `paused`. Run `/goal resume` explicitly when you are ready to continue. Restore fails closed if another unfinished Goal is live, if the prefix is ambiguous, or if the archived Goal is already completed.
 
 Goals can be created with local execution budgets:
 
@@ -136,7 +170,15 @@ Inspect or change the active goal's budget without changing its objective revisi
 
 `0` means **unlimited** for that budget dimension. If a local budget is exhausted, `/goal resume` is rejected until the reached limit is raised or cleared. If OpenCode reports an explicit account/free-tier usage limit, the goal becomes `usage_limited`; after the provider limit resets, `/goal resume` can retry it, and the host will stop it again if the limit is still active.
 
-Host-verifiable file contracts can be declared with `--file path` or `--contains "path::exact text"`. `--accept` criteria and the objective itself are semantic requirements; the independent verifier must prove them from current, host-corroborated evidence.
+Host-verifiable file contracts can be declared with `--file path` or `--contains "path::exact text"`. `--success`/`--accept` criteria, constraints, and the objective itself are semantic requirements; the independent verifier must prove them from current, host-corroborated evidence.
+
+## OpenCode CLI, TUI, web, and future V2
+
+OpenCode Goals keeps the authoritative state in the server/plugin/session layer rather than in a visual widget. That makes `/goal`, `/goal status`, `/goal contract`, history, restore, and the verification state usable from normal OpenCode session surfaces without making correctness depend on a particular UI client.
+
+The current V1 integration can additionally use the documented TUI toast endpoint for lightweight lifecycle feedback. It intentionally does **not** require an experimental third-party sidebar API, because the package still validates a broad minimum OpenCode plugin peer and headless/server workflows must remain first-class.
+
+OpenCode 2 uses a new plugin API and is still beta. A V1 plugin implementation is not treated as V2-compatible merely because command/config files migrate. The roadmap therefore keeps V2 as a separate experimental adapter/compatibility track until its plugin contracts are stable enough for the same real-host and package gates used by the V1 adapter.
 
 ## Architecture
 
@@ -144,13 +186,13 @@ The project is intentionally split into domain state, verification, runtime/acco
 
 ## Test philosophy
 
-The suite is adversarial by default. It covers false-complete attempts, stale evidence, narrow-check scope bypass, hallucinated verifier quotes, invented host-evidence IDs, parent-session result forgery, user-interrupt races, duplicate idle events, blocker repetition, fake progress, usage deduplication, budget exhaustion/bypass attempts, provider quota classification, fatal/transient provider errors, persistence, unsupported/corrupt storage fail-closed behavior, read-only storage diagnostics, corrupt-shard startup isolation, storage symlink/junction escapes, cross-process live-lock contention, optimistic stale-write races, dead-owner lease recovery, archive/history isolation, explicit live-safe history pruning, safe paused restore, compaction ownership, process restart recovery, and project-root path traversal.
+The suite is adversarial by default. It covers false-complete attempts, Goal Contract boundary bypass attempts, read-only contract ownership, stale evidence, narrow-check scope bypass, hallucinated verifier quotes, invented host-evidence IDs, parent-session result forgery, user-interrupt races, duplicate idle events, blocker repetition, fake progress, usage deduplication, budget exhaustion/bypass attempts, provider quota classification, fatal/transient provider errors, persistence, unsupported/corrupt storage fail-closed behavior, read-only storage diagnostics, corrupt-shard startup isolation, storage symlink/junction escapes, cross-process live-lock contention, optimistic stale-write races, dead-owner lease recovery, archive/history isolation, explicit live-safe history pruning, safe paused restore, compaction ownership, process restart recovery, optional-TUI failure, and project-root path traversal.
 
 Real-host canaries exercise lifecycle, semantic verification, active steering, mutation/no-op progress, and persistent SQLite restart recovery on Windows and Ubuntu. CI also checks Bun loading, the minimum declared OpenCode plugin peer, and `@opencode-ai/plugin@latest`.
 
 ## Eval corpus
 
-The adversarial regression suite is also exposed as a machine-readable evaluation corpus. The required categories are **false-complete, stall, blocker, compaction, restart, restore, storage-integrity, storage-concurrency, provider-limit, budget, and race**.
+The adversarial regression suite is also exposed as a machine-readable evaluation corpus. The required categories are **false-complete, contract, stall, blocker, compaction, restart, restore, storage-integrity, storage-concurrency, provider-limit, budget, and race**.
 
 Run the full corpus:
 
@@ -162,12 +204,12 @@ Write a JSON report or focus one category:
 
 ```text
 npm run eval -- --json eval-report.json
-npm run eval -- --category storage-concurrency
+npm run eval -- --category contract
 ```
 
 Each corpus case points at an exact underlying regression test and declares its expected safety outcome. The runner anchors the exact test name and requires exactly one passing target, so renamed or deleted tests cannot silently score as green. It reports per-case results, per-category scores, and a weighted overall score. CI runs the corpus on both Ubuntu and Windows and uploads the JSON reports as workflow artifacts.
 
-The beta gate requires every listed case and every required category to pass. The current corpus contains twenty adversarial cases across eleven required categories and requires **100% (57/57 weighted)** on every CI platform.
+The beta gate requires every listed case and every required category to pass. The current corpus contains twenty-two adversarial cases across twelve required categories and requires **100% (63/63 weighted)** on every CI platform.
 
 ## Roadmap to stable
 
@@ -176,7 +218,7 @@ The beta gate requires every listed case and every required category to pass. Th
 3. ✅ Active objective steering plus hybrid diff/file content progress fingerprints.
 4. ✅ Token/time/cost budget UX plus host-backed provider usage-limit states.
 5. ✅ Real OpenCode process canaries on Windows/Linux, including persistent restart recovery.
-6. ✅ Machine-readable adversarial eval corpus covering false-complete, stall, blocker, compaction, restart, restore, storage, provider-limit, budget, and race scenarios.
+6. ✅ Machine-readable adversarial eval corpus covering false-complete, contract, stall, blocker, compaction, restart, restore, storage, provider-limit, budget, and race scenarios.
 7. ✅ Durable per-session archive/history for replaced and cleared Goals.
 8. ✅ Safe paused restore for unfinished archived Goals.
 9. ✅ Explicit live-safe archive retention/pruning without automatic history loss.
@@ -185,7 +227,10 @@ The beta gate requires every listed case and every required category to pass. Th
 12. ✅ Project-bound Goal storage that refuses symlink/junction escapes.
 13. ✅ Cross-process persistence lease plus optimistic generation/CAS stale-write refusal.
 14. ✅ First npm beta (`0.1.0-beta.1`) with GitHub Actions trusted publishing/OIDC wiring.
-15. Continue hardening toward the next beta and stable release.
+15. ✅ Verified Goal Contracts: success criteria, hard constraints/non-goals, read-only contract view, and portable best-effort TUI feedback.
+16. Plan/restricted-agent safety so an autonomous Goal cannot silently escape a planning-only execution boundary.
+17. Experimental OpenCode V2 adapter after the beta plugin API is sufficiently stable for the same compatibility and real-host gates.
+18. Continue hardening toward the next beta and stable release.
 
 ## License
 

@@ -10,6 +10,7 @@ export type RequirementStatus = "pending" | "proven" | "failed" | "unknown" | "b
 export type EvidenceKind = "command" | "file" | "diff" | "artifact" | "runtime" | "external" | "manual" | "agent_note"
 export type EvidenceTrust = "host" | "verifier" | "user" | "agent"
 export type VerificationKind = "semantic" | "command" | "file"
+export type GoalRequirementSource = "objective" | "acceptance" | "constraint" | "check" | "file"
 
 export interface EvidenceRecord {
   id: string
@@ -31,6 +32,8 @@ export interface GoalRequirement {
   status: RequirementStatus
   evidenceIDs: string[]
   verification: VerificationKind
+  /** Structured Goal Contract origin. Older schema-v1 snapshots may omit it. */
+  source?: GoalRequirementSource
   command?: string
   file?: string
   contains?: string
@@ -82,6 +85,8 @@ export interface GoalState {
   id: string
   sessionID: string
   objective: string
+  /** Explicit Goal Contract boundaries/non-goals. Older schema-v1 snapshots may omit this field. */
+  constraints?: string[]
   revision: number
   status: GoalStatus
   requirements: GoalRequirement[]

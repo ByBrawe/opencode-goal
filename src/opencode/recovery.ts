@@ -1,6 +1,7 @@
 import CorePlugin from "./plugin.js"
 import { pauseGoal } from "../domain/goal.js"
 import type { GoalExecutionContext, GoalState } from "../domain/types.js"
+import { scanRecoverableGoalStates } from "../persistence/diagnostics.js"
 import { GoalStore } from "../persistence/store.js"
 
 type PluginInput = Parameters<typeof CorePlugin>[0]
@@ -84,8 +85,7 @@ async function sdkRecoveryPrompt(
 }
 
 export async function captureStartupGoals(directory: string): Promise<GoalState[]> {
-  const store = new GoalStore(directory)
-  return (await store.list()).filter((goal) => goal.status === "active")
+  return (await scanRecoverableGoalStates(directory)).filter((goal) => goal.status === "active")
 }
 
 export function scheduleStartupRecovery(input: PluginInput, hooks: PluginHooks, startupGoals: GoalState[]): void {

@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "requiredCategories": [
+    "opencode2-experimental"
+  ],
+  "cases": [
+    {
+      "id": "opencode2.plan-contract-paused-build-resume",
+      "category": "opencode2-experimental",
+      "weight": 3,
+      "testFile": "test/opencode2-experimental.test.mjs",
+      "testName": "V2 Plan can define a persisted Goal Contract but cannot activate it",
+      "expected": "The experimental V2 adapter persists the schema-v1 Goal Contract but keeps Plan paused; only an explicit Build resume activates and repins execution."
+    },
+    {
+      "id": "opencode2.unsupported-control-no-mutation",
+      "category": "opencode2-experimental",
+      "weight": 3,
+      "testFile": "test/opencode2-experimental.test.mjs",
+      "testName": "unsupported V2 parity-sensitive controls are explicit and never mutate live Goal state",
+      "expected": "A V2 control without stable parity refuses explicitly and leaves the exact live Goal snapshot unchanged."
+    },
+    {
+      "id": "opencode2.context-plan-boundary",
+      "category": "opencode2-experimental",
+      "weight": 3,
+      "testFile": "test/opencode2-experimental.test.mjs",
+      "testName": "V2 context hook injects persisted state and pauses an active Goal selected through Plan",
+      "expected": "Persisted Goal state reaches model context while Plan remains a hard execution boundary rather than an implementation escape hatch."
+    },
+    {
+      "id": "opencode2.workspace-resolution-fail-closed",
+      "category": "opencode2-experimental",
+      "weight": 3,
+      "testFile": "test/opencode2-experimental.test.mjs",
+      "testName": "V2 adapter fails closed when the session workspace cannot be resolved",
+      "expected": "Missing V2 session location.directory prevents all Goal storage access instead of falling back to an unrelated process working directory."
+    }
+  ]
+}

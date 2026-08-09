@@ -76,7 +76,7 @@ async function main() {
   const data = path.join(home, ".local", "share")
   const state = path.join(home, ".local", "state")
   const pluginFile = path.join(root, "dist", "opencode2", "experimental.js")
-  const discoveryFile = path.join(pluginDirectory, "opencode-goals-v2-canary.mjs")
+  const discoveryFile = path.join(pluginDirectory, "opencode-goals-v2-canary.js")
 
   await Promise.all([
     mkdir(project, { recursive: true }),
@@ -96,9 +96,9 @@ async function main() {
   }
 
   // V2 documents ~/.config/opencode/plugins as the global auto-discovery
-  // directory. The tiny wrapper keeps the canary discovery path isolated while
-  // importing the repository's actual compiled adapter in place, so its normal
-  // relative imports continue to resolve from dist/.
+  // directory and scans direct .ts/.js children. The tiny wrapper keeps the
+  // canary discovery path isolated while importing the repository's actual
+  // compiled adapter in place, so its normal relative imports resolve from dist/.
   await writeFile(
     discoveryFile,
     `export { default } from ${JSON.stringify(pathToFileURL(pluginFile).href)}\n`,

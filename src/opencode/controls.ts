@@ -1,6 +1,6 @@
 import type CorePlugin from "./plugin.js"
 import type { GoalBudget, GoalState } from "../domain/types.js"
-import { GoalStore, type GoalArchiveRecord } from "../persistence/store.js"
+import { GoalStore, type GoalArchiveRecord, type GoalRestoreResult } from "../persistence/store.js"
 import { applyGoalBudget, budgetLimitHits, formatGoalBudget } from "../runtime/accounting.js"
 import { parseGoalCommand } from "./command.js"
 import { continuationPrompt } from "./prompt.js"
@@ -48,6 +48,23 @@ export function formatGoalHistory(records: GoalArchiveRecord[], selector?: strin
 
   const record = matches[0]!
   return `Archived goal: ${record.goalID}\nArchive reason: ${record.reason}\nArchived at: ${new Date(record.archivedAt).toISOString()}\n${formatDetailedGoalStatus(record.goal)}`
+}
+
+function formatRestoreResult(result: GoalRestoreResult, selector: string): string {
+  if (result.ok) {
+    return `Restored archived goal ${result.goal.id} as paused.\n${formatDetailedGoalStatus(result.goal)}\nUse /goal resume to continue this Goal.`
+  }
+  if (result.reason === "not_found") return `No archived goal matches "${selector}". Nothing was restored.`
+  if (result.reason === "ambiguous") {
+    return `Multiple archived goals match "${selector}". Use a longer id prefix:\n${result.matches.slice(0, 10).map(archiveLine).join("\n")}`
+  }
+  if (result.reason === "live_unfinished") {
+    return `Cannot restore while an unfinished Goal is current.\n${formatDetailedGoalStatus(result.current)}\nFinish or /goal clear the current Goal before restoring another one.`
+  }
+  if (result.reason === "already_current") {
+    return `Goal ${result.current.id} is already the current Goal. Nothing was restored.\n${formatDetailedGoalStatus(result.current)}`
+  }
+  return `Archived goal ${result.source.goalID} is already completed and cannot be restored. Inspect it with /goal history ${result.source.goalID.slice(0, 12)}.`
 }
 
 function budgetPatch(parsed: ReturnType<typeof parseGoalCommand>): Partial<GoalBudget> {
@@ -109,7 +126,16 @@ export function enhanceGoalControls(input: PluginInput, hooks: PluginHooks): voi
       await commandHook({ ...event, arguments: "status" }, output)
       const ownedText = textFromParts(output.parts)
       const records = await store.history(event.sessionID, 500)
-      const shown = `${formatGoalHistory(records, parsed.historySelector)}\nRespond with this history only; do not perform work.`
+      const shown = `${formatGoalHistory(records, parsed.goalIDPrefix)}\nRespond with this history only; do not perform work.`
+      translatedOutput(output, shown, ownedText, translations, event.sessionID)
+      return
+    }
+
+    if (parsed.action === "restore") {
+      await commandHook({ ...event, arguments: "status" }, output)
+      const ownedText = textFromParts(output.parts)
+      const result = await store.restore(event.sessionID, parsed.goalIDPrefix!)
+      const shown = `${formatRestoreResult(result, parsed.goalIDPrefix!)}\nRespond with this restore status only; do not perform work.`
       translatedOutput(output, shown, ownedText, translations, event.sessionID)
       return
     }

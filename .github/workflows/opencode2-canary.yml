@@ -1,0 +1,40 @@
+name: Real OpenCode 2 Plugin Canary
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  opencode2-plugin-load:
+    name: OpenCode 2 plugin load (Ubuntu)
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - name: Install repository dependencies
+        run: npm install
+      - name: Build OpenCode Goals
+        run: npm run build
+      - name: Install current OpenCode 2 beta CLI
+        env:
+          GITHUB_TOKEN: ""
+          NODE_AUTH_TOKEN: ""
+        run: npm install -g @opencode-ai/cli@next
+      - name: Show OpenCode 2 version
+        run: opencode2 --version
+      - name: Load experimental adapter in a real OpenCode 2 service
+        env:
+          GITHUB_TOKEN: ""
+          NODE_AUTH_TOKEN: ""
+        run: node scripts/opencode2-host-canary.mjs --json opencode2-canary-report.json

@@ -147,6 +147,23 @@ export function editGoal(goal: GoalState, input: {
   }
 }
 
+/** Apply command-line constraint flags inside the revision already created by /goal create or /goal edit. */
+export function replaceGoalConstraints(goal: GoalState, constraints: string[], now = Date.now()): GoalState {
+  const normalized = constraints.map((item) => item.trim()).filter(Boolean)
+  const retained = goal.requirements.filter((item) => item.source !== "constraint")
+  const constraintRequirements = normalized.map((item) => requirement({
+    text: `Constraint preserved: ${item}`,
+    verification: "semantic",
+    source: "constraint",
+  }))
+  return {
+    ...goal,
+    constraints: normalized,
+    requirements: [...retained, ...constraintRequirements],
+    updatedAt: now,
+  }
+}
+
 export function pauseGoal(goal: GoalState, reason = "paused by user", now = Date.now()): GoalState {
   if (goal.status === "completed") return goal
   return { ...goal, status: "paused", stopReason: reason, updatedAt: now }

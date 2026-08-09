@@ -39,12 +39,6 @@ function pendingClient() {
         abort() {
           return Promise.resolve(true)
         },
-        list() {
-          return Promise.resolve({ data: [{ id: "session-restart" }] })
-        },
-        status() {
-          return Promise.resolve({ data: {} })
-        },
       },
     },
     prompts,
@@ -116,6 +110,8 @@ test("a fresh plugin instance automatically reloads and resumes an active goal e
 
     // Simulate a full plugin/process restart: all in-memory ownership, locks and
     // dispatch state disappear, while the project-local goal shard remains.
+    // The recovery path must not need session.list/status because a plugin can
+    // load inside the very host request those client methods would recurse into.
     const second = pendingClient()
     await OpenCodeGoalPlugin({ client: second.client, directory: root })
 

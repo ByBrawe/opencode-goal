@@ -329,7 +329,7 @@ export const OpenCode2GoalsExperimental = {
 
     await ctx.tool.transform((tools) => {
       tools.add(V2_CONTROL_TOOL, {
-        description: "Request-scoped OpenCode Goals V2 lifecycle control. It is available only to an authorized /goal command turn and accepts only that command's exact raw arguments.",
+        description: "Context-scoped OpenCode Goals V2 lifecycle control. It is available only to an authorized /goal command turn and accepts only that command's exact raw arguments.",
         input: controlInputSchema,
         output: controlOutputSchema,
         execute: async (input: { arguments: string }, toolContext: OpenCode2ExperimentalToolContext) => {
@@ -354,7 +354,7 @@ export const OpenCode2GoalsExperimental = {
       }, { codemode: false })
     })
 
-    await ctx.session.hook("request", async (event: any) => {
+    await ctx.session.hook("context", async (event: any) => {
       const sessionID = sessionIDFromEvent(event)
       if (!sessionID) {
         removeControlTool(event)

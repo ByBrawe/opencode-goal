@@ -26,12 +26,25 @@ async function readGoal(root) {
   return JSON.parse(await readFile(path.join(dir, files[0]), "utf8"))
 }
 
-function pendingClient() {
+function pendingClient({ holdList = false } = {}) {
   const prompts = []
   const pending = []
+  let listCalls = 0
+  let releaseList = () => {}
+  const listResult = holdList
+    ? new Promise((resolve) => { releaseList = () => resolve({ data: [{ id: "session-restart" }] }) })
+    : Promise.resolve({ data: [{ id: "session-restart" }] })
+
   return {
     client: {
       session: {
+        list() {
+          listCalls += 1
+          return listResult
+        },
+        status() {
+          return Promise.resolve({ data: {} })
+        },
         prompt(arg) {
           prompts.push(arg)
           return new Promise((resolve, reject) => pending.push({ resolve, reject }))
@@ -43,10 +56,12 @@ function pendingClient() {
     },
     prompts,
     pending,
+    releaseList: () => releaseList(),
+    listCalls: () => listCalls,
   }
 }
 
-test("a fresh plugin instance resumes an active goal only after the host config lifecycle", async () => {
+test("a fresh plugin instance waits for the host bootstrap barrier before resuming an active goal", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-restart-"))
   try {
     const first = pendingClient()
@@ -108,21 +123,24 @@ test("a fresh plugin instance resumes an active goal only after the host config 
       variant: "high",
     })
 
-    // Simulate a full plugin/process restart. Plugin construction happens while
-    // OpenCode still owns its lazy directory-instance bootstrap, so recovery is
-    // forbidden from calling back into the host at this point.
-    const second = pendingClient()
+    // Simulate a full plugin/process restart. The single read-only session.list
+    // request is our bootstrap barrier: while OpenCode is still initializing the
+    // directory instance it remains pending, and recovery must not prompt.
+    const second = pendingClient({ holdList: true })
     const afterRestart = await OpenCodeGoalPlugin({ client: second.client, directory: root })
     await tick()
     assert.equal(second.prompts.length, 0, "plugin construction must not dispatch restart recovery")
 
-    // OpenCode invokes config hooks near the end of plugin initialization. The
-    // recovery wrapper chains the existing config work, then defers one
-    // macrotask so instance initialization can finish before prompting.
     const config = {}
     await afterRestart.config?.(config)
+    await afterRestart.config?.(config)
     assert.ok(config.command?.goal, "existing goal command registration must be preserved")
-    await waitFor(() => second.prompts.length === 1, "post-config startup recovery continuation")
+    await tick()
+    assert.equal(second.listCalls(), 1, "startup recovery must create exactly one bootstrap barrier request")
+    assert.equal(second.prompts.length, 0, "recovery must remain blocked until the host barrier resolves")
+
+    second.releaseList()
+    await waitFor(() => second.prompts.length === 1, "post-bootstrap recovery continuation")
 
     assert.equal(second.prompts.length, 1, "restart recovery must dispatch one continuation")
     assert.equal(second.prompts[0].path.id, "session-restart")

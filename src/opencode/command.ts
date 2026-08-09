@@ -1,7 +1,7 @@
 import type { FileRequirementInput } from "../domain/types.js"
 
 export interface ParsedGoalCommand {
-  action: "create" | "status" | "contract" | "pause" | "resume" | "clear" | "edit" | "budget" | "history" | "history_prune" | "restore" | "doctor"
+  action: "create" | "status" | "contract" | "pause" | "resume" | "clear" | "edit" | "budget" | "history" | "history_prune" | "restore" | "doctor" | "list"
   objective: string
   acceptance: string[]
   constraints: string[]
@@ -49,6 +49,16 @@ function parseHistoryKeep(raw: string | undefined): number {
   return value
 }
 
+function parseOptionalGoalSelector(list: string[], command: string): ParsedGoalCommand {
+  const goalIDPrefix = list[1]?.trim()
+  if (list.length > 2) throw new Error(`/goal ${command} accepts at most one goal id prefix`)
+  if (goalIDPrefix?.startsWith("--")) throw new Error(`unknown goal option: ${goalIDPrefix}`)
+  return {
+    ...empty(command === "list" ? "list" : "history"),
+    ...(goalIDPrefix ? { goalIDPrefix } : {}),
+  }
+}
+
 export function parseGoalCommand(input: string): ParsedGoalCommand {
   const list = tokens(input.trim())
   const sub = (list[0] ?? "").toLowerCase()
@@ -63,6 +73,7 @@ export function parseGoalCommand(input: string): ParsedGoalCommand {
   if (["status", "pause", "resume", "clear"].includes(sub)) {
     return empty(sub as ParsedGoalCommand["action"])
   }
+  if (sub === "list") return parseOptionalGoalSelector(list, "list")
   if (sub === "history") {
     if ((list[1] ?? "").toLowerCase() === "prune") {
       if (list.length !== 4 || list[2] !== "--keep") {
@@ -73,13 +84,7 @@ export function parseGoalCommand(input: string): ParsedGoalCommand {
         historyKeep: parseHistoryKeep(list[3]),
       }
     }
-    const goalIDPrefix = list[1]?.trim()
-    if (list.length > 2) throw new Error("/goal history accepts at most one goal id prefix")
-    if (goalIDPrefix?.startsWith("--")) throw new Error(`unknown goal option: ${goalIDPrefix}`)
-    return {
-      ...empty("history"),
-      ...(goalIDPrefix ? { goalIDPrefix } : {}),
-    }
+    return parseOptionalGoalSelector(list, "history")
   }
   if (sub === "restore") {
     const goalIDPrefix = list[1]?.trim()

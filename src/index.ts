@@ -2,6 +2,7 @@ import OpenCodeGoalCorePlugin from "./opencode/plugin.js"
 import { enhanceGoalControls } from "./opencode/controls.js"
 import { installProjectGoalIndex } from "./opencode/project-index.js"
 import { installGoalContractUX } from "./opencode/contract-ux.js"
+import { installGoalDraft } from "./opencode/draft.js"
 import { installTaskDeferral } from "./opencode/task-deferral.js"
 import { installRestrictedAgentSafety } from "./opencode/agent-boundary.js"
 import { installHostLimitHandling } from "./opencode/host-limits.js"
@@ -16,6 +17,7 @@ export default async function OpenCodeGoalPlugin(input: Parameters<typeof OpenCo
   enhanceGoalControls(input, hooks)
   installProjectGoalIndex(input, hooks)
   installGoalContractUX(input, hooks)
+  installGoalDraft(input, hooks)
   // Task deferral sits below the restricted-agent wrapper so Plan safety always
   // wins before a delegated-task idle suppression decision is made.
   installTaskDeferral(input, hooks)
@@ -37,3 +39,4 @@ export * from "./opencode/command.js"
 export * from "./opencode/agent-boundary.js"
 export * from "./opencode/task-deferral.js"
 export * from "./opencode/project-index.js"
+export * from "./opencode/draft.js"

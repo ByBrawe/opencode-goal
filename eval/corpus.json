@@ -8,6 +8,7 @@
     "restart",
     "restore",
     "storage-integrity",
+    "storage-concurrency",
     "provider-limit",
     "budget",
     "race"
@@ -125,6 +126,30 @@
       "testFile": "test/storage-path-safety.test.mjs",
       "testName": "archive history refuses symlink or junction escape before read or prune",
       "expected": "A symlink or junction in archive storage blocks history read/prune and leaves the external target untouched."
+    },
+    {
+      "id": "storage-concurrency.live-lease-timeout",
+      "category": "storage-concurrency",
+      "weight": 3,
+      "testFile": "test/store-concurrency.test.mjs",
+      "testName": "live cross-process lease blocks a second writer until timeout",
+      "expected": "A live process lease cannot be stolen; the contender times out without mutating the Goal and can write only after release."
+    },
+    {
+      "id": "storage-concurrency.stale-writer-cas",
+      "category": "storage-concurrency",
+      "weight": 3,
+      "testFile": "test/store-concurrency.test.mjs",
+      "testName": "two stale process snapshots cannot both commit",
+      "expected": "Two independent processes racing from the same generation yield exactly one commit and one stale_write conflict."
+    },
+    {
+      "id": "storage-concurrency.dead-owner-reclaim",
+      "category": "storage-concurrency",
+      "weight": 3,
+      "testFile": "test/store-concurrency.test.mjs",
+      "testName": "dead process lease is reclaimed without stealing a live owner",
+      "expected": "A lease is reclaimed only after its owner process is dead; recovery persists normally and leaves no canonical lock behind."
     },
     {
       "id": "provider-limit.explicit-quota-vs-transient-retry",

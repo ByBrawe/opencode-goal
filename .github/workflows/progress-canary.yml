@@ -1,4 +1,4 @@
-name: Real Patch Progress
+name: Real Host Progress
 
 on:
   pull_request:
@@ -7,11 +7,11 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   progress:
-    name: PatchPart progress (${{ matrix.os }})
+    name: Host progress (${{ matrix.os }})
     timeout-minutes: 12
     strategy:
       fail-fast: false
@@ -37,7 +37,7 @@ jobs:
         env:
           OPENCODE_PRINT_LOGS: "1"
           OPENCODE_LOG_LEVEL: DEBUG
-      - name: Run real PatchPart/no-op progress canary
+      - name: Run real host mutation/no-op progress canary
         id: canary
         shell: bash
         run: |
@@ -49,15 +49,11 @@ jobs:
         env:
           OPENCODE_PRINT_LOGS: "1"
           OPENCODE_LOG_LEVEL: DEBUG
-      - name: Capture Windows failure diagnostics
-        if: failure() && matrix.os == 'windows-latest' && github.actor != 'github-actions[bot]'
-        shell: bash
-        run: |
-          tail -n 240 progress-canary.log > progress-canary-windows-failure.txt
-          git fetch origin ci/real-patch-progress
-          git checkout ci/real-patch-progress
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add progress-canary-windows-failure.txt
-          git commit -m "ci: capture Windows progress canary diagnostics"
-          git push origin HEAD:ci/real-patch-progress
+          OPENCODE_CONFIG_CONTENT: '{"permission":{"external_directory":"allow"}}'
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: progress-canary-${{ matrix.os }}
+          path: progress-canary.log
+          if-no-files-found: error

@@ -50,6 +50,8 @@ If the verifier does not submit a complete typed verdict, returns ambiguous evid
 - Goal state is stored project-locally under `.opencode/goals/` with atomic writes.
 - Existing Goal storage is never treated as absent merely because its JSON is corrupt, structurally invalid, or uses an unsupported schema version. Reads and mutations fail closed instead of overwriting unknown state.
 - Corrupt or unsupported archive records block history restore/prune operations rather than being silently skipped, rewritten, or deleted.
+- `/goal doctor` is a read-only storage diagnostic. It reports current-session live/archive health and integrity errors without repairing, deleting, rewriting, pausing, resuming, or replacing Goal state.
+- Startup recovery isolates corrupt or unsupported live shards instead of letting one damaged shard disable plugin bootstrap; healthy validated active Goals remain eligible for recovery.
 - Replaced and explicitly cleared Goals are archived project-locally before the live state is overwritten or removed; archive records are excluded from startup recovery.
 - Archive retention is never reduced automatically. `/goal history prune --keep N` is the only built-in retention command; `N` must be a positive integer, only older archive records are removed, and the live Goal is untouched.
 - An unfinished archived Goal can be restored only when no unfinished live Goal exists. Restore is atomic, preserves its evidence/usage/revision/execution state, and always returns it as `paused`; the user must explicitly run `/goal resume` before work continues.
@@ -84,6 +86,7 @@ Useful lifecycle commands:
 
 ```text
 /goal status
+/goal doctor
 /goal pause
 /goal resume
 /goal edit fix tests and update docs
@@ -93,6 +96,8 @@ Useful lifecycle commands:
 /goal restore <goal-id-prefix>
 /goal clear
 ```
+
+`/goal doctor` performs a read-only integrity check for the current session's live snapshot and archive storage. It reports `OK` or `ISSUES FOUND`, identifies `invalid_json`, `invalid_state`, or `invalid_archive` failures with a project-relative path, and never modifies storage. There is intentionally no `--fix` mode; recovery from unknown or corrupt bytes remains an explicit user decision outside the Goal state machine.
 
 `/goal history` lists the most recent archived Goals for the current OpenCode session. Use the displayed goal ID prefix to inspect the archived objective, terminal status, requirements, budget, stop reason, and whether it was archived because it was `cleared` or `replaced`. The current live Goal stays in `/goal status`; it enters history when it is cleared or displaced by a later Goal.
 
@@ -124,7 +129,7 @@ The project is intentionally split into domain state, verification, runtime/acco
 
 ## Test philosophy
 
-The suite is adversarial by default. It covers false-complete attempts, stale evidence, narrow-check scope bypass, hallucinated verifier quotes, invented host-evidence IDs, parent-session result forgery, user-interrupt races, duplicate idle events, blocker repetition, fake progress, usage deduplication, budget exhaustion/bypass attempts, provider quota classification, fatal/transient provider errors, persistence, unsupported/corrupt storage fail-closed behavior, archive/history isolation, explicit live-safe history pruning, safe paused restore, compaction ownership, process restart recovery, and project-root path traversal.
+The suite is adversarial by default. It covers false-complete attempts, stale evidence, narrow-check scope bypass, hallucinated verifier quotes, invented host-evidence IDs, parent-session result forgery, user-interrupt races, duplicate idle events, blocker repetition, fake progress, usage deduplication, budget exhaustion/bypass attempts, provider quota classification, fatal/transient provider errors, persistence, unsupported/corrupt storage fail-closed behavior, read-only storage diagnostics, corrupt-shard startup isolation, archive/history isolation, explicit live-safe history pruning, safe paused restore, compaction ownership, process restart recovery, and project-root path traversal.
 
 Real-host canaries exercise lifecycle, semantic verification, active steering, mutation/no-op progress, and persistent SQLite restart recovery on Windows and Ubuntu. CI also checks Bun loading, the minimum declared OpenCode plugin peer, and `@opencode-ai/plugin@latest`.
 
@@ -147,7 +152,7 @@ npm run eval -- --category storage-integrity
 
 Each corpus case points at an exact underlying regression test and declares its expected safety outcome. The runner anchors the exact test name and requires exactly one passing target, so renamed or deleted tests cannot silently score as green. It reports per-case results, per-category scores, and a weighted overall score. CI runs the corpus on both Ubuntu and Windows and uploads the JSON reports as workflow artifacts.
 
-The beta gate requires every listed case and every required category to pass. The current corpus contains thirteen adversarial cases across ten required categories and requires **100% (36/36 weighted)** on every CI platform.
+The beta gate requires every listed case and every required category to pass. The current corpus contains fifteen adversarial cases across ten required categories and requires **100% (42/42 weighted)** on every CI platform.
 
 ## Roadmap to stable
 
@@ -161,7 +166,8 @@ The beta gate requires every listed case and every required category to pass. Th
 8. ✅ Safe paused restore for unfinished archived Goals.
 9. ✅ Explicit live-safe archive retention/pruning without automatic history loss.
 10. ✅ Fail-closed storage integrity for corrupt or unsupported live/archive snapshots.
-11. First npm beta after the remaining development and release gates are complete.
+11. ✅ Read-only storage diagnostics plus corrupt-shard startup isolation.
+12. First npm beta after the remaining development and release gates are complete.
 
 ## License
 

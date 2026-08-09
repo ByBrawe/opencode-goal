@@ -1,6 +1,6 @@
 import type CorePlugin from "./plugin.js"
 import type { GoalBudget, GoalState } from "../domain/types.js"
-import { GoalStore } from "../persistence/store.js"
+import { GoalStore, type GoalArchiveRecord } from "../persistence/store.js"
 import { applyGoalBudget, budgetLimitHits, formatGoalBudget } from "../runtime/accounting.js"
 import { parseGoalCommand } from "./command.js"
 import { continuationPrompt } from "./prompt.js"
@@ -23,6 +23,31 @@ export function formatDetailedGoalStatus(goal: GoalState | null): string {
   const req = goal.requirements.map((item, i) => `${i + 1}. [${item.status}] ${item.text}`).join("\n")
   const stop = goal.stopReason ? `\nStop reason: ${goal.stopReason}` : ""
   return `Goal: ${goal.objective}\nStatus: ${goal.status}\nRevision: ${goal.revision}\nBudget: ${formatGoalBudget(goal)}${stop}\nRequirements:\n${req}`
+}
+
+function archiveLine(record: GoalArchiveRecord): string {
+  const id = record.goalID.slice(0, 12)
+  const when = new Date(record.archivedAt).toISOString()
+  return `${id} [${record.goal.status}; ${record.reason}] ${when} — ${record.goal.objective}`
+}
+
+export function formatGoalHistory(records: GoalArchiveRecord[], selector?: string): string {
+  if (!selector) {
+    if (!records.length) return "No archived goals."
+    const shown = records.slice(0, 10)
+    const more = records.length > shown.length ? `\n… and ${records.length - shown.length} more archived goal(s).` : ""
+    return `Archived goals (newest first):\n${shown.map(archiveLine).join("\n")}${more}`
+  }
+
+  const normalized = selector.toLowerCase()
+  const matches = records.filter((record) => record.goalID.toLowerCase().startsWith(normalized))
+  if (!matches.length) return `No archived goal matches "${selector}".`
+  if (matches.length > 1) {
+    return `Multiple archived goals match "${selector}". Use a longer id prefix:\n${matches.slice(0, 10).map(archiveLine).join("\n")}`
+  }
+
+  const record = matches[0]!
+  return `Archived goal: ${record.goalID}\nArchive reason: ${record.reason}\nArchived at: ${new Date(record.archivedAt).toISOString()}\n${formatDetailedGoalStatus(record.goal)}`
 }
 
 function budgetPatch(parsed: ReturnType<typeof parseGoalCommand>): Partial<GoalBudget> {
@@ -80,6 +105,15 @@ export function enhanceGoalControls(input: PluginInput, hooks: PluginHooks): voi
     }
 
     const parsed = parseGoalCommand(event.arguments ?? "")
+    if (parsed.action === "history") {
+      await commandHook({ ...event, arguments: "status" }, output)
+      const ownedText = textFromParts(output.parts)
+      const records = await store.history(event.sessionID, 500)
+      const shown = `${formatGoalHistory(records, parsed.historySelector)}\nRespond with this history only; do not perform work.`
+      translatedOutput(output, shown, ownedText, translations, event.sessionID)
+      return
+    }
+
     if (parsed.action === "status") {
       await commandHook(event, output)
       const ownedText = textFromParts(output.parts)

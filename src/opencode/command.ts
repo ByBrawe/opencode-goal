@@ -1,11 +1,12 @@
 import type { FileRequirementInput } from "../domain/types.js"
 
 export interface ParsedGoalCommand {
-  action: "create" | "status" | "pause" | "resume" | "clear" | "edit" | "budget"
+  action: "create" | "status" | "pause" | "resume" | "clear" | "edit" | "budget" | "history"
   objective: string
   acceptance: string[]
   checks: string[]
   files: FileRequirementInput[]
+  historySelector?: string
   maxTurns?: number
   maxTokens?: number
   maxRuntimeMs?: number
@@ -39,6 +40,19 @@ export function parseGoalCommand(input: string): ParsedGoalCommand {
   const sub = (list[0] ?? "").toLowerCase()
   if (["status", "pause", "resume", "clear"].includes(sub)) {
     return { action: sub as ParsedGoalCommand["action"], objective: "", acceptance: [], checks: [], files: [] }
+  }
+  if (sub === "history") {
+    if (list.length > 2) throw new Error("/goal history accepts at most one goal id prefix")
+    const historySelector = list[1]?.trim()
+    if (historySelector?.startsWith("--")) throw new Error(`unknown goal option: ${historySelector}`)
+    return {
+      action: "history",
+      objective: "",
+      acceptance: [],
+      checks: [],
+      files: [],
+      ...(historySelector ? { historySelector } : {}),
+    }
   }
 
   let action: ParsedGoalCommand["action"] = "create"

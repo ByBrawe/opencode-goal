@@ -11,6 +11,19 @@ test("goal parser keeps quoted criteria, checks, and host file contracts", () =>
   assert.equal(parsed.maxTurns, 20)
 })
 
+test("goal history accepts an optional id prefix and rejects extra arguments", () => {
+  assert.deepEqual(parseGoalCommand("history"), {
+    action: "history",
+    objective: "",
+    acceptance: [],
+    checks: [],
+    files: [],
+  })
+  assert.equal(parseGoalCommand("history a1b2c3d4").historySelector, "a1b2c3d4")
+  assert.throws(() => parseGoalCommand("history one two"), /at most one goal id prefix/)
+  assert.throws(() => parseGoalCommand("history --all"), /unknown goal option/)
+})
+
 test("unknown flags fail closed", () => {
   assert.throws(() => parseGoalCommand("ship --wat nope"), /unknown goal option/)
 })

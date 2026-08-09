@@ -99,6 +99,8 @@ export interface GoalState {
   progressNotes: ProgressNote[]
   completionSummary?: string
   stopReason?: string
+  /** Optimistic persistence generation. Older schema-v1 snapshots may omit it and are treated as generation 0. */
+  storageGeneration?: number
   createdAt: number
   updatedAt: number
 }

@@ -203,6 +203,7 @@ async function recoverStartupGoals(
         runtime.pending.delete(sessionID)
         continue
       }
+      current.storageGeneration = prepared.storageGeneration ?? 0
       await store.save(current)
 
       const text = textFromParts(output.parts)

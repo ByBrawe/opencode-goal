@@ -2,6 +2,10 @@ import { createHash, randomUUID } from "node:crypto"
 import { promises as fs } from "node:fs"
 import path from "node:path"
 import type { GoalState } from "../domain/types.js"
+import { acquireGoalStoreProcessLock, GoalStoreConcurrencyError } from "./process-lock.js"
+
+export { GoalStoreConcurrencyError }
+export type { GoalStoreConcurrencyKind } from "./process-lock.js"
 
 export type GoalArchiveReason = "cleared" | "replaced"
 export type GoalStoreIntegrityKind = "invalid_json" | "invalid_state" | "invalid_archive" | "unsafe_path"
@@ -42,15 +46,27 @@ export type GoalRestoreResult =
   | { ok: false; reason: "already_current"; current: GoalState }
   | { ok: false; reason: "completed"; source: GoalArchiveRecord }
 
+export interface GoalStoreOptions {
+  processLockTimeoutMs?: number
+}
+
 function shard(value: string): string {
   return createHash("sha256").update(value).digest("hex").slice(0, 32)
+}
+
+function validGeneration(value: unknown): boolean {
+  return value === undefined || (Number.isSafeInteger(value) && Number(value) >= 0)
+}
+
+function storageGeneration(goal: GoalState | null | undefined): number {
+  return goal?.storageGeneration ?? 0
 }
 
 function validateState(value: unknown): GoalState | null {
   if (!value || typeof value !== "object") return null
   const state = value as Partial<GoalState>
   if (state.schemaVersion !== 1 || typeof state.id !== "string" || typeof state.sessionID !== "string" || typeof state.objective !== "string") return null
-  if (!Array.isArray(state.requirements) || !Array.isArray(state.evidence)) return null
+  if (!Array.isArray(state.requirements) || !Array.isArray(state.evidence) || !validGeneration(state.storageGeneration)) return null
   return value as GoalState
 }
 
@@ -81,6 +97,8 @@ function parseStoredJson(raw: string, file: string): unknown {
 function stateIntegrityDetail(value: unknown): string {
   const schema = schemaVersionOf(value)
   if (schema !== 1) return `unsupported schemaVersion ${String(schema)}`
+  const generation = value && typeof value === "object" ? (value as { storageGeneration?: unknown }).storageGeneration : undefined
+  if (!validGeneration(generation)) return `invalid storageGeneration ${String(generation)}`
   return "stored Goal state shape is invalid"
 }
 
@@ -192,15 +210,24 @@ async function removeStorageFile(directory: string, target: string): Promise<voi
 export class GoalStore {
   readonly directory: string
   readonly root: string
+  readonly locksRoot: string
+  readonly processLockTimeoutMs: number
   #locks = new Map<string, Promise<unknown>>()
 
-  constructor(directory: string) {
+  constructor(directory: string, options: GoalStoreOptions = {}) {
     this.directory = path.resolve(directory)
     this.root = path.join(this.directory, ".opencode", "goals")
+    this.locksRoot = path.join(this.directory, ".opencode", "goal-locks")
+    this.processLockTimeoutMs = options.processLockTimeoutMs ?? 5_000
+    if (!Number.isFinite(this.processLockTimeoutMs) || this.processLockTimeoutMs < 1) throw new Error("processLockTimeoutMs must be positive")
   }
 
   fileFor(sessionID: string): string {
     return path.join(this.root, `${shard(sessionID)}.json`)
+  }
+
+  lockFileFor(sessionID: string): string {
+    return path.join(this.locksRoot, `${shard(sessionID)}.lock`)
   }
 
   historyRootFor(sessionID: string): string {
@@ -268,10 +295,12 @@ export class GoalStore {
       if (source.goal.status === "completed") return { ok: false, reason: "completed", source }
 
       if (current) await this.#archive(current, "replaced")
+      const nextGeneration = Math.max(storageGeneration(source.goal), storageGeneration(current)) + 1
       const restored: GoalState = {
         ...source.goal,
         status: "paused",
         stopReason: "Restored from goal history. Use /goal resume to continue.",
+        storageGeneration: nextGeneration,
         updatedAt: now,
       }
       await writeAtomic(this.directory, this.fileFor(sessionID), restored)
@@ -281,9 +310,52 @@ export class GoalStore {
 
   async save(state: GoalState): Promise<void> {
     await this.#locked(state.sessionID, async () => {
-      const previous = await readStateFile(this.directory, this.fileFor(state.sessionID))
-      if (previous && previous.id !== state.id) await this.#archive(previous, "replaced")
-      await writeAtomic(this.directory, this.fileFor(state.sessionID), state)
+      const file = this.fileFor(state.sessionID)
+      const previous = await readStateFile(this.directory, file)
+      const expectedGeneration = storageGeneration(state)
+      let nextGeneration: number
+
+      if (!previous) {
+        if (expectedGeneration !== 0) {
+          throw new GoalStoreConcurrencyError(
+            "stale_write",
+            `expected generation ${expectedGeneration}, but the live snapshot no longer exists`,
+            file,
+          )
+        }
+        nextGeneration = 1
+      } else if (previous.id === state.id) {
+        const currentGeneration = storageGeneration(previous)
+        if (expectedGeneration !== currentGeneration) {
+          throw new GoalStoreConcurrencyError(
+            "stale_write",
+            `expected generation ${expectedGeneration}, but current generation is ${currentGeneration}`,
+            file,
+          )
+        }
+        nextGeneration = currentGeneration + 1
+      } else {
+        if (previous.status !== "completed") {
+          throw new GoalStoreConcurrencyError(
+            "live_replacement",
+            `refused to replace unfinished Goal ${previous.id} with stale/concurrent Goal ${state.id}`,
+            file,
+          )
+        }
+        if (expectedGeneration !== 0) {
+          throw new GoalStoreConcurrencyError(
+            "stale_write",
+            `new Goal ${state.id} carried unexpected generation ${expectedGeneration} while replacing ${previous.id}`,
+            file,
+          )
+        }
+        await this.#archive(previous, "replaced")
+        nextGeneration = storageGeneration(previous) + 1
+      }
+
+      const persisted: GoalState = { ...state, storageGeneration: nextGeneration }
+      await writeAtomic(this.directory, file, persisted)
+      state.storageGeneration = nextGeneration
     })
   }
 
@@ -343,7 +415,19 @@ export class GoalStore {
 
   async #locked<T>(sessionID: string, fn: () => Promise<T>): Promise<T> {
     const previous = this.#locks.get(sessionID) ?? Promise.resolve()
-    const next = previous.catch(() => undefined).then(fn)
+    const next = previous.catch(() => undefined).then(async () => {
+      const lease = await acquireGoalStoreProcessLock({
+        lockRoot: this.locksRoot,
+        lockFile: this.lockFileFor(sessionID),
+        timeoutMs: this.processLockTimeoutMs,
+        assertSafe: async (target) => await assertGoalStoragePathSafe(this.directory, target),
+      })
+      try {
+        return await fn()
+      } finally {
+        await lease.release()
+      }
+    })
     this.#locks.set(sessionID, next)
     try {
       return await next

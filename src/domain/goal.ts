@@ -81,6 +81,7 @@ export function createGoal(input: {
     progressFingerprints: [],
     stalledTurns: 0,
     progressNotes: [],
+    storageGeneration: 0,
     createdAt: now,
     updatedAt: now,
   }
@@ -117,6 +118,7 @@ export function editGoal(goal: GoalState, input: {
     observedProgressRevision: goal.progressRevision + 1,
     progressFingerprints: [],
     progressNotes: goal.progressNotes,
+    storageGeneration: goal.storageGeneration ?? 0,
     createdAt: goal.createdAt,
   }
 }

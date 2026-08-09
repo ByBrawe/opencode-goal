@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url"
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const npm = process.platform === "win32" ? "npm.cmd" : "npm"
+const minimumPeer = "@opencode-ai/plugin@1.4.0"
 
 function parseArgs(argv) {
   const options = { jsonPath: null }
@@ -70,6 +71,9 @@ async function main() {
   const packageJSON = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"))
   if (packageJSON.private === true) throw new Error("package.json is private and cannot be published")
   if (packageJSON.publishConfig?.access !== "public") throw new Error("scoped beta package must set publishConfig.access=public")
+  if (packageJSON.peerDependencies?.["@opencode-ai/plugin"] !== ">=1.4.0") {
+    throw new Error("package smoke minimum peer fixture must match peerDependencies['@opencode-ai/plugin'] >=1.4.0")
+  }
   if (!packageJSON.repository?.url || !packageJSON.homepage || !packageJSON.bugs?.url) {
     throw new Error("package.json release metadata is incomplete (repository/homepage/bugs)")
   }
@@ -88,7 +92,7 @@ async function main() {
       "--ignore-scripts",
       "--no-audit",
       "--no-fund",
-      "--legacy-peer-deps",
+      minimumPeer,
       tarball,
     ], { cwd: consumer })
 
@@ -114,6 +118,7 @@ async function main() {
       node: process.version,
       npmPackage: packageJSON.name,
       version: packageJSON.version,
+      minimumPeer,
       filename: packed.filename,
       packageSize: packed.size,
       unpackedSize: packed.unpackedSize,
@@ -124,6 +129,7 @@ async function main() {
     }
 
     console.log(`package ${report.npmPackage}@${report.version}`)
+    console.log(`minimum runtime peer ${minimumPeer}`)
     console.log(`tarball ${report.filename} files=${report.fileCount} packed=${report.packageSize} unpacked=${report.unpackedSize}`)
     console.log("clean consumer install/import PASS")
 

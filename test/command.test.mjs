@@ -2,13 +2,26 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import { parseGoalCommand } from "../dist/opencode/command.js"
 
-test("goal parser keeps quoted criteria, checks, and host file contracts", () => {
-  const parsed = parseGoalCommand('ship release --accept "tests pass" --check "npm test" --file README.md --contains "package.json::opencode-goal" --max-turns 20')
+test("goal parser keeps success criteria constraints checks and host file contracts", () => {
+  const parsed = parseGoalCommand('ship release --success "tests pass" --accept "docs current" --constraint "public API stays compatible" --non-goal "do not redesign auth" --check "npm test" --file README.md --contains "package.json::opencode-goal" --max-turns 20')
   assert.equal(parsed.objective, "ship release")
-  assert.deepEqual(parsed.acceptance, ["tests pass"])
+  assert.deepEqual(parsed.acceptance, ["tests pass", "docs current"])
+  assert.deepEqual(parsed.constraints, ["public API stays compatible", "do not redesign auth"])
   assert.deepEqual(parsed.checks, ["npm test"])
   assert.deepEqual(parsed.files, [{ file: "README.md" }, { file: "package.json", contains: "opencode-goal" }])
   assert.equal(parsed.maxTurns, 20)
+})
+
+test("goal contract is a read-only no-argument command", () => {
+  assert.deepEqual(parseGoalCommand("contract"), {
+    action: "contract",
+    objective: "",
+    acceptance: [],
+    constraints: [],
+    checks: [],
+    files: [],
+  })
+  assert.throws(() => parseGoalCommand("contract repair"), /does not accept arguments/)
 })
 
 test("goal doctor is a read-only no-argument command", () => {
@@ -16,6 +29,7 @@ test("goal doctor is a read-only no-argument command", () => {
     action: "doctor",
     objective: "",
     acceptance: [],
+    constraints: [],
     checks: [],
     files: [],
   })
@@ -28,6 +42,7 @@ test("goal history accepts an optional id prefix and rejects extra arguments", (
     action: "history",
     objective: "",
     acceptance: [],
+    constraints: [],
     checks: [],
     files: [],
   })
@@ -54,6 +69,11 @@ test("goal restore requires exactly one id prefix", () => {
   assert.throws(() => parseGoalCommand("restore"), /expects exactly one goal id prefix/)
   assert.throws(() => parseGoalCommand("restore one two"), /expects exactly one goal id prefix/)
   assert.throws(() => parseGoalCommand("restore --latest"), /unknown goal option/)
+})
+
+test("budget command rejects contract mutation flags", () => {
+  assert.throws(() => parseGoalCommand('budget --constraint "no dependency changes"'), /accepts only/)
+  assert.throws(() => parseGoalCommand('budget --success "tests pass"'), /accepts only/)
 })
 
 test("unknown flags fail closed", () => {

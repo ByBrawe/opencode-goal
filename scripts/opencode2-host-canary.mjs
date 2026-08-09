@@ -50,6 +50,15 @@ function output(result) {
   return `${String(result.stdout ?? "")}\n${String(result.stderr ?? "")}`.trim()
 }
 
+function parseJSONOutput(result, label) {
+  const text = String(result.stdout ?? "").trim()
+  try {
+    return JSON.parse(text)
+  } catch {
+    throw new Error(`${label} did not return JSON on stdout.\nstdout:\n${text}\nstderr:\n${String(result.stderr ?? "")}`)
+  }
+}
+
 function pluginIDs(value) {
   if (Array.isArray(value)) return value.map(String)
   if (Array.isArray(value?.data)) return value.data.map(String)
@@ -102,10 +111,6 @@ async function main() {
     OPENCODE_LOG_LEVEL: "DEBUG",
   }
 
-  // V2 documents .opencode/plugins as project-local auto-discovery. The tiny
-  // wrapper imports the repository's actual compiled adapter in place, so the
-  // adapter keeps its normal dist-relative imports and the canary exercises the
-  // same module that would later become a V2 package entrypoint.
   await writeFile(path.join(projectConfig, "opencode.json"), `${JSON.stringify({
     $schema: "https://opencode.ai/config.json",
   }, null, 2)}\n`)
@@ -123,34 +128,25 @@ async function main() {
     version = output(versionResult)
     if (!version) throw new Error("opencode2 --version returned no output")
 
-    // This starts the isolated shared service if needed. The typed client below
-    // then reuses that exact registered endpoint and asks for plugin state in
-    // the explicit project Location rather than the CLI's default global one.
     const healthResult = run("opencode2", ["api", "get", "/api/health"], { cwd: project, env })
     health = output(healthResult)
     if (!health) throw new Error("OpenCode 2 health API returned no output")
 
-    const [{ OpenCode }, { Service }] = await Promise.all([
-      import("@opencode-ai/client"),
-      import("@opencode-ai/client/service"),
-    ])
-    const endpoint = await Service.discover()
-    if (!endpoint) throw new Error("OpenCode 2 client could not discover the isolated service started by the CLI")
-
-    const client = OpenCode.make({
-      baseUrl: endpoint.url,
-      headers: Service.headers(endpoint),
-    })
-    if (typeof client?.plugin?.list !== "function") {
-      throw new Error("Current @opencode-ai/client@next does not expose client.plugin.list")
-    }
-
-    const pluginResponse = await client.plugin.list({
-      location: { directory: project },
-    })
+    // The V2 CLI accepts OpenAPI operation IDs and serializes declared
+    // parameters itself. This keeps the canary independent of the moving
+    // @opencode-ai/client@next package while still asking the real shared
+    // service for plugin state at the explicit project Location.
+    const location = JSON.stringify({ directory: project })
+    const pluginResult = run("opencode2", [
+      "api",
+      "v2.plugin.list",
+      "--param",
+      `location=${location}`,
+    ], { cwd: project, env })
+    const pluginResponse = parseJSONOutput(pluginResult, "v2.plugin.list")
     const ids = pluginIDs(pluginResponse)
     if (!ids.includes(pluginID)) {
-      throw new Error(`OpenCode 2 project Location did not activate ${pluginID}. Active IDs: ${JSON.stringify(ids)}`)
+      throw new Error(`OpenCode 2 project Location did not activate ${pluginID}. Active IDs: ${JSON.stringify(ids)}\nRaw response: ${String(pluginResult.stdout ?? "")}`)
     }
 
     const report = {

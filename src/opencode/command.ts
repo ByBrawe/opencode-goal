@@ -1,12 +1,13 @@
 import type { FileRequirementInput } from "../domain/types.js"
 
 export interface ParsedGoalCommand {
-  action: "create" | "status" | "pause" | "resume" | "clear" | "edit" | "budget" | "history" | "restore"
+  action: "create" | "status" | "pause" | "resume" | "clear" | "edit" | "budget" | "history" | "history_prune" | "restore"
   objective: string
   acceptance: string[]
   checks: string[]
   files: FileRequirementInput[]
   goalIDPrefix?: string
+  historyKeep?: number
   maxTurns?: number
   maxTokens?: number
   maxRuntimeMs?: number
@@ -35,19 +36,52 @@ function parseLimit(option: string, raw: string | undefined, integer = false): n
   return value
 }
 
+function parseHistoryKeep(raw: string | undefined): number {
+  const value = Number(raw)
+  if (raw === undefined || !Number.isInteger(value) || value < 1) {
+    throw new Error("/goal history prune --keep expects a positive integer")
+  }
+  return value
+}
+
 export function parseGoalCommand(input: string): ParsedGoalCommand {
   const list = tokens(input.trim())
   const sub = (list[0] ?? "").toLowerCase()
   if (["status", "pause", "resume", "clear"].includes(sub)) {
     return { action: sub as ParsedGoalCommand["action"], objective: "", acceptance: [], checks: [], files: [] }
   }
-  if (sub === "history" || sub === "restore") {
+  if (sub === "history") {
+    if ((list[1] ?? "").toLowerCase() === "prune") {
+      if (list.length !== 4 || list[2] !== "--keep") {
+        throw new Error("/goal history prune expects --keep <positive-integer>")
+      }
+      return {
+        action: "history_prune",
+        objective: "",
+        acceptance: [],
+        checks: [],
+        files: [],
+        historyKeep: parseHistoryKeep(list[3]),
+      }
+    }
     const goalIDPrefix = list[1]?.trim()
-    if (sub === "history" && list.length > 2) throw new Error("/goal history accepts at most one goal id prefix")
-    if (sub === "restore" && list.length !== 2) throw new Error("/goal restore expects exactly one goal id prefix")
+    if (list.length > 2) throw new Error("/goal history accepts at most one goal id prefix")
     if (goalIDPrefix?.startsWith("--")) throw new Error(`unknown goal option: ${goalIDPrefix}`)
     return {
-      action: sub,
+      action: "history",
+      objective: "",
+      acceptance: [],
+      checks: [],
+      files: [],
+      ...(goalIDPrefix ? { goalIDPrefix } : {}),
+    }
+  }
+  if (sub === "restore") {
+    const goalIDPrefix = list[1]?.trim()
+    if (list.length !== 2) throw new Error("/goal restore expects exactly one goal id prefix")
+    if (goalIDPrefix?.startsWith("--")) throw new Error(`unknown goal option: ${goalIDPrefix}`)
+    return {
+      action: "restore",
       objective: "",
       acceptance: [],
       checks: [],

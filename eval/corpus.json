@@ -7,6 +7,7 @@
     "compaction",
     "restart",
     "restore",
+    "storage-integrity",
     "provider-limit",
     "budget",
     "race"
@@ -76,6 +77,22 @@
       "testFile": "test/history.test.mjs",
       "testName": "restore cannot overwrite a different unfinished live goal",
       "expected": "Restore fails closed while another unfinished Goal is live and does not change that live Goal."
+    },
+    {
+      "id": "storage-integrity.future-schema-overwrite-refused",
+      "category": "storage-integrity",
+      "weight": 3,
+      "testFile": "test/persistence.test.mjs",
+      "testName": "unsupported live Goal schema fails closed without overwriting stored bytes",
+      "expected": "Unknown live-state schema is never treated as an empty slot; load/list/save/clear refuse it and preserve exact stored bytes."
+    },
+    {
+      "id": "storage-integrity.corrupt-archive-preserved",
+      "category": "storage-integrity",
+      "weight": 3,
+      "testFile": "test/persistence.test.mjs",
+      "testName": "corrupt archive blocks history restore and prune without deleting evidence",
+      "expected": "Malformed archive JSON blocks history mutation and restore rather than being skipped, rewritten, or deleted."
     },
     {
       "id": "provider-limit.explicit-quota-vs-transient-retry",

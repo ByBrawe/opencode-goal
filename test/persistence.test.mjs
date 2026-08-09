@@ -1,10 +1,10 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { access, mkdtemp, writeFile, rm } from "node:fs/promises"
+import { access, mkdir, mkdtemp, readFile, writeFile, rm } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { createGoal } from "../dist/domain/goal.js"
-import { GoalStore } from "../dist/persistence/store.js"
+import { GoalStore, GoalStoreIntegrityError } from "../dist/persistence/store.js"
 import { proveRequirementsFromEvidence, recordFileEvidence } from "../dist/verification/evidence.js"
 
 test("goal state round-trips through project-local atomic store", async () => {
@@ -80,6 +80,63 @@ test("history prune removes only oldest archives and leaves live goal untouched"
     await access(store.archiveFileFor("session-a", second.id))
     await access(store.archiveFileFor("session-a", third.id))
     await assert.rejects(() => store.pruneHistory("session-a", 0), /positive integer/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("unsupported live Goal schema fails closed without overwriting stored bytes", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-integrity-live-"))
+  try {
+    const sessionID = "session-future"
+    const store = new GoalStore(root)
+    const file = store.fileFor(sessionID)
+    const future = `${JSON.stringify({
+      schemaVersion: 2,
+      id: "future-goal",
+      sessionID,
+      objective: "future schema",
+      requirements: [],
+      evidence: [],
+    }, null, 2)}\n`
+    await mkdir(path.dirname(file), { recursive: true })
+    await writeFile(file, future, "utf8")
+
+    const isFutureSchemaError = (error) => error instanceof GoalStoreIntegrityError
+      && error.kind === "invalid_state"
+      && /unsupported schemaVersion 2/.test(error.message)
+
+    await assert.rejects(() => store.load(sessionID), isFutureSchemaError)
+    await assert.rejects(() => store.list(), isFutureSchemaError)
+    await assert.rejects(() => store.save(createGoal({ sessionID, objective: "replacement" })), isFutureSchemaError)
+    await assert.rejects(() => store.clear(sessionID), isFutureSchemaError)
+    assert.equal(await readFile(file, "utf8"), future, "unsupported state must remain byte-for-byte untouched")
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("corrupt archive blocks history restore and prune without deleting evidence", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-integrity-archive-"))
+  try {
+    const sessionID = "session-corrupt-archive"
+    const store = new GoalStore(root)
+    const goal = createGoal({ sessionID, objective: "preserve archive", now: 100 })
+    await store.save(goal)
+    await store.clear(sessionID)
+
+    const archiveFile = store.archiveFileFor(sessionID, goal.id)
+    const corrupt = "{ definitely-not-json\n"
+    await writeFile(archiveFile, corrupt, "utf8")
+
+    const isCorruptArchiveError = (error) => error instanceof GoalStoreIntegrityError
+      && error.kind === "invalid_json"
+
+    await assert.rejects(() => store.history(sessionID), isCorruptArchiveError)
+    await assert.rejects(() => store.restore(sessionID, goal.id.slice(0, 12), 200), isCorruptArchiveError)
+    await assert.rejects(() => store.pruneHistory(sessionID, 1), isCorruptArchiveError)
+    assert.equal(await store.load(sessionID), null)
+    assert.equal(await readFile(archiveFile, "utf8"), corrupt, "corrupt archive must not be rewritten or pruned")
   } finally {
     await rm(root, { recursive: true, force: true })
   }

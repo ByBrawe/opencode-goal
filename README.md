@@ -48,6 +48,8 @@ If the verifier does not submit a complete typed verdict, returns ambiguous evid
 - Explicit OpenCode account/free-tier quota actions stop the goal as `usage_limited` and abort the retry loop, while ordinary transient provider retries remain under OpenCode's retry policy.
 - Fatal provider authentication and non-retryable provider request failures pause the goal fail-closed instead of creating an autonomous error loop.
 - Goal state is stored project-locally under `.opencode/goals/` with atomic writes.
+- Existing Goal storage is never treated as absent merely because its JSON is corrupt, structurally invalid, or uses an unsupported schema version. Reads and mutations fail closed instead of overwriting unknown state.
+- Corrupt or unsupported archive records block history restore/prune operations rather than being silently skipped, rewritten, or deleted.
 - Replaced and explicitly cleared Goals are archived project-locally before the live state is overwritten or removed; archive records are excluded from startup recovery.
 - Archive retention is never reduced automatically. `/goal history prune --keep N` is the only built-in retention command; `N` must be a positive integer, only older archive records are removed, and the live Goal is untouched.
 - An unfinished archived Goal can be restored only when no unfinished live Goal exists. Restore is atomic, preserves its evidence/usage/revision/execution state, and always returns it as `paused`; the user must explicitly run `/goal resume` before work continues.
@@ -122,13 +124,13 @@ The project is intentionally split into domain state, verification, runtime/acco
 
 ## Test philosophy
 
-The suite is adversarial by default. It covers false-complete attempts, stale evidence, narrow-check scope bypass, hallucinated verifier quotes, invented host-evidence IDs, parent-session result forgery, user-interrupt races, duplicate idle events, blocker repetition, fake progress, usage deduplication, budget exhaustion/bypass attempts, provider quota classification, fatal/transient provider errors, persistence, archive/history isolation, explicit live-safe history pruning, safe paused restore, compaction ownership, process restart recovery, and project-root path traversal.
+The suite is adversarial by default. It covers false-complete attempts, stale evidence, narrow-check scope bypass, hallucinated verifier quotes, invented host-evidence IDs, parent-session result forgery, user-interrupt races, duplicate idle events, blocker repetition, fake progress, usage deduplication, budget exhaustion/bypass attempts, provider quota classification, fatal/transient provider errors, persistence, unsupported/corrupt storage fail-closed behavior, archive/history isolation, explicit live-safe history pruning, safe paused restore, compaction ownership, process restart recovery, and project-root path traversal.
 
 Real-host canaries exercise lifecycle, semantic verification, active steering, mutation/no-op progress, and persistent SQLite restart recovery on Windows and Ubuntu. CI also checks Bun loading, the minimum declared OpenCode plugin peer, and `@opencode-ai/plugin@latest`.
 
 ## Eval corpus
 
-The adversarial regression suite is also exposed as a machine-readable evaluation corpus. The required categories are **false-complete, stall, blocker, compaction, restart, restore, provider-limit, budget, and race**.
+The adversarial regression suite is also exposed as a machine-readable evaluation corpus. The required categories are **false-complete, stall, blocker, compaction, restart, restore, storage-integrity, provider-limit, budget, and race**.
 
 Run the full corpus:
 
@@ -140,12 +142,12 @@ Write a JSON report or focus one category:
 
 ```text
 npm run eval -- --json eval-report.json
-npm run eval -- --category restore
+npm run eval -- --category storage-integrity
 ```
 
 Each corpus case points at an exact underlying regression test and declares its expected safety outcome. The runner anchors the exact test name and requires exactly one passing target, so renamed or deleted tests cannot silently score as green. It reports per-case results, per-category scores, and a weighted overall score. CI runs the corpus on both Ubuntu and Windows and uploads the JSON reports as workflow artifacts.
 
-The beta gate requires every listed case and every required category to pass. The current corpus contains eleven adversarial cases across nine required categories and requires **100% (30/30 weighted)** on every CI platform.
+The beta gate requires every listed case and every required category to pass. The current corpus contains thirteen adversarial cases across ten required categories and requires **100% (36/36 weighted)** on every CI platform.
 
 ## Roadmap to stable
 
@@ -158,7 +160,8 @@ The beta gate requires every listed case and every required category to pass. Th
 7. ✅ Durable per-session archive/history for replaced and cleared Goals.
 8. ✅ Safe paused restore for unfinished archived Goals.
 9. ✅ Explicit live-safe archive retention/pruning without automatic history loss.
-10. First npm beta after the remaining development and release gates are complete.
+10. ✅ Fail-closed storage integrity for corrupt or unsupported live/archive snapshots.
+11. First npm beta after the remaining development and release gates are complete.
 
 ## License
 

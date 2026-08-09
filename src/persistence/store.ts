@@ -4,6 +4,20 @@ import path from "node:path"
 import type { GoalState } from "../domain/types.js"
 
 export type GoalArchiveReason = "cleared" | "replaced"
+export type GoalStoreIntegrityKind = "invalid_json" | "invalid_state" | "invalid_archive"
+
+export class GoalStoreIntegrityError extends Error {
+  readonly code = "GOAL_STORE_INTEGRITY"
+
+  constructor(
+    readonly file: string,
+    readonly kind: GoalStoreIntegrityKind,
+    detail: string,
+  ) {
+    super(`Goal storage integrity error (${kind}) at ${file}: ${detail}`)
+    this.name = "GoalStoreIntegrityError"
+  }
+}
 
 export interface GoalArchiveRecord {
   schemaVersion: 1
@@ -51,15 +65,45 @@ function validateArchive(value: unknown, sessionID: string): GoalArchiveRecord |
   return { ...archive, goal } as GoalArchiveRecord
 }
 
-async function readStateFile(file: string): Promise<GoalState | null> {
+function schemaVersionOf(value: unknown): unknown {
+  if (!value || typeof value !== "object") return undefined
+  return (value as { schemaVersion?: unknown }).schemaVersion
+}
+
+function parseStoredJson(raw: string, file: string): unknown {
   try {
-    const raw = await fs.readFile(file, "utf8")
-    return validateState(JSON.parse(raw))
+    return JSON.parse(raw)
+  } catch {
+    throw new GoalStoreIntegrityError(file, "invalid_json", "file is not valid JSON")
+  }
+}
+
+function stateIntegrityDetail(value: unknown): string {
+  const schema = schemaVersionOf(value)
+  if (schema !== 1) return `unsupported schemaVersion ${String(schema)}`
+  return "stored Goal state shape is invalid"
+}
+
+function archiveIntegrityDetail(value: unknown): string {
+  const schema = schemaVersionOf(value)
+  if (schema !== 1) return `unsupported archive schemaVersion ${String(schema)}`
+  return "stored archive shape or session binding is invalid"
+}
+
+async function readStateFile(file: string): Promise<GoalState | null> {
+  let raw: string
+  try {
+    raw = await fs.readFile(file, "utf8")
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code
     if (code === "ENOENT") return null
     throw error
   }
+
+  const value = parseStoredJson(raw, file)
+  const state = validateState(value)
+  if (!state) throw new GoalStoreIntegrityError(file, "invalid_state", stateIntegrityDetail(value))
+  return state
 }
 
 async function writeAtomic(target: string, value: unknown): Promise<void> {
@@ -211,15 +255,19 @@ export class GoalStore {
     const records: GoalArchiveRecord[] = []
     for (const name of names) {
       if (!name.endsWith(".json")) continue
+      const file = path.join(this.historyRootFor(sessionID), name)
+      let raw: string
       try {
-        const raw = await fs.readFile(path.join(this.historyRootFor(sessionID), name), "utf8")
-        const record = validateArchive(JSON.parse(raw), sessionID)
-        if (record) records.push(record)
+        raw = await fs.readFile(file, "utf8")
       } catch (error) {
         const code = (error as NodeJS.ErrnoException).code
         if (code === "ENOENT") continue
         throw error
       }
+      const value = parseStoredJson(raw, file)
+      const record = validateArchive(value, sessionID)
+      if (!record) throw new GoalStoreIntegrityError(file, "invalid_archive", archiveIntegrityDetail(value))
+      records.push(record)
     }
     records.sort((a, b) => b.archivedAt - a.archivedAt || b.goal.updatedAt - a.goal.updatedAt || a.goalID.localeCompare(b.goalID))
     return records

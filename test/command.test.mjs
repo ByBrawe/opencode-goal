@@ -19,9 +19,18 @@ test("goal history accepts an optional id prefix and rejects extra arguments", (
     checks: [],
     files: [],
   })
-  assert.equal(parseGoalCommand("history a1b2c3d4").historySelector, "a1b2c3d4")
+  assert.equal(parseGoalCommand("history a1b2c3d4").goalIDPrefix, "a1b2c3d4")
   assert.throws(() => parseGoalCommand("history one two"), /at most one goal id prefix/)
   assert.throws(() => parseGoalCommand("history --all"), /unknown goal option/)
+})
+
+test("goal restore requires exactly one id prefix", () => {
+  const parsed = parseGoalCommand("restore a1b2c3d4")
+  assert.equal(parsed.action, "restore")
+  assert.equal(parsed.goalIDPrefix, "a1b2c3d4")
+  assert.throws(() => parseGoalCommand("restore"), /expects exactly one goal id prefix/)
+  assert.throws(() => parseGoalCommand("restore one two"), /expects exactly one goal id prefix/)
+  assert.throws(() => parseGoalCommand("restore --latest"), /unknown goal option/)
 })
 
 test("unknown flags fail closed", () => {

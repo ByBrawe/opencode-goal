@@ -49,6 +49,8 @@ If the verifier does not submit a complete typed verdict, returns ambiguous evid
 - Fatal provider authentication and non-retryable provider request failures pause the goal fail-closed instead of creating an autonomous error loop.
 - Goal state is stored project-locally under `.opencode/goals/` with atomic writes.
 - Replaced and explicitly cleared Goals are archived project-locally before the live state is overwritten or removed; archive records are excluded from startup recovery.
+- An unfinished archived Goal can be restored only when no unfinished live Goal exists. Restore is atomic, preserves its evidence/usage/revision/execution state, and always returns it as `paused`; the user must explicitly run `/goal resume` before work continues.
+- Completed archived Goals cannot be restored.
 - Active Goals recover after a real OpenCode process restart using the persisted session and execution context; the interrupted turn is not falsely counted as stalled.
 - Goal state is injected into OpenCode compaction context; OpenCode's generic post-compaction continue is disabled while the goal runtime owns continuation.
 - Duplicate idle events cannot launch concurrent continuation prompts.
@@ -84,10 +86,13 @@ Useful lifecycle commands:
 /goal edit fix tests and update docs
 /goal history
 /goal history <goal-id-prefix>
+/goal restore <goal-id-prefix>
 /goal clear
 ```
 
 `/goal history` lists the most recent archived Goals for the current OpenCode session. Use the displayed goal ID prefix to inspect the archived objective, terminal status, requirements, budget, stop reason, and whether it was archived because it was `cleared` or `replaced`. The current live Goal stays in `/goal status`; it enters history when it is cleared or displaced by a later Goal.
+
+`/goal restore <goal-id-prefix>` recovers an unfinished archived Goal without silently restarting autonomous work. The restored snapshot keeps its goal ID, revision, evidence, usage, progress accounting, budget, and execution context, but is written back as `paused`. Run `/goal resume` explicitly when you are ready to continue. Restore fails closed if another unfinished Goal is live, if the prefix is ambiguous, or if the archived Goal is already completed.
 
 Goals can be created with local execution budgets:
 
@@ -113,7 +118,7 @@ The project is intentionally split into domain state, verification, runtime/acco
 
 ## Test philosophy
 
-The suite is adversarial by default. It covers false-complete attempts, stale evidence, narrow-check scope bypass, hallucinated verifier quotes, invented host-evidence IDs, parent-session result forgery, user-interrupt races, duplicate idle events, blocker repetition, fake progress, usage deduplication, budget exhaustion/bypass attempts, provider quota classification, fatal/transient provider errors, persistence, archive/history isolation, compaction ownership, process restart recovery, and project-root path traversal.
+The suite is adversarial by default. It covers false-complete attempts, stale evidence, narrow-check scope bypass, hallucinated verifier quotes, invented host-evidence IDs, parent-session result forgery, user-interrupt races, duplicate idle events, blocker repetition, fake progress, usage deduplication, budget exhaustion/bypass attempts, provider quota classification, fatal/transient provider errors, persistence, archive/history isolation, safe paused restore, compaction ownership, process restart recovery, and project-root path traversal.
 
 Real-host canaries exercise lifecycle, semantic verification, active steering, mutation/no-op progress, and persistent SQLite restart recovery on Windows and Ubuntu. CI also checks Bun loading, the minimum declared OpenCode plugin peer, and `@opencode-ai/plugin@latest`.
 
@@ -147,7 +152,8 @@ The beta gate currently requires every listed case and every required category t
 5. ✅ Real OpenCode process canaries on Windows/Linux, including persistent restart recovery.
 6. ✅ Machine-readable adversarial eval corpus covering false-complete, stall, blocker, compaction, restart, provider-limit, budget, and race scenarios.
 7. ✅ Durable per-session archive/history for replaced and cleared Goals.
-8. First npm beta after the remaining development and release gates are complete.
+8. ✅ Safe paused restore for unfinished archived Goals.
+9. First npm beta after the remaining development and release gates are complete.
 
 ## License
 

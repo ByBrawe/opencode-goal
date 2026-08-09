@@ -54,6 +54,27 @@ test("replaced and cleared goals are archived without polluting live recovery st
   }
 })
 
+test("completed archived goal cannot be restored", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-restore-complete-"))
+  try {
+    const store = new GoalStore(root)
+    const first = createGoal({ sessionID: "session-a", objective: "already done", now: 100 })
+    const completed = { ...first, status: "completed", completionSummary: "done", updatedAt: 200 }
+    await store.save(completed)
+    const second = createGoal({ sessionID: "session-a", objective: "temporary", now: 300 })
+    await store.save(second)
+    await store.clear("session-a")
+
+    const result = await store.restore("session-a", first.id.slice(0, 12), 400)
+    assert.equal(result.ok, false)
+    assert.equal(result.reason, "completed")
+    assert.equal(await store.load("session-a"), null)
+    assert.equal((await store.history("session-a")).length, 2)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test("host file evidence uses predeclared contract and can prove it", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-file-"))
   try {

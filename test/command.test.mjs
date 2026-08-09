@@ -11,6 +11,18 @@ test("goal parser keeps quoted criteria, checks, and host file contracts", () =>
   assert.equal(parsed.maxTurns, 20)
 })
 
+test("goal doctor is a read-only no-argument command", () => {
+  assert.deepEqual(parseGoalCommand("doctor"), {
+    action: "doctor",
+    objective: "",
+    acceptance: [],
+    checks: [],
+    files: [],
+  })
+  assert.throws(() => parseGoalCommand("doctor repair"), /does not accept arguments/)
+  assert.throws(() => parseGoalCommand("doctor --fix"), /does not accept arguments/)
+})
+
 test("goal history accepts an optional id prefix and rejects extra arguments", () => {
   assert.deepEqual(parseGoalCommand("history"), {
     action: "history",

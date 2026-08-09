@@ -1,7 +1,7 @@
 import type { FileRequirementInput } from "../domain/types.js"
 
 export interface ParsedGoalCommand {
-  action: "create" | "status" | "pause" | "resume" | "clear" | "edit" | "budget" | "history" | "history_prune" | "restore"
+  action: "create" | "status" | "pause" | "resume" | "clear" | "edit" | "budget" | "history" | "history_prune" | "restore" | "doctor"
   objective: string
   acceptance: string[]
   checks: string[]
@@ -47,6 +47,10 @@ function parseHistoryKeep(raw: string | undefined): number {
 export function parseGoalCommand(input: string): ParsedGoalCommand {
   const list = tokens(input.trim())
   const sub = (list[0] ?? "").toLowerCase()
+  if (sub === "doctor") {
+    if (list.length !== 1) throw new Error("/goal doctor does not accept arguments")
+    return { action: "doctor", objective: "", acceptance: [], checks: [], files: [] }
+  }
   if (["status", "pause", "resume", "clear"].includes(sub)) {
     return { action: sub as ParsedGoalCommand["action"], objective: "", acceptance: [], checks: [], files: [] }
   }

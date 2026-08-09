@@ -6,7 +6,7 @@ import process from "node:process"
 import { fileURLToPath } from "node:url"
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
-const npm = process.platform === "win32" ? "npm.cmd" : "npm"
+const npmCLI = process.env.npm_execpath
 const minimumPeer = "@opencode-ai/plugin@1.4.0"
 
 function parseArgs(argv) {
@@ -45,6 +45,11 @@ function run(command, args, options = {}) {
   return result
 }
 
+function runNpm(args, options = {}) {
+  if (!npmCLI) throw new Error("npm_execpath is unavailable; run package smoke through npm run package:smoke")
+  return run(process.execPath, [npmCLI, ...args], options)
+}
+
 function parsePackResult(stdout) {
   const value = JSON.parse(stdout)
   if (!Array.isArray(value) || value.length !== 1 || !value[0]?.filename || !Array.isArray(value[0]?.files)) {
@@ -81,13 +86,13 @@ async function main() {
   const temp = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-package-smoke-"))
   const consumer = path.join(temp, "consumer")
   try {
-    const packed = parsePackResult(run(npm, ["pack", root, "--json", "--ignore-scripts"], { cwd: temp }).stdout)
+    const packed = parsePackResult(runNpm(["pack", root, "--json", "--ignore-scripts"], { cwd: temp }).stdout)
     const files = assertPackageFiles(packed)
     const tarball = path.join(temp, packed.filename)
 
     await mkdir(consumer, { recursive: true })
     await writeFile(path.join(consumer, "package.json"), `${JSON.stringify({ private: true, type: "module" }, null, 2)}\n`)
-    run(npm, [
+    runNpm([
       "install",
       "--ignore-scripts",
       "--no-audit",

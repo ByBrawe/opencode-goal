@@ -1,0 +1,42 @@
+name: Release Readiness
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: package smoke (${{ matrix.os }}, Node ${{ matrix.node }})
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: [20, 24]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm install
+      - run: npm run check
+      - run: npm test
+      - name: Run adversarial eval corpus
+        run: npm run eval -- --json eval-report.json
+      - name: Build, pack, install, and import publish tarball
+        run: npm run package:smoke -- --json package-smoke-report.json
+      - name: Upload release evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-readiness-${{ matrix.os }}-node-${{ matrix.node }}
+          path: |
+            eval-report.json
+            package-smoke-report.json
+          if-no-files-found: error

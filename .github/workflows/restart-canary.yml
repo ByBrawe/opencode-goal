@@ -1,0 +1,62 @@
+name: Real Restart Recovery
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  restart:
+    name: Restart recovery (${{ matrix.os }})
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: npm install
+      - run: npm run build
+      - name: Install current OpenCode CLI
+        run: npm install --no-save --package-lock=false opencode-ai@latest
+      - name: Show OpenCode version
+        run: npx --no-install opencode --version
+      - name: Probe clean OpenCode instance bootstrap
+        run: node scripts/host-bootstrap-probe.mjs
+        env:
+          OPENCODE_PRINT_LOGS: "1"
+          OPENCODE_LOG_LEVEL: DEBUG
+      - name: Run real process restart recovery canary
+        id: canary
+        shell: bash
+        run: |
+          set +e
+          npm run canary:restart > restart-canary.log 2>&1
+          code=$?
+          cat restart-canary.log
+          exit $code
+        env:
+          OPENCODE_PRINT_LOGS: "1"
+          OPENCODE_LOG_LEVEL: DEBUG
+      - name: Verify interrupted turn was not counted as stalled
+        shell: bash
+        run: |
+          node -e 'const fs=require("fs"); const t=fs.readFileSync("restart-canary.log","utf8"); const b=t.match(/"stalledBeforeRestart":\s*(\d+)/); const a=t.match(/"stalledAfterRestart":\s*(\d+)/); if(!b||!a) throw new Error("restart accounting fields missing from canary output"); if(Number(b[1])!==Number(a[1])) throw new Error(`restart changed stalledTurns ${b[1]} -> ${a[1]}`); console.log(`restart accounting preserved: stalledTurns=${a[1]}`)'
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: restart-canary-${{ matrix.os }}
+          path: restart-canary.log
+          if-no-files-found: error

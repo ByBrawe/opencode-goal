@@ -10,6 +10,15 @@ async function tick() {
   await new Promise((resolve) => setTimeout(resolve, 0))
 }
 
+async function waitFor(predicate, description, timeoutMs = 2_000) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (predicate()) return
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  throw new Error(`timed out waiting for ${description}`)
+}
+
 async function readGoal(root) {
   const dir = path.join(root, ".opencode", "goals")
   const files = await readdir(dir)
@@ -17,12 +26,25 @@ async function readGoal(root) {
   return JSON.parse(await readFile(path.join(dir, files[0]), "utf8"))
 }
 
-function pendingClient() {
+function pendingClient({ holdList = false } = {}) {
   const prompts = []
   const pending = []
+  let listCalls = 0
+  let releaseList = () => {}
+  const listResult = holdList
+    ? new Promise((resolve) => { releaseList = () => resolve({ data: [{ id: "session-restart" }] }) })
+    : Promise.resolve({ data: [{ id: "session-restart" }] })
+
   return {
     client: {
       session: {
+        list() {
+          listCalls += 1
+          return listResult
+        },
+        status() {
+          return Promise.resolve({ data: {} })
+        },
         prompt(arg) {
           prompts.push(arg)
           return new Promise((resolve, reject) => pending.push({ resolve, reject }))
@@ -34,10 +56,12 @@ function pendingClient() {
     },
     prompts,
     pending,
+    releaseList: () => releaseList(),
+    listCalls: () => listCalls,
   }
 }
 
-test("a fresh plugin instance reloads an active goal and resumes it exactly once on idle", async () => {
+test("restart recovery preserves interrupted-turn accounting and prompt ownership", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-restart-"))
   try {
     const first = pendingClient()
@@ -98,16 +122,37 @@ test("a fresh plugin instance reloads an active goal and resumes it exactly once
       model: { providerID: "provider", modelID: "model" },
       variant: "high",
     })
+    const stalledBeforeRestart = persisted.stalledTurns
+    const observedBeforeRestart = persisted.observedProgressRevision
 
-    // Simulate a full plugin/process restart: all in-memory ownership, locks and
-    // dispatch state disappear, while the project-local goal shard remains.
-    const second = pendingClient()
+    // Simulate a full plugin/process restart. The single read-only session.list
+    // request is our bootstrap barrier: while OpenCode is still initializing the
+    // directory instance it remains pending, and recovery must not prompt.
+    const second = pendingClient({ holdList: true })
     const afterRestart = await OpenCodeGoalPlugin({ client: second.client, directory: root })
+    await tick()
+    assert.equal(second.prompts.length, 0, "plugin construction must not dispatch restart recovery")
 
+    const config = {}
+    await afterRestart.config?.(config)
+    await afterRestart.config?.(config)
+    assert.ok(config.command?.goal, "existing goal command registration must be preserved")
+    await tick()
+    assert.equal(second.listCalls(), 1, "startup recovery must create exactly one bootstrap barrier request")
+    assert.equal(second.prompts.length, 0, "recovery must remain blocked until the host barrier resolves")
+
+    // A host can surface idle while restoring the session. That event describes
+    // an interrupted turn, not a completed no-progress turn, so it must be
+    // swallowed instead of changing observed/stalled accounting.
     await afterRestart.event({
       event: { type: "session.idle", properties: { sessionID: "session-restart" } },
     })
-    await tick()
+    const beforeBarrier = await readGoal(root)
+    assert.equal(beforeBarrier.stalledTurns, stalledBeforeRestart)
+    assert.equal(beforeBarrier.observedProgressRevision, observedBeforeRestart)
+
+    second.releaseList()
+    await waitFor(() => second.prompts.length === 1, "post-bootstrap recovery continuation")
 
     assert.equal(second.prompts.length, 1, "restart recovery must dispatch one continuation")
     assert.equal(second.prompts[0].path.id, "session-restart")
@@ -116,15 +161,29 @@ test("a fresh plugin instance reloads an active goal and resumes it exactly once
     assert.equal(second.prompts[0].body.variant, "high")
     assert.match(second.prompts[0].body.parts[0].text, /finish restart-safe work/)
 
+    // Real OpenCode runs chat.message for the SDK prompt. Simulate that hook to
+    // prove recovery seeded TurnOwnership; otherwise it would be mistaken for a
+    // new user message and pause the goal.
+    await afterRestart["chat.message"](
+      {
+        sessionID: "session-restart",
+        messageID: "user-recovery",
+        agent: "build",
+        model: { providerID: "provider", modelID: "model" },
+        variant: "high",
+      },
+      { message: { id: "user-recovery" }, parts: second.prompts[0].body.parts },
+    )
+
     const recovered = await readGoal(root)
     assert.equal(recovered.status, "active")
-    assert.equal(recovered.progressRevision, 1)
-    assert.equal(recovered.observedProgressRevision, 1)
-    assert.equal(recovered.stalledTurns, 0, "persisted host progress must survive restart accounting")
+    assert.equal(recovered.progressRevision, persisted.progressRevision)
+    assert.equal(recovered.observedProgressRevision, observedBeforeRestart, "restart must not close the interrupted turn")
+    assert.equal(recovered.stalledTurns, stalledBeforeRestart, "restart must not count the interrupted turn as stalled")
 
     second.pending[0].resolve({})
     await tick()
-    assert.equal(second.prompts.length, 1, "one recovery idle must not self-dispatch a second continuation")
+    assert.equal(second.prompts.length, 1, "startup recovery alone must dispatch exactly once")
   } finally {
     await rm(root, { recursive: true, force: true })
   }

@@ -1,4 +1,15 @@
-export { default } from "./opencode/plugin.js"
+import OpenCodeGoalCorePlugin from "./opencode/plugin.js"
+import { captureStartupGoals, scheduleStartupRecovery } from "./opencode/recovery.js"
+
+export default async function OpenCodeGoalPlugin(input: Parameters<typeof OpenCodeGoalCorePlugin>[0]) {
+  // Snapshot only goals that existed before this plugin instance loaded. This
+  // prevents startup recovery from racing with a brand-new /goal created by
+  // the same host instance.
+  const startupGoals = await captureStartupGoals(input.directory)
+  const hooks = await OpenCodeGoalCorePlugin(input)
+  scheduleStartupRecovery(input, hooks, startupGoals)
+  return hooks
+}
 
 export * from "./domain/types.js"
 export * from "./domain/goal.js"

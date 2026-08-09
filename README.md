@@ -43,6 +43,7 @@ Inspect it without changing execution state:
 
 ```text
 /goal contract
+/goal audit
 ```
 
 Useful lifecycle commands:
@@ -50,6 +51,7 @@ Useful lifecycle commands:
 ```text
 /goal status
 /goal contract
+/goal audit
 /goal list
 /goal list <goal-id-prefix>
 /goal doctor
@@ -96,10 +98,30 @@ Completion is an audit pipeline:
 
 If independent verification is incomplete, ambiguous, unavailable, or races with a user pause/edit, completion **fails closed**.
 
+## Goal audit
+
+`/goal audit` exposes the persisted proof state behind that completion decision without changing it:
+
+```text
+/goal audit
+```
+
+For an unfinished Goal it reports whether the existing completion gate is `READY` or `NOT READY`, including the same gate reasons used by the domain completion audit. For a completed Goal it reports `COMPLETED` and keeps the persisted completion summary and proof ledger inspectable rather than trying to run the pre-completion gate again.
+
+The audit includes:
+
+- full Goal and owning session IDs;
+- status, revision, storage generation, execution binding, budget/usage, progress revisions, stalled turns, and stop/blocker state;
+- every requirement with its status, required/optional flag, contract source, verification mode, and evidence references;
+- every persisted evidence record with host/verifier/user/agent trust, evidence kind, PASS/FAIL/INFO state, current or stale revision, timestamp, source, and summary.
+
+Audit output intentionally does **not** dump arbitrary evidence metadata or raw command output. More importantly, `/goal audit` is an inspection command, not a verification command: it does not run shell checks, invoke the semantic verifier, refresh evidence, pause/resume the Goal, or rewrite persistence.
+
 ## Stable safety guarantees
 
 - One unfinished live Goal per session.
 - Project-wide Goal discovery is read-only: inspecting another session cannot adopt, pause, resume, replace, or rewrite its Goal.
+- Goal audit is read-only: inspecting proof state cannot refresh evidence, run verification, pause the Goal, or rewrite its snapshot.
 - Agent-written progress notes cannot prove completion.
 - The executor cannot forge the verifier result from the parent session.
 - User intervention wins races with autonomous continuation and verification.
@@ -248,9 +270,9 @@ Doctor can report corrupt/unsupported/unsafe storage even when normal Goal loadi
 
 ## CLI, TUI, web, and headless behavior
 
-Authoritative Goal state lives in the plugin/session layer rather than a visual widget. Lifecycle commands, Goal Contracts, the project-wide Goal index, verification, history, restore, Plan enforcement, and delegated-task coordination therefore do not depend on one particular UI client.
+Authoritative Goal state lives in the plugin/session layer rather than a visual widget. Lifecycle commands, Goal Contracts, Goal audits, the project-wide Goal index, verification, history, restore, Plan enforcement, and delegated-task coordination therefore do not depend on one particular UI client.
 
-When a compatible OpenCode TUI is attached, explicit lifecycle actions and delegated-task waiting may emit best-effort **OpenCode Goals** toasts. Toast delivery is presentation only; a missing/disconnected TUI cannot fail Goal persistence, execution policy, project indexing, or verification.
+When a compatible OpenCode TUI is attached, explicit lifecycle actions and delegated-task waiting may emit best-effort **OpenCode Goals** toasts. Toast delivery is presentation only; a missing/disconnected TUI cannot fail Goal persistence, execution policy, project indexing, audit inspection, or verification.
 
 The stable `1.0.x` line claims compatibility for the current exported V1 plugin adapter and the documented package interface.
 
@@ -282,6 +304,7 @@ Required categories include:
 
 - false-complete
 - contract
+- audit
 - agent-boundary
 - delegation
 - project-index
@@ -307,12 +330,13 @@ Write JSON evidence or focus one category:
 
 ```text
 npm run eval -- --json eval-report.json
+npm run eval -- --category audit
 npm run eval -- --category project-index
 npm run eval -- --category delegation
 npm run eval -- --category opencode2-experimental
 ```
 
-The repository gate requires every composed case and every required category to pass. With the project-index and experimental V2 boundary suites, the composed corpus contains **37 adversarial cases across 16 required categories and requires 100% (108/108 weighted)** on every CI platform. The published `1.0.0` stable release itself was graduated on the preceding 30-case stable corpus; later repository-head cases harden new compatible features without retroactively broadening the original release evidence.
+The repository gate requires every composed case and every required category to pass. With the read-only audit, project-index, and experimental V2 boundary suites, the composed corpus contains **39 adversarial cases across 17 required categories and requires 100% (114/114 weighted)** on every CI platform. The published `1.0.0` stable release itself was graduated on the preceding 30-case stable corpus; later repository-head cases harden new compatible features without retroactively broadening the original release evidence.
 
 ## Release quality gates
 
@@ -340,6 +364,7 @@ The implementation is intentionally split into:
 
 - domain Goal state and invariants;
 - verification/audit and evidence validation;
+- read-only Goal proof/audit inspection;
 - runtime accounting, blocker, progress, and limits;
 - persistence, storage integrity, and process concurrency;
 - OpenCode commands and lifecycle adapter;

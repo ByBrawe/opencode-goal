@@ -112,6 +112,10 @@ export function installRestrictedAgentSafety(input: PluginInput, hooks: PluginHo
 
     await chatHook(event, output)
 
+    // Doctor is intentionally available when the normal GoalState parser is not.
+    // Do not re-enter store.load() after its read-only diagnostic response.
+    if (action === "doctor") return
+
     const agent = typeof event.agent === "string" ? event.agent.trim() : ""
     let goal = await store.load(event.sessionID)
     let boundaryApplied = false

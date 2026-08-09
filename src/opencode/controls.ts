@@ -1,5 +1,6 @@
 import type CorePlugin from "./plugin.js"
 import type { GoalBudget, GoalState } from "../domain/types.js"
+import { diagnoseGoalStorage, type GoalStorageDiagnosticReport } from "../persistence/diagnostics.js"
 import { GoalStore, type GoalArchiveRecord, type GoalHistoryPruneResult, type GoalRestoreResult } from "../persistence/store.js"
 import { applyGoalBudget, budgetLimitHits, formatGoalBudget } from "../runtime/accounting.js"
 import { parseGoalCommand } from "./command.js"
@@ -57,6 +58,25 @@ function formatHistoryPrune(result: GoalHistoryPruneResult): string {
   const shown = result.removed.slice(0, 10)
   const more = result.removed.length > shown.length ? `\n… and ${result.removed.length - shown.length} more removed archive(s).` : ""
   return `Pruned Goal history: kept ${result.kept.length} newest archived Goal(s); removed ${result.removed.length} older archive(s).\nRemoved:\n${shown.map(archiveLine).join("\n")}${more}`
+}
+
+function diagnosticIssueLine(issue: GoalStorageDiagnosticReport["issues"][number]): string {
+  return `- ${issue.scope}: ${issue.kind} at ${issue.file} — ${issue.detail}`
+}
+
+export function formatGoalDoctor(report: GoalStorageDiagnosticReport): string {
+  const live = report.live.state === "missing"
+    ? "missing"
+    : report.live.state === "valid"
+      ? `valid (${report.live.goal.id.slice(0, 12)}, ${report.live.goal.status}, revision ${report.live.goal.revision})`
+      : `INVALID (${report.live.issue.kind})`
+  const archives = report.archives.state === "valid"
+    ? `valid (${report.archives.count} record(s))`
+    : `INVALID (${report.archives.issue.kind})`
+  const issues = report.issues.length
+    ? `\nIssues:\n${report.issues.map(diagnosticIssueLine).join("\n")}`
+    : ""
+  return `Goal storage doctor: ${report.issues.length ? "ISSUES FOUND" : "OK"}\nLive snapshot: ${live}\nArchive storage: ${archives}${issues}\nNo files were modified.`
 }
 
 function formatRestoreResult(result: GoalRestoreResult, selector: string): string {
@@ -123,6 +143,7 @@ export function enhanceGoalControls(input: PluginInput, hooks: PluginHooks): voi
   if (typeof commandHook !== "function" || typeof chatHook !== "function") return
 
   const translations = new Map<string, PromptTranslation>()
+  const readOnlyResponses = new Map<string, string>()
 
   hooks["command.execute.before"] = async (event: any, output: any) => {
     if (event.command !== "goal") {
@@ -131,6 +152,14 @@ export function enhanceGoalControls(input: PluginInput, hooks: PluginHooks): voi
     }
 
     const parsed = parseGoalCommand(event.arguments ?? "")
+    if (parsed.action === "doctor") {
+      const shown = `${formatGoalDoctor(await diagnoseGoalStorage(input.directory, event.sessionID))}\nRespond with this diagnostic only; do not perform work.`
+      output.noReply = true
+      replaceParts(output.parts, shown)
+      readOnlyResponses.set(event.sessionID, shown)
+      return
+    }
+
     if (parsed.action === "history") {
       await commandHook({ ...event, arguments: "status" }, output)
       const ownedText = textFromParts(output.parts)
@@ -228,13 +257,19 @@ export function enhanceGoalControls(input: PluginInput, hooks: PluginHooks): voi
   }
 
   hooks["chat.message"] = async (event: any, output: any) => {
+    const shown = textFromParts(output?.parts ?? [])
+    const readOnly = readOnlyResponses.get(event.sessionID)
+    if (readOnly) {
+      readOnlyResponses.delete(event.sessionID)
+      if (shown === readOnly) return
+    }
+
     const translation = translations.get(event.sessionID)
     if (!translation) {
       await chatHook(event, output)
       return
     }
     translations.delete(event.sessionID)
-    const shown = textFromParts(output?.parts ?? [])
     if (shown !== translation.shown) {
       await chatHook(event, output)
       return

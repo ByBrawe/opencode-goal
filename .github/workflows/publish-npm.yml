@@ -1,0 +1,55 @@
+name: Publish npm beta
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    name: Publish 0.1.0-beta.1
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
+      - name: Enforce workflow security policy
+        run: node scripts/actions-security-gate.mjs
+      - name: Verify trusted-publishing runtime
+        shell: bash
+        run: |
+          node --version
+          NPM_VERSION="$(npm --version)"
+          echo "npm $NPM_VERSION"
+          NPM_VERSION="$NPM_VERSION" node -e 'const [major, minor] = process.env.NPM_VERSION.split(".").map(Number); if (major < 11 || (major === 11 && minor < 5)) { console.error("npm >= 11.5.1 is required for trusted publishing"); process.exit(1) }'
+      - name: Decide whether beta needs publishing
+        id: release
+        shell: bash
+        run: |
+          EXPECTED="0.1.0-beta.1"
+          ACTUAL="$(node -p "JSON.parse(require('fs').readFileSync('package.json', 'utf8')).version")"
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "Package version $ACTUAL is not the one-shot beta $EXPECTED; skipping."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if npm view "@bybrawe/opencode-goal@$EXPECTED" version --registry=https://registry.npmjs.org >/dev/null 2>&1; then
+            echo "@bybrawe/opencode-goal@$EXPECTED is already published; skipping."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "publish=true" >> "$GITHUB_OUTPUT"
+      - name: Install release dependencies
+        if: steps.release.outputs.publish == 'true'
+        run: npm install
+      - name: Publish beta with npm trusted publishing
+        if: steps.release.outputs.publish == 'true'
+        run: npm publish --tag beta --access public

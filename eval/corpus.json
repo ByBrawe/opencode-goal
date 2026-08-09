@@ -4,6 +4,7 @@
     "false-complete",
     "contract",
     "agent-boundary",
+    "delegation",
     "stall",
     "blocker",
     "compaction",
@@ -80,6 +81,38 @@
       "testFile": "test/agent-boundary.test.mjs",
       "testName": "startup recovery pauses an active persisted Plan Goal before any prompt",
       "expected": "Process restart cannot recover a persisted Plan-bound Goal into autonomous execution; it is paused before any host prompt."
+    },
+    {
+      "id": "delegation.foreground-defers-parent",
+      "category": "delegation",
+      "weight": 3,
+      "testFile": "test/task-deferral.test.mjs",
+      "testName": "foreground delegated task defers parent Goal auto-continue until tool completion",
+      "expected": "Parent idle does not dispatch a new Goal turn while a foreground task tool is in flight, and waiting does not pause or consume a stalled turn."
+    },
+    {
+      "id": "delegation.background-defers-until-terminal",
+      "category": "delegation",
+      "weight": 3,
+      "testFile": "test/task-deferral.test.mjs",
+      "testName": "background child session defers parent until child terminal event",
+      "expected": "A background child session prevents parent auto-continue until a child terminal event is observed, without polling session status."
+    },
+    {
+      "id": "delegation.multiple-children-all-terminal",
+      "category": "delegation",
+      "weight": 3,
+      "testFile": "test/task-deferral.test.mjs",
+      "testName": "parent stays deferred until every tracked background child is terminal",
+      "expected": "One completed child cannot release the parent while another delegated child remains active."
+    },
+    {
+      "id": "delegation.synthetic-result-cannot-be-spoofed",
+      "category": "delegation",
+      "weight": 3,
+      "testFile": "test/task-deferral.test.mjs",
+      "testName": "synthetic background task result is host activity, while identical user text cannot spoof it",
+      "expected": "Only host-marked synthetic task completion clears delegated work without pausing the Goal; identical user text still counts as user intervention."
     },
     {
       "id": "stall.agent-notes-do-not-reset-guard",

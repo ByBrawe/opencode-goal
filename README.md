@@ -229,11 +229,31 @@ Authoritative Goal state lives in the plugin/session layer rather than a visual 
 
 When a compatible OpenCode TUI is attached, explicit lifecycle actions and delegated-task waiting may emit best-effort **OpenCode Goals** toasts. Toast delivery is presentation only; a missing/disconnected TUI cannot fail Goal persistence, execution policy, or verification.
 
-The stable `1.0.x` line claims compatibility for the current exported V1 plugin adapter and the documented package interface. A future adapter for a different OpenCode plugin API must pass the same compatibility, real-host, restart, security, and package gates before it is claimed stable.
+The stable `1.0.x` line claims compatibility for the current exported V1 plugin adapter and the documented package interface.
+
+## Experimental OpenCode 2 adapter
+
+The repository also contains an **experimental**, opt-in OpenCode 2 adapter at `src/opencode2/experimental.ts`. OpenCode 2's plugin API is still treated as a moving boundary, so this adapter is deliberately isolated from the stable default export and is **not yet a public npm package subpath**.
+
+The adapter follows the current V2 command/tool/session-request model while reusing the same schema-v1 `GoalStore` and domain state:
+
+- V2-style command registration for `/goal $ARGUMENTS`;
+- direct Goal read tooling plus a mutating control tool that is removed from ordinary model requests;
+- each real `/goal` command request receives an in-process capability marker, and the mutating control accepts only that request's **exact raw arguments exactly once**;
+- changed, replayed, or model-initiated control calls fail before Goal storage is read or mutated;
+- session `location.directory` is resolved before control/read storage access instead of falling back to the process working directory;
+- persistent create/edit/status/contract/pause/resume/clear;
+- success criteria, constraints, checks, file contracts, and creation-time budgets;
+- Plan create/resume/request enforcement;
+- persisted Goal state injection through the V2 `session.hook("request")` boundary.
+
+It intentionally **does not claim parity** for independent semantic completion, autonomous idle continuation, delegated-task coordination, process-restart recovery, budget mutation, history/restore/prune, or doctor. Parity-sensitive controls that are not implemented refuse explicitly without mutating the live Goal.
+
+This separation is a safety feature: the stable V1 adapter remains the supported `1.0.x` runtime while the V2 adapter must earn each capability through its own adversarial and real-host gates before any stable export/compatibility claim is made.
 
 ## Eval corpus
 
-The adversarial regression corpus is machine-readable and mandatory in CI.
+The adversarial regression corpus is machine-readable and mandatory in CI. The stable core corpus is composed with isolated experimental fragments so new adapters can add required cases without weakening or rewriting the stable safety corpus.
 
 Required categories:
 
@@ -241,6 +261,7 @@ Required categories:
 - contract
 - agent-boundary
 - delegation
+- opencode2-experimental
 - stall
 - blocker
 - compaction
@@ -263,9 +284,10 @@ Write JSON evidence or focus one category:
 ```text
 npm run eval -- --json eval-report.json
 npm run eval -- --category delegation
+npm run eval -- --category opencode2-experimental
 ```
 
-The stable gate requires every listed case and every required category to pass. At `1.0.0`, the corpus contains **30 adversarial cases across 14 required categories and requires 100% (87/87 weighted)** on every CI platform.
+The repository gate requires every composed case and every required category to pass. With the request-scoped experimental V2 boundary suite, the composed corpus contains **35 adversarial cases across 15 required categories and requires 100% (102/102 weighted)** on every CI platform. The published `1.0.0` stable release itself was graduated on the preceding 30-case stable corpus; experimental V2 cases are repository-head hardening and do not broaden the `1.0.0` compatibility claim.
 
 ## Release quality gates
 
@@ -298,7 +320,8 @@ The implementation is intentionally split into:
 - OpenCode commands and lifecycle adapter;
 - restricted-agent boundaries;
 - delegated-task coordination;
-- restart recovery and optional UI feedback.
+- restart recovery and optional UI feedback;
+- isolated experimental adapters for evolving OpenCode host APIs.
 
 The domain layer does not depend on OpenCode, so state-machine invariants can be tested deterministically.
 
@@ -311,7 +334,8 @@ Starting with `1.0.0`:
 - completion integrity, fail-closed verification, Plan safety, project-bound storage, and owner-controlled repository release policy are treated as compatibility invariants;
 - additions may land in minor versions;
 - fixes may land in patch versions;
-- breaking public-interface or persisted-contract changes require a new major version.
+- breaking public-interface or persisted-contract changes require a new major version;
+- experimental source that is not exported by the npm package is outside the stable compatibility claim until explicitly promoted.
 
 See [CHANGELOG.md](./CHANGELOG.md) for release history.
 

@@ -5,7 +5,10 @@ import process from "node:process"
 import { fileURLToPath } from "node:url"
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
-const corpusPath = path.join(root, "eval", "corpus.json")
+const corpusPaths = [
+  path.join(root, "eval", "corpus.json"),
+  path.join(root, "eval", "corpus.opencode2-experimental.json"),
+]
 
 function regexEscape(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
@@ -54,27 +57,63 @@ function parseTapSummary(stdout) {
   }
 }
 
-function validateCorpus(corpus) {
+function validateCorpus(corpus, source) {
   if (corpus?.schemaVersion !== 1 || !Array.isArray(corpus.cases) || !corpus.cases.length) {
-    throw new Error("eval corpus must use schemaVersion=1 and contain cases")
+    throw new Error(`${source} must use schemaVersion=1 and contain cases`)
   }
   const ids = new Set()
   const categories = new Set()
   for (const item of corpus.cases) {
     if (!item?.id || !item?.category || !item?.testFile || !item?.testName || !item?.expected) {
-      throw new Error(`invalid eval case: ${JSON.stringify(item)}`)
+      throw new Error(`invalid eval case in ${source}: ${JSON.stringify(item)}`)
     }
-    if (ids.has(item.id)) throw new Error(`duplicate eval id: ${item.id}`)
+    if (ids.has(item.id)) throw new Error(`duplicate eval id in ${source}: ${item.id}`)
     ids.add(item.id)
     categories.add(item.category)
     if (!Number.isFinite(item.weight) || item.weight <= 0) throw new Error(`invalid weight for ${item.id}`)
   }
   for (const required of corpus.requiredCategories ?? []) {
-    if (!categories.has(required)) throw new Error(`missing required eval category: ${required}`)
+    if (!categories.has(required)) throw new Error(`missing required eval category in ${source}: ${required}`)
   }
-  if (!Number.isFinite(corpus.minimumWeightedScore) || corpus.minimumWeightedScore < 0 || corpus.minimumWeightedScore > 1) {
-    throw new Error("minimumWeightedScore must be between 0 and 1")
+  if (corpus.minimumWeightedScore !== undefined
+    && (!Number.isFinite(corpus.minimumWeightedScore) || corpus.minimumWeightedScore < 0 || corpus.minimumWeightedScore > 1)) {
+    throw new Error(`${source} minimumWeightedScore must be between 0 and 1`)
   }
+}
+
+async function loadCorpus() {
+  const fragments = []
+  for (const file of corpusPaths) {
+    const relative = path.relative(root, file).replaceAll(path.sep, "/")
+    const fragment = JSON.parse(await readFile(file, "utf8"))
+    validateCorpus(fragment, relative)
+    fragments.push({ file: relative, fragment })
+  }
+
+  const ids = new Set()
+  const cases = []
+  const requiredCategories = []
+  const requiredSeen = new Set()
+  let minimumWeightedScore = 0
+
+  for (const { file, fragment } of fragments) {
+    minimumWeightedScore = Math.max(minimumWeightedScore, fragment.minimumWeightedScore ?? 1)
+    for (const category of fragment.requiredCategories ?? []) {
+      if (!requiredSeen.has(category)) {
+        requiredSeen.add(category)
+        requiredCategories.push(category)
+      }
+    }
+    for (const item of fragment.cases) {
+      if (ids.has(item.id)) throw new Error(`duplicate eval id across corpus fragments: ${item.id} (${file})`)
+      ids.add(item.id)
+      cases.push(item)
+    }
+  }
+
+  const corpus = { schemaVersion: 1, requiredCategories, minimumWeightedScore, cases }
+  validateCorpus(corpus, "composed eval corpus")
+  return { corpus, sources: fragments.map((item) => item.file) }
 }
 
 function runCase(item) {
@@ -131,8 +170,7 @@ function categorySummary(cases) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2))
-  const corpus = JSON.parse(await readFile(corpusPath, "utf8"))
-  validateCorpus(corpus)
+  const { corpus, sources } = await loadCorpus()
 
   const selected = options.category
     ? corpus.cases.filter((item) => item.category === options.category)
@@ -140,6 +178,7 @@ async function main() {
   if (!selected.length) throw new Error(`no eval cases selected${options.category ? ` for category ${options.category}` : ""}`)
 
   console.log(`OpenCode Goals eval corpus v${corpus.schemaVersion}`)
+  console.log(`Sources: ${sources.join(", ")}`)
   console.log(`Running ${selected.length} adversarial case(s)${options.category ? ` in ${options.category}` : ""}...`)
 
   const results = selected.map((item) => {
@@ -166,7 +205,7 @@ async function main() {
     node: process.version,
     platform: process.platform,
     arch: process.arch,
-    corpus: path.relative(root, corpusPath).replaceAll(path.sep, "/"),
+    corpus: sources,
     selection: options.category ? { category: options.category } : { category: null },
     gate,
     minimumWeightedScore: corpus.minimumWeightedScore,
@@ -181,7 +220,7 @@ async function main() {
 
   console.log("")
   for (const item of categories) {
-    console.log(`category ${item.category.padEnd(16)} ${item.passed}/${item.total}  score=${(item.score * 100).toFixed(1)}%`)
+    console.log(`category ${item.category.padEnd(24)} ${item.passed}/${item.total}  score=${(item.score * 100).toFixed(1)}%`)
   }
   console.log(`weighted score ${(weightedScore * 100).toFixed(1)}% (${weightedPassed}/${weightedTotal})`)
   console.log(`eval gate ${gate ? "PASS" : "FAIL"}`)

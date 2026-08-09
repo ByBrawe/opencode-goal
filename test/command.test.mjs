@@ -12,6 +12,18 @@ test("goal parser keeps success criteria constraints checks and host file contra
   assert.equal(parsed.maxTurns, 20)
 })
 
+test("goal draft parses the full Goal Contract without changing its flags", () => {
+  const parsed = parseGoalCommand('draft ship safely --success "tests pass" --constraint "keep API compatible" --check "npm test" --contains "README.md::OpenCode Goals" --max-turns 12 --max-cost 3.5')
+  assert.equal(parsed.action, "draft")
+  assert.equal(parsed.objective, "ship safely")
+  assert.deepEqual(parsed.acceptance, ["tests pass"])
+  assert.deepEqual(parsed.constraints, ["keep API compatible"])
+  assert.deepEqual(parsed.checks, ["npm test"])
+  assert.deepEqual(parsed.files, [{ file: "README.md", contains: "OpenCode Goals" }])
+  assert.equal(parsed.maxTurns, 12)
+  assert.equal(parsed.maxCost, 3.5)
+})
+
 test("goal contract is a read-only no-argument command", () => {
   assert.deepEqual(parseGoalCommand("contract"), {
     action: "contract",

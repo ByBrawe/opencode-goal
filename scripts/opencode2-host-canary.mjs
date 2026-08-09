@@ -111,9 +111,10 @@ async function main() {
     OPENCODE_LOG_LEVEL: "DEBUG",
   }
 
-  // Project-local plugin discovery is scoped to an OpenCode project/workspace,
-  // so make the isolated directory a real git workspace instead of letting the
-  // server classify it as the global project.
+  // Current OpenCode project detection keeps an empty `git init` workspace in
+  // the global project. A repository with a real root commit receives its own
+  // project ID, which is required before project-local .opencode/plugins
+  // discovery can be meaningfully exercised.
   run("git", ["init", "-q"], { cwd: project, env })
   await writeFile(path.join(project, "README.md"), "# OpenCode 2 canary workspace\n")
   await writeFile(path.join(projectConfig, "opencode.json"), `${JSON.stringify({
@@ -123,6 +124,10 @@ async function main() {
     discoveryFile,
     `export { default } from ${JSON.stringify(pathToFileURL(pluginFile).href)}\n`,
   )
+  run("git", ["config", "user.name", "OpenCode Goals Canary"], { cwd: project, env })
+  run("git", ["config", "user.email", "opencode-goals-canary@example.invalid"], { cwd: project, env })
+  run("git", ["add", "README.md", ".opencode/opencode.json", ".opencode/plugins/opencode-goals-v2-canary.js"], { cwd: project, env })
+  run("git", ["commit", "-q", "-m", "initialize canary workspace"], { cwd: project, env })
 
   let version = ""
   let health = ""
@@ -152,7 +157,7 @@ async function main() {
       throw new Error(`OpenCode 2 resolved the wrong Location: expected ${project}, got ${String(responseDirectory)}`)
     }
     if (pluginResponse?.location?.project?.id === "global") {
-      throw new Error(`OpenCode 2 still classified the git canary workspace as global: ${JSON.stringify(pluginResponse.location)}`)
+      throw new Error(`OpenCode 2 still classified the committed git canary workspace as global: ${JSON.stringify(pluginResponse.location)}`)
     }
     const ids = pluginIDs(pluginResponse)
     if (!ids.includes(pluginID)) {

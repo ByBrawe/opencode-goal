@@ -1,0 +1,6 @@
+{
+  "name": "benchmark-false-complete-trap",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test test/slug.test.mjs" }
+}

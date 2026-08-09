@@ -64,7 +64,9 @@ test("history prune removes only oldest archives and leaves live goal untouched"
     const live = createGoal({ sessionID: "session-a", objective: "live", now: 400 })
 
     await store.save(first)
+    await store.clear("session-a")
     await store.save(second)
+    await store.clear("session-a")
     await store.save(third)
     await store.clear("session-a")
     await store.save(live)

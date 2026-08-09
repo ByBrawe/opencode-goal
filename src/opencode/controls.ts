@@ -241,8 +241,15 @@ export function enhanceGoalControls(input: PluginInput, hooks: PluginHooks): voi
     if (beforeStatus === "budget_limited" && next.status === "active") {
       // Ask the core hook to seed TurnOwnership for the exact continuation text,
       // but restore our budget-updated snapshot because resumeGoal() also resets
-      // no-progress accounting that a budget change must not erase.
+      // no-progress accounting that a budget change must not erase. The core
+      // save advances the persistence generation, so adopt only that generation
+      // after verifying the same Goal/revision before restoring the snapshot.
       await commandHook({ ...event, arguments: "resume" }, output)
+      const resumed = await store.load(event.sessionID)
+      if (!resumed || resumed.id !== next.id || resumed.revision !== next.revision || resumed.status !== "active") {
+        throw new Error("Goal changed while seeding budget-resume ownership")
+      }
+      next.storageGeneration = resumed.storageGeneration ?? 0
       await store.save(next)
       const ownedText = textFromParts(output.parts)
       const shown = continuationPrompt(next)

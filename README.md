@@ -50,6 +50,8 @@ Useful lifecycle commands:
 ```text
 /goal status
 /goal contract
+/goal list
+/goal list <goal-id-prefix>
 /goal doctor
 /goal pause
 /goal resume
@@ -97,6 +99,7 @@ If independent verification is incomplete, ambiguous, unavailable, or races with
 ## Stable safety guarantees
 
 - One unfinished live Goal per session.
+- Project-wide Goal discovery is read-only: inspecting another session cannot adopt, pause, resume, replace, or rewrite its Goal.
 - Agent-written progress notes cannot prove completion.
 - The executor cannot forge the verifier result from the parent session.
 - User intervention wins races with autonomous continuation and verification.
@@ -190,6 +193,26 @@ Persistence guarantees include:
 
 Active Goals can recover after a real OpenCode process restart with persisted execution context. An interrupted turn is not falsely counted as stalled.
 
+## Project-wide Goal index
+
+A project may have live Goal snapshots in several OpenCode sessions. `/goal list` exposes those current snapshots without requiring a persistent TUI widget or changing any session ownership:
+
+```text
+/goal list
+```
+
+The current session is marked with `*`; each row includes a Goal ID prefix, status, session prefix, update time, and objective. The current session is shown first and the remaining snapshots are ordered by most recent update.
+
+Inspect one live project Goal with its displayed ID prefix:
+
+```text
+/goal list <goal-id-prefix>
+```
+
+The detail view includes the full Goal ID, full owning session ID, and detailed status. This is intentionally **not** a focus/adopt/switch command. Inspecting a foreign-session Goal never moves it into the observer session and never pauses, resumes, replaces, or rewrites either session's Goal state.
+
+Project indexing uses the same fail-closed storage reader as the live Goal store. A corrupt, unsupported, or unsafe shard therefore blocks a trustworthy project index instead of being silently omitted; use `/goal doctor` from the affected session/storage context to diagnose integrity failures.
+
 ## History, restore, and doctor
 
 Replaced and explicitly cleared Goals are archived before their live snapshot is overwritten or removed.
@@ -225,9 +248,9 @@ Doctor can report corrupt/unsupported/unsafe storage even when normal Goal loadi
 
 ## CLI, TUI, web, and headless behavior
 
-Authoritative Goal state lives in the plugin/session layer rather than a visual widget. Lifecycle commands, contracts, verification, history, restore, Plan enforcement, and delegated-task coordination therefore do not depend on one particular UI client.
+Authoritative Goal state lives in the plugin/session layer rather than a visual widget. Lifecycle commands, Goal Contracts, the project-wide Goal index, verification, history, restore, Plan enforcement, and delegated-task coordination therefore do not depend on one particular UI client.
 
-When a compatible OpenCode TUI is attached, explicit lifecycle actions and delegated-task waiting may emit best-effort **OpenCode Goals** toasts. Toast delivery is presentation only; a missing/disconnected TUI cannot fail Goal persistence, execution policy, or verification.
+When a compatible OpenCode TUI is attached, explicit lifecycle actions and delegated-task waiting may emit best-effort **OpenCode Goals** toasts. Toast delivery is presentation only; a missing/disconnected TUI cannot fail Goal persistence, execution policy, project indexing, or verification.
 
 The stable `1.0.x` line claims compatibility for the current exported V1 plugin adapter and the documented package interface.
 
@@ -253,14 +276,15 @@ This separation is a safety feature: the stable V1 adapter remains the supported
 
 ## Eval corpus
 
-The adversarial regression corpus is machine-readable and mandatory in CI. The stable core corpus is composed with isolated experimental fragments so new adapters can add required cases without weakening or rewriting the stable safety corpus.
+The adversarial regression corpus is machine-readable and mandatory in CI. The stable core corpus is composed with focused stable/experimental fragments so new surfaces can add required cases without weakening existing safety coverage.
 
-Required categories:
+Required categories include:
 
 - false-complete
 - contract
 - agent-boundary
 - delegation
+- project-index
 - opencode2-experimental
 - stall
 - blocker
@@ -283,11 +307,12 @@ Write JSON evidence or focus one category:
 
 ```text
 npm run eval -- --json eval-report.json
+npm run eval -- --category project-index
 npm run eval -- --category delegation
 npm run eval -- --category opencode2-experimental
 ```
 
-The repository gate requires every composed case and every required category to pass. With the request-scoped experimental V2 boundary suite, the composed corpus contains **35 adversarial cases across 15 required categories and requires 100% (102/102 weighted)** on every CI platform. The published `1.0.0` stable release itself was graduated on the preceding 30-case stable corpus; experimental V2 cases are repository-head hardening and do not broaden the `1.0.0` compatibility claim.
+The repository gate requires every composed case and every required category to pass. With the project-index and experimental V2 boundary suites, the composed corpus contains **37 adversarial cases across 16 required categories and requires 100% (108/108 weighted)** on every CI platform. The published `1.0.0` stable release itself was graduated on the preceding 30-case stable corpus; later repository-head cases harden new compatible features without retroactively broadening the original release evidence.
 
 ## Release quality gates
 
@@ -318,6 +343,7 @@ The implementation is intentionally split into:
 - runtime accounting, blocker, progress, and limits;
 - persistence, storage integrity, and process concurrency;
 - OpenCode commands and lifecycle adapter;
+- project-wide read-only Goal indexing;
 - restricted-agent boundaries;
 - delegated-task coordination;
 - restart recovery and optional UI feedback;

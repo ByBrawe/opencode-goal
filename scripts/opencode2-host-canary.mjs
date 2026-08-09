@@ -132,19 +132,19 @@ async function main() {
     health = output(healthResult)
     if (!health) throw new Error("OpenCode 2 health API returned no output")
 
-    // The V2 CLI accepts OpenAPI operation IDs and builds object parameters
-    // from dotted --param keys. This avoids depending on the beta client npm
-    // package while still asking the real service for the explicit project
-    // Location rather than the CLI's default global location.
-    const pluginResult = run("opencode2", [
-      "api",
-      "v2.plugin.list",
-      "--param",
-      `location.directory=${project}`,
-    ], { cwd: project, env })
-    const pluginResponse = parseJSONOutput(pluginResult, "v2.plugin.list")
+    // OpenCode's location middleware reads bracket-form query keys directly:
+    // location[directory] and location[workspace]. The CLI raw method/path form
+    // forwards this query string unchanged while still handling service
+    // discovery and private authentication for us.
+    const pluginPath = `/api/plugin?location%5Bdirectory%5D=${encodeURIComponent(project)}`
+    const pluginResult = run("opencode2", ["api", "get", pluginPath], { cwd: project, env })
+    const pluginResponse = parseJSONOutput(pluginResult, "GET /api/plugin at project Location")
     if (pluginResponse?._tag) {
-      throw new Error(`v2.plugin.list rejected the project Location: ${JSON.stringify(pluginResponse)}`)
+      throw new Error(`project-scoped /api/plugin rejected the Location: ${JSON.stringify(pluginResponse)}`)
+    }
+    const responseDirectory = pluginResponse?.location?.directory
+    if (responseDirectory !== project) {
+      throw new Error(`OpenCode 2 resolved the wrong Location: expected ${project}, got ${String(responseDirectory)}`)
     }
     const ids = pluginIDs(pluginResponse)
     if (!ids.includes(pluginID)) {

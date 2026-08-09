@@ -37,6 +37,20 @@ test("goal doctor is a read-only no-argument command", () => {
   assert.throws(() => parseGoalCommand("doctor --fix"), /does not accept arguments/)
 })
 
+test("goal list accepts an optional live Goal id prefix and rejects extra arguments", () => {
+  assert.deepEqual(parseGoalCommand("list"), {
+    action: "list",
+    objective: "",
+    acceptance: [],
+    constraints: [],
+    checks: [],
+    files: [],
+  })
+  assert.equal(parseGoalCommand("list a1b2c3d4").goalIDPrefix, "a1b2c3d4")
+  assert.throws(() => parseGoalCommand("list one two"), /at most one goal id prefix/)
+  assert.throws(() => parseGoalCommand("list --all"), /unknown goal option/)
+})
+
 test("goal history accepts an optional id prefix and rejects extra arguments", () => {
   assert.deepEqual(parseGoalCommand("history"), {
     action: "history",

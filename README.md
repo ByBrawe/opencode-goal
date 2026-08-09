@@ -1,6 +1,6 @@
-# opencode-goal
+# OpenCode Goals
 
-**Codex-style persistent Goal Mode for OpenCode, with host-verified completion.**
+**Codex-style persistent Goals for OpenCode, with host-verified completion.**
 
 The design rule is simple: **keep working until the goal is proven done.** The executor cannot complete its own goal merely by saying it is finished.
 
@@ -8,9 +8,9 @@ The design rule is simple: **keep working until the goal is proven done.** The e
 
 ## Why this exists
 
-OpenCode is already good at doing a turn of coding work. `opencode-goal` adds a durable outcome layer: one explicit goal persists across turns, survives compaction/restarts, continues when the session becomes idle, pauses for user intervention, and refuses completion when required evidence is missing, stale, too narrow, or unverifiable.
+OpenCode is already good at doing a turn of coding work. **OpenCode Goals** adds a durable outcome layer: one explicit goal persists across turns, survives compaction/restarts, continues when the session becomes idle, pauses for user intervention, and refuses completion when required evidence is missing, stale, too narrow, or unverifiable.
 
-This implementation is independently designed for OpenCode. It borrows product principles from durable goal workflows such as Codex Goals, but it does not copy their implementation or prompts.
+This implementation is independently designed for OpenCode. It borrows product principles from durable goal workflows such as **Codex Goals**, but it does not copy their implementation or prompts.
 
 ## What makes completion different
 
@@ -55,12 +55,12 @@ Until the first beta is published, build from the repository and load the packag
 @bybrawe/opencode-goal
 ```
 
-The plugin registers a `/goal` command when the host supports config mutation.
+The product name is **OpenCode Goals**. The plugin command remains `/goal` because it operates on one active goal at a time.
 
 ## Usage
 
 ```text
-/goal fix the failing tests --check "npm test" --contains "README.md::Goal Mode"
+/goal fix the failing tests --check "npm test" --contains "README.md::OpenCode Goals"
 ```
 
 Add semantic acceptance criteria when the requested end state needs more than a mechanical check:

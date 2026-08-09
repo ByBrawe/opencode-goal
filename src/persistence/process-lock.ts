@@ -43,6 +43,7 @@ export interface GoalStoreProcessLockInput {
 }
 
 const POLL_MS = 20
+const SAFE_PATH_RACE_RETRIES = 3
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -119,20 +120,40 @@ async function removeWithRetry(file: string): Promise<void> {
   }
 }
 
+/**
+ * The storage guard intentionally inspects existing path components. Another
+ * lock contender may remove a canonical lock between the guard's lstat and
+ * realpath calls. Retry only that transient ENOENT; integrity/unsafe-path
+ * errors are never swallowed, and a persistently missing project root still
+ * fails after the bounded retries.
+ */
+async function assertSafeWithRaceRetry(target: string, assertSafe: (target: string) => Promise<void>): Promise<void> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await assertSafe(target)
+      return
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (code !== "ENOENT" || attempt >= SAFE_PATH_RACE_RETRIES) throw error
+      await Promise.resolve()
+    }
+  }
+}
+
 async function createCandidate(
   lockRoot: string,
   owner: LockOwner,
   assertSafe: (target: string) => Promise<void>,
 ): Promise<string> {
   const candidate = path.join(lockRoot, owner.candidateName)
-  await assertSafe(candidate)
+  await assertSafeWithRaceRetry(candidate, assertSafe)
   await fs.writeFile(candidate, `${JSON.stringify(owner)}\n`, { encoding: "utf8", mode: 0o600, flag: "wx" })
   return candidate
 }
 
 async function linkClaim(candidate: string, canonical: string, assertSafe: (target: string) => Promise<void>): Promise<boolean> {
-  await assertSafe(candidate)
-  await assertSafe(canonical)
+  await assertSafeWithRaceRetry(candidate, assertSafe)
+  await assertSafeWithRaceRetry(canonical, assertSafe)
   try {
     await fs.link(candidate, canonical)
     return true
@@ -167,10 +188,10 @@ async function recoverDeadOwner(
     if (current.token !== stale.token || current.pid !== stale.pid) return false
     if (pidAlive(current.pid)) return false
 
-    await input.assertSafe(input.lockFile)
+    await assertSafeWithRaceRetry(input.lockFile, input.assertSafe)
     await removeWithRetry(input.lockFile)
     const staleCandidate = path.join(input.lockRoot, current.candidateName)
-    await input.assertSafe(staleCandidate)
+    await assertSafeWithRaceRetry(staleCandidate, input.assertSafe)
     await removeWithRetry(staleCandidate).catch(() => undefined)
     return true
   } finally {
@@ -185,10 +206,10 @@ async function recoverDeadOwner(
 export async function acquireGoalStoreProcessLock(input: GoalStoreProcessLockInput): Promise<GoalStoreProcessLease> {
   if (!Number.isFinite(input.timeoutMs) || input.timeoutMs < 1) throw new Error("process lock timeout must be positive")
 
-  await input.assertSafe(input.lockRoot)
+  await assertSafeWithRaceRetry(input.lockRoot, input.assertSafe)
   await fs.mkdir(input.lockRoot, { recursive: true })
-  await input.assertSafe(input.lockRoot)
-  await input.assertSafe(input.lockFile)
+  await assertSafeWithRaceRetry(input.lockRoot, input.assertSafe)
+  await assertSafeWithRaceRetry(input.lockFile, input.assertSafe)
 
   const owner = ownerFor("lock-owner")
   const candidate = await createCandidate(input.lockRoot, owner, input.assertSafe)
@@ -223,7 +244,7 @@ export async function acquireGoalStoreProcessLock(input: GoalStoreProcessLockInp
         if (!current || current.token !== owner.token || current.pid !== owner.pid) {
           throw new GoalStoreConcurrencyError("lock_lost", "session storage lease ownership changed before release", input.lockFile)
         }
-        await input.assertSafe(input.lockFile)
+        await assertSafeWithRaceRetry(input.lockFile, input.assertSafe)
         await removeWithRetry(input.lockFile)
         await removeWithRetry(candidate).catch(() => undefined)
       },

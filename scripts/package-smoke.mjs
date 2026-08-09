@@ -95,13 +95,13 @@ async function main() {
     const probe = String.raw`
       import fs from "node:fs";
       import path from "node:path";
+      import { fileURLToPath } from "node:url";
       const mod = await import("@bybrawe/opencode-goal");
       if (typeof mod.default !== "function") throw new Error("default OpenCode plugin export is missing");
       if (typeof mod.createGoal !== "function") throw new Error("createGoal export is missing");
       if (typeof mod.parseGoalCommand !== "function") throw new Error("parseGoalCommand export is missing");
-      const root = path.dirname(import.meta.resolve("@bybrawe/opencode-goal").replace(/^file:\/\//, ""));
-      const pkgRoot = path.resolve(root, "..");
-      if (!fs.existsSync(path.join(pkgRoot, "index.d.ts"))) throw new Error("published type declarations are missing");
+      const entryDir = path.dirname(fileURLToPath(import.meta.resolve("@bybrawe/opencode-goal")));
+      if (!fs.existsSync(path.join(entryDir, "index.d.ts"))) throw new Error("published type declarations are missing");
       console.log("consumer import ok");
     `
     const consumerResult = run(process.execPath, ["--input-type=module", "--eval", probe], { cwd: consumer })

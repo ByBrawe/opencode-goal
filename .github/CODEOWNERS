@@ -1,0 +1,3 @@
+# When main branch protection requires Code Owner review, no pull request can
+# merge without an explicit review from the repository owner.
+* @ByBrawe

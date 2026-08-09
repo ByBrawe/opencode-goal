@@ -14,6 +14,14 @@ export interface GoalArchiveRecord {
   goal: GoalState
 }
 
+export type GoalRestoreResult =
+  | { ok: true; goal: GoalState; source: GoalArchiveRecord }
+  | { ok: false; reason: "not_found"; matches: [] }
+  | { ok: false; reason: "ambiguous"; matches: GoalArchiveRecord[] }
+  | { ok: false; reason: "live_unfinished"; current: GoalState }
+  | { ok: false; reason: "already_current"; current: GoalState }
+  | { ok: false; reason: "completed"; source: GoalArchiveRecord }
+
 function shard(value: string): string {
   return createHash("sha256").update(value).digest("hex").slice(0, 32)
 }
@@ -70,7 +78,7 @@ async function writeAtomic(target: string, value: unknown): Promise<void> {
 
 export class GoalStore {
   readonly root: string
-  #locks = new Map<string, Promise<void>>()
+  #locks = new Map<string, Promise<unknown>>()
 
   constructor(directory: string) {
     this.root = path.join(directory, ".opencode", "goals")
@@ -112,6 +120,53 @@ export class GoalStore {
   }
 
   async history(sessionID: string, limit = 20): Promise<GoalArchiveRecord[]> {
+    const records = await this.#history(sessionID)
+    return records.slice(0, Math.max(0, limit))
+  }
+
+  async restore(sessionID: string, goalIDPrefix: string, now = Date.now()): Promise<GoalRestoreResult> {
+    return await this.#locked(sessionID, async () => {
+      const normalized = goalIDPrefix.trim().toLowerCase()
+      const records = await this.#history(sessionID)
+      const matches = records.filter((record) => record.goalID.toLowerCase().startsWith(normalized))
+      if (!matches.length) return { ok: false, reason: "not_found", matches: [] }
+      if (matches.length > 1) return { ok: false, reason: "ambiguous", matches }
+
+      const source = matches[0]!
+      const current = await readStateFile(this.fileFor(sessionID))
+      if (current && current.status !== "completed") return { ok: false, reason: "live_unfinished", current }
+      if (current?.id === source.goalID) return { ok: false, reason: "already_current", current }
+      if (source.goal.status === "completed") return { ok: false, reason: "completed", source }
+
+      if (current) await this.#archive(current, "replaced")
+      const restored: GoalState = {
+        ...source.goal,
+        status: "paused",
+        stopReason: "Restored from goal history. Use /goal resume to continue.",
+        updatedAt: now,
+      }
+      await writeAtomic(this.fileFor(sessionID), restored)
+      return { ok: true, goal: restored, source }
+    })
+  }
+
+  async save(state: GoalState): Promise<void> {
+    await this.#locked(state.sessionID, async () => {
+      const previous = await readStateFile(this.fileFor(state.sessionID))
+      if (previous && previous.id !== state.id) await this.#archive(previous, "replaced")
+      await writeAtomic(this.fileFor(state.sessionID), state)
+    })
+  }
+
+  async clear(sessionID: string): Promise<void> {
+    await this.#locked(sessionID, async () => {
+      const current = await readStateFile(this.fileFor(sessionID))
+      if (current) await this.#archive(current, "cleared")
+      await fs.rm(this.fileFor(sessionID), { force: true })
+    })
+  }
+
+  async #history(sessionID: string): Promise<GoalArchiveRecord[]> {
     let names: string[]
     try {
       names = await fs.readdir(this.historyRootFor(sessionID))
@@ -135,23 +190,7 @@ export class GoalStore {
       }
     }
     records.sort((a, b) => b.archivedAt - a.archivedAt || b.goal.updatedAt - a.goal.updatedAt || a.goalID.localeCompare(b.goalID))
-    return records.slice(0, Math.max(0, limit))
-  }
-
-  async save(state: GoalState): Promise<void> {
-    await this.#locked(state.sessionID, async () => {
-      const previous = await readStateFile(this.fileFor(state.sessionID))
-      if (previous && previous.id !== state.id) await this.#archive(previous, "replaced")
-      await writeAtomic(this.fileFor(state.sessionID), state)
-    })
-  }
-
-  async clear(sessionID: string): Promise<void> {
-    await this.#locked(sessionID, async () => {
-      const current = await readStateFile(this.fileFor(sessionID))
-      if (current) await this.#archive(current, "cleared")
-      await fs.rm(this.fileFor(sessionID), { force: true })
-    })
+    return records
   }
 
   async #archive(goal: GoalState, reason: GoalArchiveReason, archivedAt = Date.now()): Promise<void> {
@@ -166,12 +205,12 @@ export class GoalStore {
     await writeAtomic(this.archiveFileFor(goal.sessionID, goal.id), record)
   }
 
-  async #locked(sessionID: string, fn: () => Promise<void>): Promise<void> {
+  async #locked<T>(sessionID: string, fn: () => Promise<T>): Promise<T> {
     const previous = this.#locks.get(sessionID) ?? Promise.resolve()
     const next = previous.catch(() => undefined).then(fn)
     this.#locks.set(sessionID, next)
     try {
-      await next
+      return await next
     } finally {
       if (this.#locks.get(sessionID) === next) this.#locks.delete(sessionID)
     }

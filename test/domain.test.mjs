@@ -111,3 +111,39 @@ test("explicit checks never remove the broad objective from completion scope", (
   assert.equal(objective.required, true)
   assert.equal(check.required, true)
 })
+
+test("goal constraints are mandatory semantic completion requirements", () => {
+  let goal = createGoal({
+    sessionID: "s1",
+    objective: "ship compatible release",
+    acceptance: ["tests pass"],
+    constraints: ["public API stays compatible"],
+    checks: ["npm test"],
+  })
+  const constraint = goal.requirements.find((item) => item.source === "constraint")
+  const check = goal.requirements.find((item) => item.source === "check")
+  assert.ok(constraint)
+  assert.equal(constraint.verification, "semantic")
+  assert.equal(constraint.required, true)
+  goal = recordCommandEvidence(goal, { command: "npm test", exitCode: 0, output: "ok", requirementIDs: [check.id] })
+  goal = proveRequirementsFromEvidence(goal, goal.evidence.at(-1).id)
+  const audit = auditCompletion(goal)
+  assert.equal(audit.ok, false)
+  assert.match(audit.reasons.join("\n"), /Constraint preserved: public API stays compatible/)
+})
+
+test("goal edit preserves success criteria and constraints when flags are omitted", () => {
+  const original = createGoal({
+    sessionID: "s1",
+    objective: "old objective",
+    acceptance: ["tests stay green"],
+    constraints: ["do not add dependencies"],
+    checks: ["npm test"],
+  })
+  const edited = editGoal(original, { objective: "new objective" })
+  assert.equal(edited.revision, 2)
+  assert.deepEqual(edited.constraints, ["do not add dependencies"])
+  assert.ok(edited.requirements.some((item) => item.source === "acceptance" && item.text === "tests stay green"))
+  assert.ok(edited.requirements.some((item) => item.source === "constraint" && /do not add dependencies/.test(item.text)))
+  assert.ok(edited.requirements.some((item) => item.source === "check" && item.command === "npm test"))
+})

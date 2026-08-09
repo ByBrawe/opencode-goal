@@ -10,7 +10,7 @@ async function tick() {
   await new Promise((resolve) => setTimeout(resolve, 0))
 }
 
-async function waitFor(predicate, description, timeoutMs = 2_000) {
+async function waitFor(predicate, description, timeoutMs = 4_000) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     if (predicate()) return
@@ -32,6 +32,12 @@ function pendingClient() {
   return {
     client: {
       session: {
+        list() {
+          return Promise.resolve({ data: [{ id: "session-restart" }] })
+        },
+        status() {
+          return Promise.resolve({ data: {} })
+        },
         prompt(arg) {
           prompts.push(arg)
           return new Promise((resolve, reject) => pending.push({ resolve, reject }))
@@ -110,8 +116,8 @@ test("a fresh plugin instance automatically reloads and resumes an active goal e
 
     // Simulate a full plugin/process restart: all in-memory ownership, locks and
     // dispatch state disappear, while the project-local goal shard remains.
-    // The recovery path must not need session.list/status because a plugin can
-    // load inside the very host request those client methods would recurse into.
+    // Recovery first waits for an abortable read-only session probe to prove the
+    // lazy directory instance can service requests before it sends a prompt.
     const second = pendingClient()
     await OpenCodeGoalPlugin({ client: second.client, directory: root })
 

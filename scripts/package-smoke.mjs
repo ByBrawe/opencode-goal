@@ -60,7 +60,7 @@ function parsePackResult(stdout) {
 
 function assertPackageFiles(pack) {
   const files = new Set(pack.files.map((item) => String(item.path).replaceAll("\\", "/")))
-  const required = ["package.json", "README.md", "LICENSE", "dist/index.js", "dist/index.d.ts"]
+  const required = ["package.json", "README.md", "CHANGELOG.md", "LICENSE", "dist/index.js", "dist/index.d.ts"]
   for (const file of required) {
     if (!files.has(file)) throw new Error(`publish tarball is missing required file: ${file}`)
   }
@@ -75,7 +75,7 @@ async function main() {
   const options = parseArgs(process.argv.slice(2))
   const packageJSON = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"))
   if (packageJSON.private === true) throw new Error("package.json is private and cannot be published")
-  if (packageJSON.publishConfig?.access !== "public") throw new Error("scoped beta package must set publishConfig.access=public")
+  if (packageJSON.publishConfig?.access !== "public") throw new Error("scoped public package must set publishConfig.access=public")
   if (packageJSON.peerDependencies?.["@opencode-ai/plugin"] !== ">=1.4.0") {
     throw new Error("package smoke minimum peer fixture must match peerDependencies['@opencode-ai/plugin'] >=1.4.0")
   }

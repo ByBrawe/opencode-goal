@@ -50,11 +50,6 @@ function output(result) {
   return `${String(result.stdout ?? "")}\n${String(result.stderr ?? "")}`.trim()
 }
 
-function localPluginSpecifier(project, file) {
-  const relative = path.relative(project, file).replaceAll(path.sep, "/")
-  return relative.startsWith(".") ? relative : `./${relative}`
-}
-
 async function failureLog(env) {
   const file = path.join(env.XDG_DATA_HOME, "opencode", "log", "opencode.log")
   try {
@@ -71,6 +66,7 @@ async function main() {
   const project = path.join(temp, "project")
   const home = path.join(temp, "home")
   const config = path.join(temp, "config")
+  const opencodeConfig = path.join(config, "opencode")
   const data = path.join(temp, "data")
   const state = path.join(temp, "state")
   const pluginFile = path.join(root, "dist", "opencode2", "experimental.js")
@@ -78,7 +74,7 @@ async function main() {
   await Promise.all([
     mkdir(project, { recursive: true }),
     mkdir(home, { recursive: true }),
-    mkdir(config, { recursive: true }),
+    mkdir(opencodeConfig, { recursive: true }),
     mkdir(data, { recursive: true }),
     mkdir(state, { recursive: true }),
   ])
@@ -93,15 +89,19 @@ async function main() {
     OPENCODE_LOG_LEVEL: "DEBUG",
   }
 
-  await writeFile(path.join(project, "opencode.json"), `${JSON.stringify({
+  // The first real-host gate deliberately uses the isolated global V2 config.
+  // `/api/plugin` is location-scoped and the bare CLI API command defaults to
+  // the global location; project-location routing is a separate compatibility
+  // concern and should not be guessed here. OpenCode V2 explicitly supports
+  // absolute local plugin paths in configured `plugins` entries.
+  await writeFile(path.join(opencodeConfig, "opencode.json"), `${JSON.stringify({
     $schema: "https://opencode.ai/config.json",
-    plugins: [localPluginSpecifier(project, pluginFile)],
+    plugins: [pluginFile],
   }, null, 2)}\n`)
 
   let version = ""
   let health = ""
   let plugins = ""
-  let gate = false
   try {
     run("opencode2", ["service", "stop"], { cwd: project, env, allowFailure: true, timeout: 15_000 })
 
@@ -119,7 +119,6 @@ async function main() {
       throw new Error(`OpenCode 2 plugin API did not report ${pluginID}.\n${plugins}`)
     }
 
-    gate = true
     const report = {
       schemaVersion: 1,
       generatedAt: new Date().toISOString(),
@@ -127,11 +126,12 @@ async function main() {
       arch: process.arch,
       node: process.version,
       pluginID,
-      pluginSpecifier: localPluginSpecifier(project, pluginFile),
+      pluginSpecifier: pluginFile,
+      configScope: "isolated-global",
       opencode2Version: version,
       health,
       pluginAPIContainsExpectedID: true,
-      gate,
+      gate: true,
     }
 
     console.log(`OpenCode 2 version: ${version}`)

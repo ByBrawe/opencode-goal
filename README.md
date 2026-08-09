@@ -44,6 +44,7 @@ If the verifier does not submit a complete typed verdict, returns ambiguous evid
 - A blocker must recur across three distinct goal turns before the state becomes `blocked`.
 - Assistant token/cost/time usage is deduplicated by message ID and can stop a goal as `budget_limited`.
 - Goal state is stored project-locally under `.opencode/goals/` with atomic writes.
+- Active Goals recover after a real OpenCode process restart using the persisted session and execution context; the interrupted turn is not falsely counted as stalled.
 - Goal state is injected into OpenCode compaction context; OpenCode's generic post-compaction continue is disabled while the goal runtime owns continuation.
 - Duplicate idle events cannot launch concurrent continuation prompts.
 
@@ -87,19 +88,19 @@ The project is intentionally split into domain state, verification, runtime/acco
 
 ## Test philosophy
 
-The suite is adversarial by default. It covers false-complete attempts, stale evidence, narrow-check scope bypass, hallucinated verifier quotes, invented host-evidence IDs, parent-session result forgery, user-interrupt races, duplicate idle events, blocker repetition, fake progress, usage deduplication, persistence, compaction ownership, and project-root path traversal.
+The suite is adversarial by default. It covers false-complete attempts, stale evidence, narrow-check scope bypass, hallucinated verifier quotes, invented host-evidence IDs, parent-session result forgery, user-interrupt races, duplicate idle events, blocker repetition, fake progress, usage deduplication, persistence, compaction ownership, process restart recovery, and project-root path traversal.
 
-CI targets Windows and Ubuntu, Bun loading, the minimum declared OpenCode plugin peer, and `@opencode-ai/plugin@latest`.
+Real-host canaries exercise lifecycle, semantic verification, active steering, mutation/no-op progress, and persistent SQLite restart recovery on Windows and Ubuntu. CI also checks Bun loading, the minimum declared OpenCode plugin peer, and `@opencode-ai/plugin@latest`.
 
 ## Roadmap to stable
 
 1. ✅ Completion integrity and adversarial state-machine tests.
 2. ✅ Independent semantic verifier with fail-closed, host-corroborated evidence.
-3. Objective edit steering during active work and stronger diff/file progress fingerprints.
+3. ✅ Active objective steering plus hybrid diff/file content progress fingerprints.
 4. Full token/time/cost budget UX plus provider/usage-limit states.
-5. Real OpenCode process canaries on Windows/Linux with deterministic provider fixtures.
+5. ✅ Real OpenCode process canaries on Windows/Linux, including persistent restart recovery.
 6. Eval corpus comparing false-complete, stall, blocker, compaction, restart, and race scenarios.
-7. First npm beta after the real-host canary is green.
+7. First npm beta after the remaining beta UX/eval gates are green.
 
 ## License
 

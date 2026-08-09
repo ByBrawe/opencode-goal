@@ -36,6 +36,19 @@ function checkoutBlocks(text) {
   return blocks
 }
 
+function actionRefs(text) {
+  const refs = []
+  for (const match of text.matchAll(/^\s*-?\s*uses:\s*([^\s#]+)(?:\s+#.*)?$/gm)) refs.push(match[1])
+  return refs
+}
+
+function isImmutableActionRef(spec) {
+  if (spec.startsWith("./") || spec.startsWith("docker://")) return true
+  const split = spec.lastIndexOf("@")
+  if (split <= 0 || split === spec.length - 1) return false
+  return /^[0-9a-f]{40}$/i.test(spec.slice(split + 1))
+}
+
 async function main() {
   const names = (await fs.readdir(workflowsRoot)).filter((name) => /\.ya?ml$/i.test(name)).sort()
   if (!names.length) throw new Error("no GitHub Actions workflows found")
@@ -53,6 +66,10 @@ async function main() {
       if (pattern.test(text)) failures.push(`${name}: forbidden ${label}`)
     }
 
+    for (const spec of actionRefs(text)) {
+      if (!isImmutableActionRef(spec)) failures.push(`${name}: action must be pinned to a full 40-character commit SHA: ${spec}`)
+    }
+
     for (const block of checkoutBlocks(text)) {
       if (!/^\s*persist-credentials:\s*false\s*$/m.test(block)) {
         failures.push(`${name}: every actions/checkout step must set persist-credentials: false`)
@@ -68,7 +85,7 @@ async function main() {
   }
 
   console.log(`GitHub Actions security gate PASS (${names.length} workflow files)`)
-  console.log("Policy: read-only contents token, no persisted checkout credentials, no target/workflow-run privilege boundary, no workflow push/merge/API mutation commands.")
+  console.log("Policy: read-only contents token, immutable third-party action SHAs, no persisted checkout credentials, no target/workflow-run privilege boundary, no workflow push/merge/API mutation commands.")
 }
 
 main().catch((error) => {

@@ -1,4 +1,4 @@
-import type CorePlugin from "./plugin.js"
+import CorePlugin from "./plugin.js"
 import type { GoalState } from "../domain/types.js"
 import { GoalStore } from "../persistence/store.js"
 

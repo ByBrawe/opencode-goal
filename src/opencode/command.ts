@@ -1,12 +1,12 @@
 import type { FileRequirementInput } from "../domain/types.js"
 
 export interface ParsedGoalCommand {
-  action: "create" | "status" | "pause" | "resume" | "clear" | "edit" | "budget" | "history"
+  action: "create" | "status" | "pause" | "resume" | "clear" | "edit" | "budget" | "history" | "restore"
   objective: string
   acceptance: string[]
   checks: string[]
   files: FileRequirementInput[]
-  historySelector?: string
+  goalIDPrefix?: string
   maxTurns?: number
   maxTokens?: number
   maxRuntimeMs?: number
@@ -41,17 +41,18 @@ export function parseGoalCommand(input: string): ParsedGoalCommand {
   if (["status", "pause", "resume", "clear"].includes(sub)) {
     return { action: sub as ParsedGoalCommand["action"], objective: "", acceptance: [], checks: [], files: [] }
   }
-  if (sub === "history") {
-    if (list.length > 2) throw new Error("/goal history accepts at most one goal id prefix")
-    const historySelector = list[1]?.trim()
-    if (historySelector?.startsWith("--")) throw new Error(`unknown goal option: ${historySelector}`)
+  if (sub === "history" || sub === "restore") {
+    const goalIDPrefix = list[1]?.trim()
+    if (sub === "history" && list.length > 2) throw new Error("/goal history accepts at most one goal id prefix")
+    if (sub === "restore" && list.length !== 2) throw new Error("/goal restore expects exactly one goal id prefix")
+    if (goalIDPrefix?.startsWith("--")) throw new Error(`unknown goal option: ${goalIDPrefix}`)
     return {
-      action: "history",
+      action: sub,
       objective: "",
       acceptance: [],
       checks: [],
       files: [],
-      ...(historySelector ? { historySelector } : {}),
+      ...(goalIDPrefix ? { goalIDPrefix } : {}),
     }
   }
 

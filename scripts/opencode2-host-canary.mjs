@@ -132,18 +132,20 @@ async function main() {
     health = output(healthResult)
     if (!health) throw new Error("OpenCode 2 health API returned no output")
 
-    // The V2 CLI accepts OpenAPI operation IDs and serializes declared
-    // parameters itself. This keeps the canary independent of the moving
-    // @opencode-ai/client@next package while still asking the real shared
-    // service for plugin state at the explicit project Location.
-    const location = JSON.stringify({ directory: project })
+    // The V2 CLI accepts OpenAPI operation IDs and builds object parameters
+    // from dotted --param keys. This avoids depending on the beta client npm
+    // package while still asking the real service for the explicit project
+    // Location rather than the CLI's default global location.
     const pluginResult = run("opencode2", [
       "api",
       "v2.plugin.list",
       "--param",
-      `location=${location}`,
+      `location.directory=${project}`,
     ], { cwd: project, env })
     const pluginResponse = parseJSONOutput(pluginResult, "v2.plugin.list")
+    if (pluginResponse?._tag) {
+      throw new Error(`v2.plugin.list rejected the project Location: ${JSON.stringify(pluginResponse)}`)
+    }
     const ids = pluginIDs(pluginResponse)
     if (!ids.includes(pluginID)) {
       throw new Error(`OpenCode 2 project Location did not activate ${pluginID}. Active IDs: ${JSON.stringify(ids)}\nRaw response: ${String(pluginResult.stdout ?? "")}`)

@@ -6,6 +6,7 @@
     "blocker",
     "compaction",
     "restart",
+    "restore",
     "provider-limit",
     "budget",
     "race"
@@ -59,6 +60,22 @@
       "testFile": "test/restart-recovery.test.mjs",
       "testName": "restart recovery preserves interrupted-turn accounting and prompt ownership",
       "expected": "Recovery waits for bootstrap, restores command ownership, and does not count the interrupted turn as stalled."
+    },
+    {
+      "id": "restore.paused-explicit-resume",
+      "category": "restore",
+      "weight": 3,
+      "testFile": "test/history.test.mjs",
+      "testName": "cleared unfinished goal restores paused and only resumes after explicit command",
+      "expected": "Restore preserves the archived Goal but returns it paused; work resumes only after an explicit /goal resume command."
+    },
+    {
+      "id": "restore.live-goal-overwrite-refused",
+      "category": "restore",
+      "weight": 3,
+      "testFile": "test/history.test.mjs",
+      "testName": "restore cannot overwrite a different unfinished live goal",
+      "expected": "Restore fails closed while another unfinished Goal is live and does not change that live Goal."
     },
     {
       "id": "provider-limit.explicit-quota-vs-transient-retry",

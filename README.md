@@ -124,7 +124,7 @@ Real-host canaries exercise lifecycle, semantic verification, active steering, m
 
 ## Eval corpus
 
-The adversarial regression suite is also exposed as a machine-readable evaluation corpus. The initial required categories are **false-complete, stall, blocker, compaction, restart, provider-limit, budget, and race**.
+The adversarial regression suite is also exposed as a machine-readable evaluation corpus. The required categories are **false-complete, stall, blocker, compaction, restart, restore, provider-limit, budget, and race**.
 
 Run the full corpus:
 
@@ -136,12 +136,12 @@ Write a JSON report or focus one category:
 
 ```text
 npm run eval -- --json eval-report.json
-npm run eval -- --category false-complete
+npm run eval -- --category restore
 ```
 
 Each corpus case points at an exact underlying regression test and declares its expected safety outcome. The runner anchors the exact test name and requires exactly one passing target, so renamed or deleted tests cannot silently score as green. It reports per-case results, per-category scores, and a weighted overall score. CI runs the corpus on both Ubuntu and Windows and uploads the JSON reports as workflow artifacts.
 
-The beta gate currently requires every listed case and every required category to pass. The first verified corpus contains nine adversarial cases across all eight categories and scored **100% (24/24 weighted)** on Ubuntu; both platforms remain part of the merge gate for corpus changes.
+The beta gate requires every listed case and every required category to pass. The current corpus contains eleven adversarial cases across nine required categories and requires **100% (30/30 weighted)** on every CI platform.
 
 ## Roadmap to stable
 
@@ -150,7 +150,7 @@ The beta gate currently requires every listed case and every required category t
 3. ✅ Active objective steering plus hybrid diff/file content progress fingerprints.
 4. ✅ Token/time/cost budget UX plus host-backed provider usage-limit states.
 5. ✅ Real OpenCode process canaries on Windows/Linux, including persistent restart recovery.
-6. ✅ Machine-readable adversarial eval corpus covering false-complete, stall, blocker, compaction, restart, provider-limit, budget, and race scenarios.
+6. ✅ Machine-readable adversarial eval corpus covering false-complete, stall, blocker, compaction, restart, restore, provider-limit, budget, and race scenarios.
 7. ✅ Durable per-session archive/history for replaced and cleared Goals.
 8. ✅ Safe paused restore for unfinished archived Goals.
 9. First npm beta after the remaining development and release gates are complete.

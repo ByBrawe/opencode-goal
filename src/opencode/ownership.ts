@@ -14,6 +14,11 @@ interface ActiveTurn {
   owner: GoalTurnOwner
 }
 
+export interface ToolCallOwner {
+  messageID: string
+  owner: GoalTurnOwner
+}
+
 function sameOwner(left: GoalTurnOwner | undefined, right: GoalTurnOwner | undefined): boolean {
   return Boolean(left && right && left.goalID === right.goalID && left.revision === right.revision)
 }
@@ -24,6 +29,8 @@ export class TurnOwnership {
   #assistantOwners = new Map<string, GoalTurnOwner>()
   #assistantOrder: string[] = []
   #activeBySession = new Map<string, ActiveTurn>()
+  #toolOwners = new Map<string, ToolCallOwner>()
+  #toolOrder: string[] = []
 
   rememberPrompt(sessionID: string, text: string, owner?: GoalTurnOwner) {
     const now = Date.now()
@@ -75,6 +82,40 @@ export class TurnOwnership {
     }
     if (parentID && info?.time?.completed) this.#userOwners.delete(parentID)
     return owner
+  }
+
+  observeToolPart(sessionID: string, part: any): ToolCallOwner | undefined {
+    const callID = typeof part?.callID === "string" ? part.callID : ""
+    const messageID = typeof part?.messageID === "string" ? part.messageID : ""
+    if (!callID || !messageID) return undefined
+    const owner = this.#assistantOwners.get(messageID)
+    if (!owner) return undefined
+    return this.#rememberTool(sessionID, callID, { messageID, owner })
+  }
+
+  rememberActiveTool(sessionID: string, callID: string): ToolCallOwner | undefined {
+    if (!callID) return undefined
+    const active = this.#activeBySession.get(sessionID)
+    if (!active) return undefined
+    return this.#rememberTool(sessionID, callID, { messageID: active.messageID, owner: active.owner })
+  }
+
+  #rememberTool(sessionID: string, callID: string, value: ToolCallOwner): ToolCallOwner {
+    const key = `${sessionID}\u0000${callID}`
+    if (!this.#toolOwners.has(key)) this.#toolOrder.push(key)
+    this.#toolOwners.set(key, value)
+    while (this.#toolOrder.length > 512) {
+      const stale = this.#toolOrder.shift()
+      if (stale) this.#toolOwners.delete(stale)
+    }
+    return value
+  }
+
+  consumeToolCall(sessionID: string, callID: string): ToolCallOwner | undefined {
+    const key = `${sessionID}\u0000${callID}`
+    const value = this.#toolOwners.get(key)
+    this.#toolOwners.delete(key)
+    return value
   }
 
   assistantOwner(messageID: string | undefined): GoalTurnOwner | undefined {

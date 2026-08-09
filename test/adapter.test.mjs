@@ -173,7 +173,7 @@ test("duplicate idle while prompt is pending does not dispatch concurrently", as
   }
 })
 
-test("only revision-owned PatchPart changes count as host progress", async () => {
+test("revision-owned PatchPart remains a fallback host-progress signal", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-patch-"))
   try {
     const fake = fakeClient()
@@ -182,7 +182,7 @@ test("only revision-owned PatchPart changes count as host progress", async () =>
     await bindGoalTurn(hooks, output)
 
     const before = await readOnlyGoal(root)
-    assert.equal(hooks["tool.execute.after"], undefined, "mutating tool completion alone must not count as progress")
+    assert.equal(typeof hooks["tool.execute.after"], "function", "owned file mutations may also produce content-hash progress")
 
     await emitPatch(hooks)
     const changed = await readOnlyGoal(root)

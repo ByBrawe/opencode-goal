@@ -5,6 +5,7 @@ import { GoalStore } from "../persistence/store.js"
 import { accountAssistantUsage } from "../runtime/accounting.js"
 import { reportBlocker } from "../runtime/blocker.js"
 import { runConfiguredChecks } from "../runtime/checks.js"
+import { collectMutationFingerprints } from "../runtime/mutation-progress.js"
 import { addProgressNote, closeObservedTurn, markHostProgress } from "../runtime/progress.js"
 import { completeGoal } from "../verification/audit.js"
 import { verifyDeclaredFiles } from "../verification/contracts.js"
@@ -13,6 +14,8 @@ import { parseGoalCommand } from "./command.js"
 import { TurnOwnership, goalTurnOwner, sameGoalTurn } from "./ownership.js"
 import { compactionContext, continuationPrompt } from "./prompt.js"
 import { createSemanticVerifierRuntime } from "./verifier.js"
+
+const FILE_MUTATION_TOOLS = new Set(["write", "edit", "apply_patch"])
 
 function replaceParts(parts: any[], text: string) {
   parts.splice(0, parts.length, { type: "text", text })
@@ -58,6 +61,8 @@ export default async function OpenCodeGoalPlugin(input: any) {
   const steeringIdleSuppressions = new Map<string, number>()
   const sessionLocks = new Map<string, Promise<unknown>>()
   const sessionContexts = new Map<string, GoalExecutionContext>()
+  const toolProgressMessages = new Set<string>()
+  const toolProgressOrder: string[] = []
 
   function serialize<T>(sessionID: string, fn: () => Promise<T>): Promise<T> {
     const previous = sessionLocks.get(sessionID) ?? Promise.resolve()
@@ -68,6 +73,16 @@ export default async function OpenCodeGoalPlugin(input: any) {
 
   async function load(sessionID: string) { return await store.load(sessionID) }
   async function save(goal: GoalState) { await store.save(goal); return goal }
+
+  function rememberToolProgress(messageID: string) {
+    if (toolProgressMessages.has(messageID)) return
+    toolProgressMessages.add(messageID)
+    toolProgressOrder.push(messageID)
+    while (toolProgressOrder.length > 256) {
+      const stale = toolProgressOrder.shift()
+      if (stale) toolProgressMessages.delete(stale)
+    }
+  }
 
   function suppressNextSteeringIdle(sessionID: string) {
     steeringIdleSuppressions.set(sessionID, Date.now() + 5_000)
@@ -255,6 +270,40 @@ export default async function OpenCodeGoalPlugin(input: any) {
       if (ownership.activeOwner(event.sessionID) || dispatching.has(event.sessionID)) await abortGoalTurn(event.sessionID, false)
     },
 
+    "tool.execute.before": async (event: any) => {
+      if (!FILE_MUTATION_TOOLS.has(event.tool)) return
+      ownership.rememberActiveTool(event.sessionID, event.callID)
+    },
+
+    "tool.execute.after": async (event: any, output: any) => {
+      if (!FILE_MUTATION_TOOLS.has(event.tool)) return
+      const call = ownership.consumeToolCall(event.sessionID, event.callID)
+      if (!call) return
+      const fingerprints = await collectMutationFingerprints({
+        root: directory,
+        tool: event.tool,
+        args: event.args,
+        metadata: output?.metadata,
+      })
+      if (fingerprints.length === 0) return
+      await serialize(event.sessionID, async () => {
+        let goal = await load(event.sessionID)
+        if (!goal || goal.status !== "active" || !sameGoalTurn(call.owner, goalTurnOwner(goal))) return
+        const before = goal.progressRevision
+        for (const item of fingerprints) {
+          goal = markHostProgress(goal, {
+            fingerprint: item.fingerprint,
+            source: `tool:${event.tool}`,
+            summary: item.summary,
+          })
+        }
+        if (goal.progressRevision !== before) {
+          rememberToolProgress(call.messageID)
+          await save(goal)
+        }
+      })
+    },
+
     "experimental.session.compacting": async (event: any, output: any) => {
       const goal = await load(event.sessionID)
       if (goal) output.context.push(compactionContext(goal))
@@ -293,7 +342,12 @@ export default async function OpenCodeGoalPlugin(input: any) {
       }
       if (type === "message.part.updated") {
         const part = properties.part
+        if (part?.type === "tool") {
+          ownership.observeToolPart(sessionID, part)
+          return
+        }
         if (part?.type !== "patch" || typeof part.hash !== "string" || !part.hash) return
+        if (toolProgressMessages.has(part.messageID)) return
         const owner = ownership.assistantOwner(part.messageID)
         if (!owner) return
         await serialize(sessionID, async () => {

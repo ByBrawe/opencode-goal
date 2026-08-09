@@ -21,6 +21,39 @@ test("goal state round-trips through project-local atomic store", async () => {
   }
 })
 
+test("replaced and cleared goals are archived without polluting live recovery state", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-history-store-"))
+  try {
+    const store = new GoalStore(root)
+    const first = createGoal({ sessionID: "session-a", objective: "first goal", now: 100 })
+    const completed = { ...first, status: "completed", completionSummary: "done", updatedAt: 200 }
+    await store.save(completed)
+
+    const second = createGoal({ sessionID: "session-a", objective: "second goal", now: 300 })
+    await store.save(second)
+
+    let history = await store.history("session-a")
+    assert.equal(history.length, 1)
+    assert.equal(history[0].reason, "replaced")
+    assert.deepEqual(history[0].goal, completed)
+    assert.deepEqual(await store.list(), [second], "archive files must not be treated as startup-live goals")
+
+    await store.clear("session-a")
+    assert.equal(await store.load("session-a"), null)
+    assert.deepEqual(await store.list(), [])
+
+    history = await store.history("session-a")
+    assert.equal(history.length, 2)
+    assert.equal(history[0].goal.id, second.id)
+    assert.equal(history[0].reason, "cleared")
+    assert.equal(history[1].goal.id, first.id)
+    assert.equal(history[1].reason, "replaced")
+    assert.match(store.archiveFileFor("session-a", first.id), /\.opencode[\\/]goals[\\/]history/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test("host file evidence uses predeclared contract and can prove it", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-file-"))
   try {

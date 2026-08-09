@@ -95,6 +95,22 @@
       "expected": "Malformed archive JSON blocks history mutation and restore rather than being skipped, rewritten, or deleted."
     },
     {
+      "id": "storage-integrity.doctor-readonly-under-future-schema",
+      "category": "storage-integrity",
+      "weight": 3,
+      "testFile": "test/doctor.test.mjs",
+      "testName": "goal doctor stays available for unsupported live storage and never rewrites it",
+      "expected": "The plugin still loads, doctor identifies the unsupported live state, and exact stored bytes remain unchanged."
+    },
+    {
+      "id": "storage-integrity.corrupt-shard-isolated-on-startup",
+      "category": "storage-integrity",
+      "weight": 3,
+      "testFile": "test/doctor.test.mjs",
+      "testName": "startup recovery scan isolates corrupt shards and keeps healthy active goals",
+      "expected": "A corrupt shard is skipped without mutation while healthy active Goals remain eligible for restart recovery."
+    },
+    {
       "id": "provider-limit.explicit-quota-vs-transient-retry",
       "category": "provider-limit",
       "weight": 3,

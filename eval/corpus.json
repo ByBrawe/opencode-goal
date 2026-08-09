@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 1,
+  "requiredCategories": [
+    "false-complete",
+    "stall",
+    "blocker",
+    "compaction",
+    "restart",
+    "provider-limit",
+    "budget",
+    "race"
+  ],
+  "minimumWeightedScore": 1,
+  "cases": [
+    {
+      "id": "completion.agent-claim-refused",
+      "category": "false-complete",
+      "weight": 3,
+      "testFile": "test/domain.test.mjs",
+      "testName": "agent completion claim cannot prove an unverified goal",
+      "expected": "Completion is refused and the goal remains active without trusted evidence."
+    },
+    {
+      "id": "completion.narrow-check-cannot-bypass-semantic-scope",
+      "category": "false-complete",
+      "weight": 3,
+      "testFile": "test/domain.test.mjs",
+      "testName": "one passing check cannot bypass another semantic acceptance requirement",
+      "expected": "A passing mechanical check cannot complete a goal with an unproven semantic requirement."
+    },
+    {
+      "id": "stall.agent-notes-do-not-reset-guard",
+      "category": "stall",
+      "weight": 2,
+      "testFile": "test/domain.test.mjs",
+      "testName": "progress notes do not count as host-observed progress",
+      "expected": "Three narration-only continuation turns pause the goal with stalledTurns=3."
+    },
+    {
+      "id": "blocker.requires-distinct-turns",
+      "category": "blocker",
+      "weight": 2,
+      "testFile": "test/domain.test.mjs",
+      "testName": "blocker requires three distinct turns",
+      "expected": "Repeating a blocker inside one turn does not inflate the counter; the third distinct turn blocks."
+    },
+    {
+      "id": "compaction.goal-owns-context-and-autocontinue",
+      "category": "compaction",
+      "weight": 2,
+      "testFile": "test/adapter.test.mjs",
+      "testName": "active goal owns compaction context and generic auto-continue",
+      "expected": "Persistent goal state is injected into compaction and generic post-compaction auto-continue is disabled."
+    },
+    {
+      "id": "restart.interrupted-turn-accounting-preserved",
+      "category": "restart",
+      "weight": 3,
+      "testFile": "test/restart-recovery.test.mjs",
+      "testName": "restart recovery preserves interrupted-turn accounting and prompt ownership",
+      "expected": "Recovery waits for bootstrap, restores command ownership, and does not count the interrupted turn as stalled."
+    },
+    {
+      "id": "provider-limit.explicit-quota-vs-transient-retry",
+      "category": "provider-limit",
+      "weight": 3,
+      "testFile": "test/budget-adapter.test.mjs",
+      "testName": "explicit OpenCode usage limit stops automatic goal retry while generic retry remains active",
+      "expected": "Explicit account quota becomes usage_limited and aborts retry; generic transient retry stays active."
+    },
+    {
+      "id": "budget.resume-bypass-refused",
+      "category": "budget",
+      "weight": 3,
+      "testFile": "test/budget-adapter.test.mjs",
+      "testName": "budget-limited goal cannot resume until its budget is raised",
+      "expected": "An exhausted local budget cannot be bypassed by resume; raising the limit preserves usage and revision."
+    },
+    {
+      "id": "race.edit-wins-over-stale-turn",
+      "category": "race",
+      "weight": 3,
+      "testFile": "test/adapter.test.mjs",
+      "testName": "goal edit aborts the old turn, suppresses abort-idle, and rejects stale revision activity",
+      "expected": "User edit wins the race; stale revision patches/progress cannot mutate the revised goal."
+    }
+  ]
+}

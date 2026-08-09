@@ -112,6 +112,27 @@ The suite is adversarial by default. It covers false-complete attempts, stale ev
 
 Real-host canaries exercise lifecycle, semantic verification, active steering, mutation/no-op progress, and persistent SQLite restart recovery on Windows and Ubuntu. CI also checks Bun loading, the minimum declared OpenCode plugin peer, and `@opencode-ai/plugin@latest`.
 
+## Eval corpus
+
+The adversarial regression suite is also exposed as a machine-readable evaluation corpus. The initial required categories are **false-complete, stall, blocker, compaction, restart, provider-limit, budget, and race**.
+
+Run the full corpus:
+
+```text
+npm run eval
+```
+
+Write a JSON report or focus one category:
+
+```text
+npm run eval -- --json eval-report.json
+npm run eval -- --category false-complete
+```
+
+Each corpus case points at an exact underlying regression test and declares its expected safety outcome. The runner anchors the exact test name and requires exactly one passing target, so renamed or deleted tests cannot silently score as green. It reports per-case results, per-category scores, and a weighted overall score. CI runs the corpus on both Ubuntu and Windows and uploads the JSON reports as workflow artifacts.
+
+The beta gate currently requires every listed case and every required category to pass. The first verified corpus contains nine adversarial cases across all eight categories and scored **100% (24/24 weighted)** on Ubuntu; both platforms remain part of the merge gate for corpus changes.
+
 ## Roadmap to stable
 
 1. ✅ Completion integrity and adversarial state-machine tests.
@@ -119,8 +140,8 @@ Real-host canaries exercise lifecycle, semantic verification, active steering, m
 3. ✅ Active objective steering plus hybrid diff/file content progress fingerprints.
 4. ✅ Token/time/cost budget UX plus host-backed provider usage-limit states.
 5. ✅ Real OpenCode process canaries on Windows/Linux, including persistent restart recovery.
-6. Eval corpus comparing false-complete, stall, blocker, compaction, restart, provider-limit, budget, and race scenarios.
-7. First npm beta after the remaining eval/release gates are green.
+6. ✅ Machine-readable adversarial eval corpus covering false-complete, stall, blocker, compaction, restart, provider-limit, budget, and race scenarios.
+7. First npm beta after the remaining release gates are green.
 
 ## License
 

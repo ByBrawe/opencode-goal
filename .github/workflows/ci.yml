@@ -24,6 +24,15 @@ jobs:
       - run: npm install
       - run: npm run check
       - run: npm test
+      - name: Run adversarial eval corpus
+        run: npm run eval -- --json eval-report.json
+      - name: Upload eval report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-corpus-${{ matrix.os }}
+          path: eval-report.json
+          if-no-files-found: error
       - run: bun -e "await import('./dist/index.js')"
       - run: npm run pack:check
 

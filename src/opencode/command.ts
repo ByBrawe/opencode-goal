@@ -1,9 +1,10 @@
 import type { FileRequirementInput } from "../domain/types.js"
 
 export interface ParsedGoalCommand {
-  action: "create" | "status" | "pause" | "resume" | "clear" | "edit" | "budget" | "history" | "history_prune" | "restore" | "doctor"
+  action: "create" | "status" | "contract" | "pause" | "resume" | "clear" | "edit" | "budget" | "history" | "history_prune" | "restore" | "doctor"
   objective: string
   acceptance: string[]
+  constraints: string[]
   checks: string[]
   files: FileRequirementInput[]
   goalIDPrefix?: string
@@ -19,6 +20,10 @@ function tokens(input: string): string[] {
   const re = /"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'|(\S+)/g
   for (const match of input.matchAll(re)) result.push((match[1] ?? match[2] ?? match[3] ?? "").replace(/\\(["'\\])/g, "$1"))
   return result
+}
+
+function empty(action: ParsedGoalCommand["action"]): ParsedGoalCommand {
+  return { action, objective: "", acceptance: [], constraints: [], checks: [], files: [] }
 }
 
 function parseContainsContract(value: string): FileRequirementInput {
@@ -49,10 +54,14 @@ export function parseGoalCommand(input: string): ParsedGoalCommand {
   const sub = (list[0] ?? "").toLowerCase()
   if (sub === "doctor") {
     if (list.length !== 1) throw new Error("/goal doctor does not accept arguments")
-    return { action: "doctor", objective: "", acceptance: [], checks: [], files: [] }
+    return empty("doctor")
+  }
+  if (sub === "contract") {
+    if (list.length !== 1) throw new Error("/goal contract does not accept arguments")
+    return empty("contract")
   }
   if (["status", "pause", "resume", "clear"].includes(sub)) {
-    return { action: sub as ParsedGoalCommand["action"], objective: "", acceptance: [], checks: [], files: [] }
+    return empty(sub as ParsedGoalCommand["action"])
   }
   if (sub === "history") {
     if ((list[1] ?? "").toLowerCase() === "prune") {
@@ -60,11 +69,7 @@ export function parseGoalCommand(input: string): ParsedGoalCommand {
         throw new Error("/goal history prune expects --keep <positive-integer>")
       }
       return {
-        action: "history_prune",
-        objective: "",
-        acceptance: [],
-        checks: [],
-        files: [],
+        ...empty("history_prune"),
         historyKeep: parseHistoryKeep(list[3]),
       }
     }
@@ -72,11 +77,7 @@ export function parseGoalCommand(input: string): ParsedGoalCommand {
     if (list.length > 2) throw new Error("/goal history accepts at most one goal id prefix")
     if (goalIDPrefix?.startsWith("--")) throw new Error(`unknown goal option: ${goalIDPrefix}`)
     return {
-      action: "history",
-      objective: "",
-      acceptance: [],
-      checks: [],
-      files: [],
+      ...empty("history"),
       ...(goalIDPrefix ? { goalIDPrefix } : {}),
     }
   }
@@ -85,11 +86,7 @@ export function parseGoalCommand(input: string): ParsedGoalCommand {
     if (list.length !== 2) throw new Error("/goal restore expects exactly one goal id prefix")
     if (goalIDPrefix?.startsWith("--")) throw new Error(`unknown goal option: ${goalIDPrefix}`)
     return {
-      action: "restore",
-      objective: "",
-      acceptance: [],
-      checks: [],
-      files: [],
+      ...empty("restore"),
       ...(goalIDPrefix ? { goalIDPrefix } : {}),
     }
   }
@@ -101,6 +98,7 @@ export function parseGoalCommand(input: string): ParsedGoalCommand {
   }
 
   const acceptance: string[] = []
+  const constraints: string[] = []
   const checks: string[] = []
   const files: FileRequirementInput[] = []
   const objective: string[] = []
@@ -112,7 +110,8 @@ export function parseGoalCommand(input: string): ParsedGoalCommand {
   for (let i = 0; i < list.length; i += 1) {
     const current = list[i]!
     const next = list[i + 1]
-    if ((current === "--accept" || current === "--acceptance") && next) { acceptance.push(next); i += 1; continue }
+    if ((current === "--accept" || current === "--acceptance" || current === "--success") && next) { acceptance.push(next); i += 1; continue }
+    if (["--constraint", "--constraints", "--non-goal", "--non-goals"].includes(current) && next) { constraints.push(next); i += 1; continue }
     if (current === "--check" && next) { checks.push(next); i += 1; continue }
     if (current === "--file" && next) { files.push({ file: next }); i += 1; continue }
     if (current === "--contains" && next) { files.push(parseContainsContract(next)); i += 1; continue }
@@ -124,11 +123,11 @@ export function parseGoalCommand(input: string): ParsedGoalCommand {
     objective.push(current)
   }
 
-  if (action === "budget" && (objective.length || acceptance.length || checks.length || files.length)) {
+  if (action === "budget" && (objective.length || acceptance.length || constraints.length || checks.length || files.length)) {
     throw new Error("/goal budget accepts only --max-turns, --max-tokens, --max-minutes, and --max-cost")
   }
 
-  const parsed: ParsedGoalCommand = { action, objective: objective.join(" ").trim(), acceptance, checks, files }
+  const parsed: ParsedGoalCommand = { action, objective: objective.join(" ").trim(), acceptance, constraints, checks, files }
   if (maxTurns !== undefined) parsed.maxTurns = maxTurns
   if (maxTokens !== undefined) parsed.maxTokens = maxTokens
   if (maxRuntimeMs !== undefined) parsed.maxRuntimeMs = maxRuntimeMs

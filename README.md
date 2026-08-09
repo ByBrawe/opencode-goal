@@ -235,15 +235,17 @@ The stable `1.0.x` line claims compatibility for the current exported V1 plugin 
 
 The repository also contains an **experimental**, opt-in OpenCode 2 adapter at `src/opencode2/experimental.ts`. OpenCode 2's plugin API is still treated as a moving boundary, so this adapter is deliberately isolated from the stable default export and is **not yet a public npm package subpath**.
 
-The experimental adapter already exercises the newer command/tool/session shape while reusing the same schema-v1 `GoalStore` and domain state:
+The adapter follows the current V2 command/tool/session-request model while reusing the same schema-v1 `GoalStore` and domain state:
 
 - V2-style command registration for `/goal $ARGUMENTS`;
-- host-owned direct Goal control/read tools;
-- session `location.directory` resolution before any Goal storage access;
+- direct Goal read tooling plus a mutating control tool that is removed from ordinary model requests;
+- each real `/goal` command request receives an in-process capability marker, and the mutating control accepts only that request's **exact raw arguments exactly once**;
+- changed, replayed, or model-initiated control calls fail before Goal storage is read or mutated;
+- session `location.directory` is resolved before control/read storage access instead of falling back to the process working directory;
 - persistent create/edit/status/contract/pause/resume/clear;
 - success criteria, constraints, checks, file contracts, and creation-time budgets;
-- Plan create/resume/context enforcement;
-- persisted Goal context injection.
+- Plan create/resume/request enforcement;
+- persisted Goal state injection through the V2 `session.hook("request")` boundary.
 
 It intentionally **does not claim parity** for independent semantic completion, autonomous idle continuation, delegated-task coordination, process-restart recovery, budget mutation, history/restore/prune, or doctor. Parity-sensitive controls that are not implemented refuse explicitly without mutating the live Goal.
 
@@ -285,7 +287,7 @@ npm run eval -- --category delegation
 npm run eval -- --category opencode2-experimental
 ```
 
-The repository gate requires every composed case and every required category to pass. With the first experimental V2 boundary suite, the composed corpus contains **34 adversarial cases across 15 required categories and requires 100% (99/99 weighted)** on every CI platform. The published `1.0.0` stable release itself was graduated on the preceding 30-case stable corpus; experimental V2 cases are repository-head hardening and do not broaden the `1.0.0` compatibility claim.
+The repository gate requires every composed case and every required category to pass. With the request-scoped experimental V2 boundary suite, the composed corpus contains **35 adversarial cases across 15 required categories and requires 100% (102/102 weighted)** on every CI platform. The published `1.0.0` stable release itself was graduated on the preceding 30-case stable corpus; experimental V2 cases are repository-head hardening and do not broaden the `1.0.0` compatibility claim.
 
 ## Release quality gates
 

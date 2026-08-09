@@ -4,7 +4,7 @@
 
 OpenCode Goals keeps working toward an explicit outcome across turns, compaction, delegated work, and process restarts — but completion is controlled by host evidence and an independent verifier, not by the executor saying “done”.
 
-> **Stable release line: `1.0.0`.** Public commands, persisted schema-v1 compatibility, and the verification/safety invariants documented below are now treated as stable interfaces. Breaking changes require a new major version.
+> **Stable release line: `1.1.0`.** Public commands, persisted schema-v1 compatibility, and the verification/safety invariants documented below are stable interfaces. Breaking changes require a new major version.
 
 ## Install
 
@@ -97,6 +97,8 @@ Completion is an audit pipeline:
 7. The Goal becomes `completed` only when every required ledger item is proven for the current revision and no current verification is failing.
 
 If independent verification is incomplete, ambiguous, unavailable, or races with a user pause/edit, completion **fails closed**.
+
+Continuation also treats verification scope as part of correctness: a narrow green test or search result only proves the requirement it actually covers. Before completion, the executor is instructed to audit the full objective and every required criterion/constraint against current worktree/external state. Missing, stale, indirect, or merely plausible evidence remains unproven.
 
 ## Goal audit
 
@@ -272,9 +274,11 @@ Doctor can report corrupt/unsupported/unsafe storage even when normal Goal loadi
 
 Authoritative Goal state lives in the plugin/session layer rather than a visual widget. Lifecycle commands, Goal Contracts, Goal audits, the project-wide Goal index, verification, history, restore, Plan enforcement, and delegated-task coordination therefore do not depend on one particular UI client.
 
+Normal OpenCode work remains a separate work plane. The active agent can use shell/terminal commands, read/edit/write files, delegate tasks, build, and run tests while the same persisted Goal stays intact. Those actions may change the worktree and may create host-observed progress or verification evidence, but they do not silently replace the Goal objective, constraints, revision, or lifecycle state. Goal lifecycle changes come from explicit Goal controls, host-owned completion/blocker/limit transitions, or real user intervention.
+
 When a compatible OpenCode TUI is attached, explicit lifecycle actions and delegated-task waiting may emit best-effort **OpenCode Goals** toasts. Toast delivery is presentation only; a missing/disconnected TUI cannot fail Goal persistence, execution policy, project indexing, audit inspection, or verification.
 
-The stable `1.0.x` line claims compatibility for the current exported V1 plugin adapter and the documented package interface.
+The stable `1.x` line claims compatibility for the current exported V1 plugin adapter and documented package interface.
 
 ## Experimental OpenCode 2 adapter
 
@@ -294,7 +298,7 @@ The adapter follows the current V2 command/tool/session-request model while reus
 
 It intentionally **does not claim parity** for independent semantic completion, autonomous idle continuation, delegated-task coordination, process-restart recovery, budget mutation, history/restore/prune, or doctor. Parity-sensitive controls that are not implemented refuse explicitly without mutating the live Goal.
 
-This separation is a safety feature: the stable V1 adapter remains the supported `1.0.x` runtime while the V2 adapter must earn each capability through its own adversarial and real-host gates before any stable export/compatibility claim is made.
+This separation is a safety feature: the stable V1 adapter remains the supported `1.x` runtime while the V2 adapter must earn each capability through its own adversarial and real-host gates before any stable export/compatibility claim is made.
 
 ## Eval corpus
 
@@ -336,7 +340,7 @@ npm run eval -- --category delegation
 npm run eval -- --category opencode2-experimental
 ```
 
-The repository gate requires every composed case and every required category to pass. With the read-only audit, project-index, and experimental V2 boundary suites, the composed corpus contains **39 adversarial cases across 17 required categories and requires 100% (114/114 weighted)** on every CI platform. The published `1.0.0` stable release itself was graduated on the preceding 30-case stable corpus; later repository-head cases harden new compatible features without retroactively broadening the original release evidence.
+The repository gate requires every composed case and every required category to pass. With the read-only audit, project-index, and experimental V2 boundary suites, the composed corpus contains **39 adversarial cases across 17 required categories and requires 100% (114/114 weighted)** on every CI platform. The original `1.0.0` stable release was graduated on the preceding 30-case stable corpus; later compatible releases retain those invariants while adding focused hardening coverage.
 
 ## Release quality gates
 

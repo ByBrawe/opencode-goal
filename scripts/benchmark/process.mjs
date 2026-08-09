@@ -48,6 +48,27 @@ export function redactText(value, redactions) {
   return result
 }
 
+export function redactValue(value, redactions) {
+  if (typeof value === "string") return redactText(value, redactions)
+  if (Array.isArray(value)) return value.map((item) => redactValue(item, redactions))
+  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, redactValue(child, redactions)]))
+  return value
+}
+
+export function collectReportRedactions(manifest) {
+  const all = []
+  const seen = new Set()
+  for (const competitor of manifest.competitors ?? [{ env: {} }]) {
+    const source = { ...process.env, ...(manifest.env ?? {}), ...(competitor.env ?? {}) }
+    for (const item of collectRedactions(manifest, competitor, source)) {
+      if (seen.has(item.value)) continue
+      seen.add(item.value)
+      all.push(item)
+    }
+  }
+  return all.sort((a, b) => b.value.length - a.value.length)
+}
+
 function appendTail(current, chunk) {
   const next = `${current}${chunk}`
   return next.length > OUTPUT_TAIL_LIMIT ? next.slice(-OUTPUT_TAIL_LIMIT) : next

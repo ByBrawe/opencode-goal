@@ -50,6 +50,8 @@ export function validateManifest(manifest) {
   if (manifest.timeoutMs !== undefined) assert(Number.isInteger(manifest.timeoutMs) && manifest.timeoutMs > 0, "manifest.timeoutMs must be a positive integer")
   validateEnvNames(manifest.passEnv, "manifest.passEnv")
   validateEnvNames(manifest.redactEnv, "manifest.redactEnv")
+  validateEnvNames(manifest.requiredEnv, "manifest.requiredEnv")
+  for (const name of manifest.requiredEnv ?? []) assert((manifest.passEnv ?? []).includes(name), `manifest.requiredEnv ${name} must also appear in manifest.passEnv so child runs can receive it`)
   validateMetadata(manifest.metadata)
 
   const competitorIds = new Set()
@@ -83,6 +85,7 @@ export function validateManifest(manifest) {
     assert(Number.isFinite(scenario.weight) && scenario.weight > 0, `scenario ${scenario.id}.weight must be > 0`)
     validateCommand(scenario.oracle?.command, `scenario ${scenario.id}.oracle.command`)
     validateOptionalSetup(scenario.setup, `scenario ${scenario.id}.setup`)
+    if (scenario.preflightOracle !== undefined) assert(["pass", "fail", "skip"].includes(scenario.preflightOracle), `scenario ${scenario.id}.preflightOracle must be pass, fail, or skip`)
     if (scenario.timeoutMs !== undefined) assert(Number.isInteger(scenario.timeoutMs) && scenario.timeoutMs > 0, `scenario ${scenario.id}.timeoutMs must be a positive integer`)
   }
   return manifest

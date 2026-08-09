@@ -5,6 +5,8 @@ import process from "node:process"
 import { DEFAULT_REPEATS, expandRuns, validateManifest } from "./manifest.mjs"
 import { renderMarkdown, summarize } from "./report.mjs"
 import { executeRun } from "./workspace.mjs"
+import { collectReportRedactions, redactValue } from "./process.mjs"
+import { renderPreflightMarkdown, runPreflight } from "./preflight.mjs"
 
 function assert(condition, message) {
   if (!condition) throw new Error(message)
@@ -15,7 +17,7 @@ function assertString(value, label) {
 }
 
 function parseArgs(argv) {
-  const options = { manifest: "benchmarks/competitive.example.json", outDir: "benchmark-results", dryRun: false, keepWorkspaces: false, competitor: null, scenario: null }
+  const options = { manifest: "benchmarks/competitive.example.json", outDir: "benchmark-results", dryRun: false, preflight: false, keepWorkspaces: false, competitor: null, scenario: null }
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]
     if (arg === "--manifest") options.manifest = argv[++i]
@@ -27,11 +29,13 @@ function parseArgs(argv) {
     else if (arg === "--scenario") options.scenario = argv[++i]
     else if (arg.startsWith("--scenario=")) options.scenario = arg.slice(11)
     else if (arg === "--dry-run") options.dryRun = true
+    else if (arg === "--preflight") options.preflight = true
     else if (arg === "--keep-workspaces") options.keepWorkspaces = true
     else throw new Error(`unknown benchmark option: ${arg}`)
   }
   assertString(options.manifest, "--manifest")
   assertString(options.outDir, "--out")
+  assert(!(options.preflight && options.dryRun), "--preflight and --dry-run are mutually exclusive")
   return options
 }
 
@@ -48,6 +52,17 @@ export async function main(argv = process.argv.slice(2), root = process.cwd()) {
 
   console.log(`Competitive benchmark: ${runs.length} run(s)`)
   console.log(`Manifest: ${path.relative(root, manifestPath)}`)
+  if (options.preflight) {
+    const preflight = await runPreflight(root, manifest, { competitorId: options.competitor, scenarioId: options.scenario })
+    const outDir = path.resolve(root, options.outDir)
+    await mkdir(outDir, { recursive: true })
+    await writeFile(path.join(outDir, "preflight.json"), `${JSON.stringify(preflight, null, 2)}\n`)
+    await writeFile(path.join(outDir, "preflight.md"), renderPreflightMarkdown(preflight))
+    console.log(`Preflight: ${preflight.ok ? "PASS" : "FAIL"}`)
+    console.log(`Report: ${path.relative(root, outDir).replaceAll(path.sep, "/")}/preflight.{json,md}`)
+    if (!preflight.ok) process.exitCode = 1
+    return preflight
+  }
   if (options.dryRun) {
     for (const run of runs) console.log(`${run.competitor.id} :: ${run.scenario.id} :: run ${run.repeat}`)
     return
@@ -61,12 +76,13 @@ export async function main(argv = process.argv.slice(2), root = process.cwd()) {
     console.log(result.passed ? "PASS" : "FAIL")
   }
 
+  const reportRedactions = collectReportRedactions(manifest)
   const report = {
     schemaVersion: 1,
     generatedAt: new Date().toISOString(),
     manifest: path.relative(root, manifestPath).replaceAll(path.sep, "/"),
     manifestDigest,
-    metadata: manifest.metadata ?? {},
+    metadata: redactValue(manifest.metadata ?? {}, reportRedactions),
     node: process.version,
     platform: process.platform,
     arch: process.arch,

@@ -15,7 +15,15 @@ The competitive benchmark is a developer-only CLI harness. It is deliberately se
 
 ## Usage
 
-Start from `benchmarks/competitive.example.json`, replace the placeholder competitor package/command, then inspect the run matrix without spending model quota:
+Start from `benchmarks/competitive.example.json`, replace every `PIN_...` / competitor placeholder with exact values, then run the no-model preflight first:
+
+```text
+node scripts/competitive-benchmark.mjs --manifest benchmarks/competitive.json --preflight --out benchmark-results
+```
+
+Preflight fails before model spend when required provider environment is missing, a command executable cannot be resolved, an npm plugin is not pinned to an exact semver, reproducibility metadata still contains placeholders, a fixture cannot be hashed, or a declared baseline oracle starts in the wrong state. It writes `preflight.json` and `preflight.md`.
+
+Then inspect the run matrix without spending model quota:
 
 ```text
 node scripts/competitive-benchmark.mjs --manifest benchmarks/competitive.json --dry-run
@@ -58,7 +66,7 @@ For stable OpenCode plugins this lets the manifest pin an npm plugin without rea
 {
   "opencodeConfig": {
     "$schema": "https://opencode.ai/config.json",
-    "plugin": ["@bybrawe/opencode-goal@1.0.0"]
+    "plugin": ["@bybrawe/opencode-goal@1.1.0"]
   }
 }
 ```
@@ -71,7 +79,9 @@ OpenCode resolves npm plugins from config at startup. Use exact versions for rea
 
 The harness supports per-scenario weights. A competitor's headline score is the weighted fraction of oracle-passing runs, while the report also includes raw pass rate and category-level weighted scores. Optional top-level `metadata` is copied into the report for non-secret reproducibility fields such as exact OpenCode version, model, and provider; secret-looking metadata keys are rejected.
 
-`passEnv` is an allowlist. Add only provider/model variables that the selected OpenCode setup actually needs. Do not pass GitHub/npm credentials to third-party competitor runs. `passEnv` values are automatically redacted from reports; use `redactEnv` for additional names that must never be persisted in benchmark output.
+`passEnv` is an allowlist. Add only provider/model variables that the selected OpenCode setup actually needs. `requiredEnv` is a separate preflight requirement list; use it for keys that must be present before a run can start. Do not pass GitHub/npm credentials to third-party competitor runs. `passEnv` values are automatically redacted from reports; use `redactEnv` for additional names that must never be persisted in benchmark output.
+
+A scenario may set `preflightOracle` to `"fail"`, `"pass"`, or `"skip"`. The committed adversarial fixtures use `"fail"`: if an oracle is already green before the agent touches the workspace, that benchmark case is invalid and preflight blocks the run.
 
 ## Included deterministic fixtures
 

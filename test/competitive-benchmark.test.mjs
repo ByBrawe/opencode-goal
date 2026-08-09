@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import { digestFixtureTree, expandRuns, materializeCommand, redactText, renderMarkdown, runCommand, summarize, validateManifest } from "../scripts/competitive-benchmark.mjs"
+import { collectReportRedactions, digestFixtureTree, expandRuns, materializeCommand, redactText, redactValue, renderMarkdown, runCommand, summarize, validateManifest } from "../scripts/competitive-benchmark.mjs"
 
 const manifest = {
   schemaVersion: 1,
@@ -102,6 +102,23 @@ test("competitive benchmark fixture digest is deterministic and changes with con
     assert.notEqual(await digestFixtureTree(dir), first)
   } finally {
     await rm(dir, { recursive: true, force: true })
+  }
+})
+
+
+test("benchmark report metadata redacts passed credential values even under non-secret field names", () => {
+  const name = "OPENCODE_GOAL_BENCHMARK_METADATA_SECRET"
+  const previous = process.env[name]
+  process.env[name] = "metadata-secret-value"
+  try {
+    const local = { ...manifest, passEnv: [name] }
+    const redactions = collectReportRedactions(local)
+    const metadata = redactValue({ note: `model key metadata-secret-value should not persist`, nested: ["metadata-secret-value"] }, redactions)
+    assert.doesNotMatch(JSON.stringify(metadata), /metadata-secret-value/)
+    assert.match(metadata.note, /REDACTED/)
+  } finally {
+    if (previous === undefined) delete process.env[name]
+    else process.env[name] = previous
   }
 })
 

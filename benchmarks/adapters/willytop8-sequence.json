@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "commandName": "goal",
+  "source": {
+    "package": "opencode-goal-plugin",
+    "version": "0.6.5",
+    "repository": "willytop8/OpenCode-goal-plugin",
+    "ref": "v0.6.5"
+  },
+  "actions": {
+    "start_sequence": "sequence {first}; {second}"
+  }
+}

@@ -11,18 +11,19 @@ export function addProgressNote(goal: GoalState, input: { summary: string; next?
 
 export function closeObservedTurn(goal: GoalState, input: { maxStalledTurns?: number; now?: number } = {}): GoalState {
   const now = input.now ?? Date.now()
-  if (goal.pendingContinuation) {
+  if (goal.pendingContinuation && goal.usage.turns === 0) {
     const { pendingContinuation: _pendingContinuation, ...rest } = goal
     return { ...rest, observedProgressRevision: goal.progressRevision, updatedAt: now }
   }
+  const { pendingContinuation: _pendingContinuation, ...settled } = goal
   const limit = Math.max(1, input.maxStalledTurns ?? 3)
-  const madeProgress = goal.progressRevision > goal.observedProgressRevision
-  const stalledTurns = madeProgress ? 0 : goal.stalledTurns + 1
-  const paused = stalledTurns >= limit && goal.status === "active"
+  const madeProgress = settled.progressRevision > settled.observedProgressRevision
+  const stalledTurns = madeProgress ? 0 : settled.stalledTurns + 1
+  const paused = stalledTurns >= limit && settled.status === "active"
   return {
-    ...goal,
+    ...settled,
     stalledTurns,
-    observedProgressRevision: goal.progressRevision,
+    observedProgressRevision: settled.progressRevision,
     ...(paused ? { status: "paused" as const, stopReason: `Paused after ${stalledTurns} continuation turns without host-observed progress.` } : {}),
     updatedAt: now,
   }

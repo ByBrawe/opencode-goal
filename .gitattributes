@@ -1,0 +1,2 @@
+# Reproducible benchmark fixtures must have identical bytes on every host.
+benchmarks/** text eol=lf

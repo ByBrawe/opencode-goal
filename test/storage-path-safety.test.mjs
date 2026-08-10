@@ -66,3 +66,24 @@ test("archive history refuses symlink or junction escape before read or prune", 
     await rm(external, { recursive: true, force: true })
   }
 })
+
+test("process lease storage refuses symlink or junction escape before lock creation", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-lock-link-"))
+  const external = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-lock-external-"))
+  try {
+    const sessionID = "unsafe-lock-session"
+    const store = new GoalStore(root)
+    await mkdir(path.join(root, ".opencode"), { recursive: true })
+    await writeFile(path.join(external, "sentinel.txt"), "do-not-touch\n", "utf8")
+    await symlink(external, store.locksRoot, directoryLinkType)
+
+    const goal = createGoal({ sessionID, objective: "never write through an unsafe lease root" })
+    await assert.rejects(() => store.save(goal), isUnsafePath)
+    assert.deepEqual(await readdir(external), ["sentinel.txt"], "unsafe lease storage must not create lock files outside the project")
+    assert.equal(await store.load(sessionID), null, "failed lease acquisition must not write live Goal state")
+    assert.equal(await readFile(path.join(external, "sentinel.txt"), "utf8"), "do-not-touch\n")
+  } finally {
+    await rm(root, { recursive: true, force: true })
+    await rm(external, { recursive: true, force: true })
+  }
+})

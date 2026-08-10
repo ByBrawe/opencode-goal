@@ -3,9 +3,9 @@ import process from "node:process"
 import { pathToFileURL } from "node:url"
 import { main } from "./benchmark/cli.mjs"
 
-export { expandRuns, materializeCommand, validateManifest } from "./benchmark/manifest.mjs"
+export { expandRuns, materializeCommand, scenarioSteps, validateManifest } from "./benchmark/manifest.mjs"
 export { collectReportRedactions, redactText, redactValue, runCommand } from "./benchmark/process.mjs"
-export { digestFixtureTree } from "./benchmark/workspace.mjs"
+export { digestFixtureTree, executeRun } from "./benchmark/workspace.mjs"
 export { renderMarkdown, summarize } from "./benchmark/report.mjs"
 export { renderPreflightMarkdown, runPreflight } from "./benchmark/preflight.mjs"
 

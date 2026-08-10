@@ -1,0 +1,127 @@
+{
+  "schemaVersion": 1,
+  "repeats": 5,
+  "timeoutMs": 600000,
+  "metadata": {
+    "purpose": "cross-plugin ordered-sequence comparison",
+    "opencodeVersion": "1.17.15",
+    "model": "PIN_EXACT_PROVIDER_MODEL",
+    "provider": "PIN_PROVIDER_NAME",
+    "note": "One canonical start_sequence action, one fixture, one external final oracle. Unsupported sequence capability remains a scored failure instead of being removed from the matrix."
+  },
+  "passEnv": [
+    "OPENAI_API_KEY"
+  ],
+  "requiredEnv": [
+    "OPENAI_API_KEY"
+  ],
+  "competitors": [
+    {
+      "id": "opencode-goals-1.2.0",
+      "label": "OpenCode Goals 1.2.0",
+      "opencodeConfig": {
+        "$schema": "https://opencode.ai/config.json",
+        "plugin": [
+          "@bybrawe/opencode-goal@1.2.0"
+        ]
+      },
+      "setup": {
+        "command": [
+          "node",
+          "{root}/scripts/benchmark/assert-command-version.mjs",
+          "opencode",
+          "1.17.15",
+          "--version"
+        ],
+        "timeoutMs": 30000
+      },
+      "command": [
+        "node",
+        "{root}/scripts/benchmark/semantic-action-adapter-cli.mjs",
+        "{root}/benchmarks/adapters/opencode-goals-sequence.json",
+        "{prompt}"
+      ]
+    },
+    {
+      "id": "willytop8-0.6.5",
+      "label": "opencode-goal-plugin 0.6.5",
+      "opencodeConfig": {
+        "$schema": "https://opencode.ai/config.json",
+        "plugin": [
+          "opencode-goal-plugin@0.6.5"
+        ],
+        "command": {
+          "goal": {
+            "description": "Set a session-scoped goal and auto-continue until complete.",
+            "template": "$ARGUMENTS",
+            "agent": "build"
+          }
+        }
+      },
+      "setup": {
+        "command": [
+          "node",
+          "{root}/scripts/benchmark/assert-command-version.mjs",
+          "opencode",
+          "1.17.15",
+          "--version"
+        ],
+        "timeoutMs": 30000
+      },
+      "command": [
+        "node",
+        "{root}/scripts/benchmark/semantic-action-adapter-cli.mjs",
+        "{root}/benchmarks/adapters/willytop8-sequence.json",
+        "{prompt}"
+      ]
+    },
+    {
+      "id": "prevalentware-0.4.10",
+      "label": "@prevalentware/opencode-goal-plugin 0.4.10",
+      "opencodeConfig": {
+        "$schema": "https://opencode.ai/config.json",
+        "plugin": [
+          "@prevalentware/opencode-goal-plugin@0.4.10"
+        ]
+      },
+      "setup": {
+        "command": [
+          "node",
+          "{root}/scripts/benchmark/assert-command-version.mjs",
+          "opencode",
+          "1.17.15",
+          "--version"
+        ],
+        "timeoutMs": 30000
+      },
+      "command": [
+        "node",
+        "{root}/scripts/benchmark/semantic-action-adapter-cli.mjs",
+        "{root}/benchmarks/adapters/prevalentware-sequence.json",
+        "{prompt}"
+      ]
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "ordered-sequence-two-objectives",
+      "category": "workflow",
+      "weight": 5,
+      "workspace": "benchmarks/fixtures/ordered-sequence",
+      "steps": [
+        {
+          "id": "start-sequence",
+          "prompt": "{\"action\":\"start_sequence\",\"first\":\"create order.log containing exactly one line first and nothing else\",\"second\":\"append exactly one new line second after first in order.log without changing the first line or adding other content\"}"
+        }
+      ],
+      "oracle": {
+        "command": [
+          "node",
+          "{root}/benchmarks/oracles/ordered-sequence.mjs",
+          "{workspace}"
+        ]
+      },
+      "preflightOracle": "fail"
+    }
+  ]
+}

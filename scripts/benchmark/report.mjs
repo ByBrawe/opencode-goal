@@ -46,6 +46,19 @@ function failedStepOracle(failure) {
   return failure.stepOracles?.find((item) => item.id === failure.stepFailure.id && item.index === failure.stepFailure.index) ?? null
 }
 
+function capabilityUnsupported(failure) {
+  const agents = [
+    ...(failure.agentSteps ?? []).map((item) => item.agent),
+    failure.agent,
+  ].filter(Boolean)
+  for (const agent of agents) {
+    const text = `${agent.stderr ?? ""}\n${agent.stdout ?? ""}`
+    const match = text.match(/BENCHMARK_CAPABILITY_UNSUPPORTED:\s*([^\r\n]+)/i)
+    if (match) return match[1].trim()
+  }
+  return null
+}
+
 function failureReason(failure) {
   if (failure.infrastructureFailure) {
     const stepAgent = failure.agentSteps?.find((item) => item.agent?.spawnError)
@@ -55,6 +68,8 @@ function failureReason(failure) {
     if (stepOracle?.oracle?.timedOut) return `step ${stepOracle.id} oracle timeout`
     return "infrastructure failure"
   }
+  const unsupported = capabilityUnsupported(failure)
+  if (unsupported) return `capability unsupported: ${unsupported}`
   if (failure.stepFailure) {
     return `step ${failure.stepFailure.id} oracle expected ${String(failure.stepFailure.expected).toUpperCase()} but got ${String(failure.stepFailure.actual ?? "unavailable").toUpperCase()}`
   }
@@ -91,6 +106,6 @@ export function renderMarkdown(report) {
       lines.push(`- \`${failure.scenario}\` run ${failure.repeat}: ${failureReason(failure)}; agent exit ${failedAgent?.exitCode ?? "n/a"}${failedAgent?.timedOut ? " (timeout)" : ""}${oracleDetail ? ` — ${oracleDetail.replace(/\s+/g, " ").slice(-500)}` : ""}`)
     }
   }
-  lines.push("", "## Interpretation", "", "A run passes only when every declared intermediate step oracle matches its expected state and the final scenario oracle exits 0. Agent narration and agent process exit codes do not prove task success. Stateful step failures stop later agent steps so a later action cannot hide an earlier ordering/safety violation. Secret values selected by `passEnv`/`redactEnv` are removed from stored command/output tails.", "")
+  lines.push("", "## Interpretation", "", "A run passes only when every declared intermediate step oracle matches its expected state and the final scenario oracle exits 0. Agent narration and agent process exit codes do not prove task success. Stateful step failures stop later agent steps so a later action cannot hide an earlier ordering/safety violation. Explicit capability gaps remain scored failures and are reported as unsupported rather than silently removed from the matrix. Secret values selected by `passEnv`/`redactEnv` are removed from stored command/output tails.", "")
   return `${lines.join("\n")}\n`
 }

@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "commandName": "goal",
+  "source": {
+    "package": "@prevalentware/opencode-goal-plugin",
+    "version": "0.4.10",
+    "repository": "prevalentWare/opencode-goal-plugin",
+    "syntaxAuditRef": "9d25eda0f67a088fca5d564d0cc1f80542ae56e2"
+  },
+  "actions": {
+    "start_sequence": {
+      "unsupported": "The audited public command surface exposes one current Goal workflow and no ordered-sequence command; the benchmark does not invent substitute semantics."
+    }
+  }
+}

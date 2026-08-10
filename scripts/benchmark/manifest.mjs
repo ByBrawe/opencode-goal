@@ -15,6 +15,10 @@ function validateCommand(command, label) {
   command.forEach((part, index) => assertString(part, `${label}[${index}]`))
 }
 
+function validateTimeout(value, label) {
+  if (value !== undefined) assert(Number.isInteger(value) && value > 0, `${label} must be a positive integer`)
+}
+
 function validateEnvNames(value, label) {
   if (value === undefined) return
   assert(Array.isArray(value), `${label} must be an array`)
@@ -39,7 +43,38 @@ function validateOptionalSetup(setup, label) {
   if (setup === undefined) return
   assert(setup && typeof setup === "object" && !Array.isArray(setup), `${label} must be an object`)
   validateCommand(setup.command, `${label}.command`)
-  if (setup.timeoutMs !== undefined) assert(Number.isInteger(setup.timeoutMs) && setup.timeoutMs > 0, `${label}.timeoutMs must be a positive integer`)
+  validateTimeout(setup.timeoutMs, `${label}.timeoutMs`)
+}
+
+function validateStepOracle(oracle, label) {
+  if (oracle === undefined) return
+  assert(oracle && typeof oracle === "object" && !Array.isArray(oracle), `${label} must be an object`)
+  validateCommand(oracle.command, `${label}.command`)
+  if (oracle.expect !== undefined) assert(["pass", "fail"].includes(oracle.expect), `${label}.expect must be pass or fail`)
+  validateTimeout(oracle.timeoutMs, `${label}.timeoutMs`)
+}
+
+function validateScenarioSteps(scenario) {
+  const hasPrompt = scenario.prompt !== undefined
+  const hasSteps = scenario.steps !== undefined
+  assert(hasPrompt !== hasSteps, `scenario ${scenario.id} must define exactly one of prompt or steps`)
+  if (hasPrompt) {
+    assertString(scenario.prompt, `scenario ${scenario.id}.prompt`)
+    return
+  }
+
+  assert(Array.isArray(scenario.steps) && scenario.steps.length > 0, `scenario ${scenario.id}.steps must be a non-empty array`)
+  const ids = new Set()
+  for (const [index, step] of scenario.steps.entries()) {
+    const label = `scenario ${scenario.id}.steps[${index}]`
+    assert(step && typeof step === "object" && !Array.isArray(step), `${label} must be an object`)
+    assertString(step.id, `${label}.id`)
+    assert(!ids.has(step.id), `duplicate step id in scenario ${scenario.id}: ${step.id}`)
+    ids.add(step.id)
+    assertString(step.prompt, `${label}.prompt`)
+    validateTimeout(step.timeoutMs, `${label}.timeoutMs`)
+    validateStepOracle(step.oracle, `${label}.oracle`)
+  }
 }
 
 export function validateManifest(manifest) {
@@ -47,7 +82,7 @@ export function validateManifest(manifest) {
   assert(Array.isArray(manifest.competitors) && manifest.competitors.length > 0, "manifest.competitors must be non-empty")
   assert(Array.isArray(manifest.scenarios) && manifest.scenarios.length > 0, "manifest.scenarios must be non-empty")
   if (manifest.repeats !== undefined) assert(Number.isInteger(manifest.repeats) && manifest.repeats > 0, "manifest.repeats must be a positive integer")
-  if (manifest.timeoutMs !== undefined) assert(Number.isInteger(manifest.timeoutMs) && manifest.timeoutMs > 0, "manifest.timeoutMs must be a positive integer")
+  validateTimeout(manifest.timeoutMs, "manifest.timeoutMs")
   validateEnvNames(manifest.passEnv, "manifest.passEnv")
   validateEnvNames(manifest.redactEnv, "manifest.redactEnv")
   validateEnvNames(manifest.requiredEnv, "manifest.requiredEnv")
@@ -81,12 +116,13 @@ export function validateManifest(manifest) {
     scenarioIds.add(scenario.id)
     assertString(scenario.category, `scenario ${scenario.id}.category`)
     assertString(scenario.workspace, `scenario ${scenario.id}.workspace`)
-    assertString(scenario.prompt, `scenario ${scenario.id}.prompt`)
+    validateScenarioSteps(scenario)
     assert(Number.isFinite(scenario.weight) && scenario.weight > 0, `scenario ${scenario.id}.weight must be > 0`)
     validateCommand(scenario.oracle?.command, `scenario ${scenario.id}.oracle.command`)
+    validateTimeout(scenario.oracle?.timeoutMs, `scenario ${scenario.id}.oracle.timeoutMs`)
     validateOptionalSetup(scenario.setup, `scenario ${scenario.id}.setup`)
     if (scenario.preflightOracle !== undefined) assert(["pass", "fail", "skip"].includes(scenario.preflightOracle), `scenario ${scenario.id}.preflightOracle must be pass, fail, or skip`)
-    if (scenario.timeoutMs !== undefined) assert(Number.isInteger(scenario.timeoutMs) && scenario.timeoutMs > 0, `scenario ${scenario.id}.timeoutMs must be a positive integer`)
+    validateTimeout(scenario.timeoutMs, `scenario ${scenario.id}.timeoutMs`)
   }
   return manifest
 }
@@ -102,8 +138,12 @@ export function expandRuns(manifest) {
   return runs
 }
 
+export function scenarioSteps(scenario) {
+  return scenario.steps ?? [{ id: "agent", prompt: scenario.prompt }]
+}
+
 function replaceTemplate(value, variables) {
-  return value.replace(/\{(root|workspace|home|prompt|competitor|scenario|run)\}/g, (_, key) => variables[key])
+  return value.replace(/\{(root|workspace|home|prompt|competitor|scenario|run|step)\}/g, (_, key) => variables[key] ?? "")
 }
 
 export function materializeCommand(command, variables) {

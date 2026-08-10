@@ -1,0 +1,87 @@
+{
+  "schemaVersion": 1,
+  "repeats": 3,
+  "timeoutMs": 600000,
+  "metadata": {
+    "purpose": "single-plugin ordered-sequence stateful pilot",
+    "opencodeGoalsVersion": "1.2.0",
+    "note": "This validates harness/session/oracle wiring for OpenCode Goals only. It is not cross-plugin competitive evidence."
+  },
+  "passEnv": [
+    "OPENAI_API_KEY"
+  ],
+  "requiredEnv": [
+    "OPENAI_API_KEY"
+  ],
+  "competitors": [
+    {
+      "id": "opencode-goals",
+      "label": "OpenCode Goals 1.2.0 pilot",
+      "opencodeConfig": {
+        "$schema": "https://opencode.ai/config.json",
+        "plugin": [
+          "@bybrawe/opencode-goal@1.2.0"
+        ]
+      },
+      "setup": {
+        "command": [
+          "opencode",
+          "--version"
+        ],
+        "timeoutMs": 30000
+      },
+      "command": [
+        "node",
+        "{root}/scripts/benchmark/opencode-stateful-run.mjs",
+        "goal",
+        "{prompt}"
+      ]
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "ordered-sequence",
+      "category": "workflow",
+      "weight": 5,
+      "workspace": "benchmarks/fixtures/ordered-sequence",
+      "steps": [
+        {
+          "id": "queue-first",
+          "prompt": "add create order.log containing exactly one line: first --success \"order.log contains exactly first followed by one newline and nothing else\" --contains \"order.log::first\"",
+          "oracle": {
+            "command": [
+              "node",
+              "{root}/benchmarks/oracles/ordered-sequence-inert.mjs",
+              "{workspace}"
+            ],
+            "expect": "pass"
+          }
+        },
+        {
+          "id": "queue-second",
+          "prompt": "add append exactly one new line second after first in order.log without changing the first line --success \"order.log contains exactly first then second, one per line, with no extra content\" --contains \"order.log::second\"",
+          "oracle": {
+            "command": [
+              "node",
+              "{root}/benchmarks/oracles/ordered-sequence-inert.mjs",
+              "{workspace}"
+            ],
+            "expect": "pass"
+          }
+        },
+        {
+          "id": "activate-first",
+          "prompt": "next"
+        }
+      ],
+      "oracle": {
+        "command": [
+          "node",
+          "{root}/benchmarks/oracles/ordered-sequence.mjs",
+          "{workspace}"
+        ]
+      },
+      "preflightOracle": "fail"
+    }
+  ]
+}

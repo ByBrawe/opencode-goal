@@ -2,7 +2,7 @@ import { createHash } from "node:crypto"
 import { cp, lstat, mkdir, mkdtemp, readFile, readdir, readlink, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import { DEFAULT_TIMEOUT_MS, materializeCommand } from "./manifest.mjs"
+import { DEFAULT_TIMEOUT_MS, materializeCommand, scenarioSteps } from "./manifest.mjs"
 import { collectRedactions, runCommand, safeChildEnv } from "./process.mjs"
 
 function assert(condition, message) {
@@ -65,12 +65,19 @@ function commandFailed(result) {
   return !result || result.exitCode !== 0 || result.timedOut || Boolean(result.spawnError)
 }
 
+function oracleActual(result) {
+  if (!result || result.spawnError || result.timedOut) return null
+  return result.exitCode === 0 ? "pass" : "fail"
+}
+
 export async function executeRun(root, manifest, spec, keepWorkspaces) {
   const { competitor, scenario, repeat } = spec
   const runKey = `${competitor.id}-${scenario.id}-${repeat}`.replace(/[^a-zA-Z0-9._-]+/g, "-")
   const { runRoot, workspace, home, fixtureDigest } = await prepareWorkspace(root, scenario, runKey)
-  const variables = { root, workspace, home, prompt: scenario.prompt, competitor: competitor.id, scenario: scenario.id, run: String(repeat) }
+  const steps = scenarioSteps(scenario)
+  const seedPrompt = steps[0]?.prompt ?? ""
   const timeoutMs = scenario.timeoutMs ?? manifest.timeoutMs ?? DEFAULT_TIMEOUT_MS
+  const baseVariables = { root, workspace, home, prompt: seedPrompt, competitor: competitor.id, scenario: scenario.id, run: String(repeat), step: "setup" }
   const env = safeChildEnv({
     home,
     passEnv: manifest.passEnv ?? [],
@@ -91,22 +98,60 @@ export async function executeRun(root, manifest, spec, keepWorkspaces) {
   let setup = null
   let agent = null
   let oracle = null
+  const agentSteps = []
+  const stepOracles = []
+  let stepFailure = null
   let infrastructureFailure = false
   try {
     if (competitor.setup?.command) {
-      competitorSetup = await runCommand(materializeCommand(competitor.setup.command, variables), runOptions(competitor.setup.timeoutMs ?? timeoutMs))
+      competitorSetup = await runCommand(materializeCommand(competitor.setup.command, baseVariables), runOptions(competitor.setup.timeoutMs ?? timeoutMs))
       if (commandFailed(competitorSetup)) infrastructureFailure = true
     }
     if (!infrastructureFailure && scenario.setup?.command) {
-      setup = await runCommand(materializeCommand(scenario.setup.command, variables), runOptions(scenario.setup.timeoutMs ?? timeoutMs))
+      setup = await runCommand(materializeCommand(scenario.setup.command, baseVariables), runOptions(scenario.setup.timeoutMs ?? timeoutMs))
       if (commandFailed(setup)) infrastructureFailure = true
     }
+
     if (!infrastructureFailure) {
-      agent = await runCommand(materializeCommand(competitor.command, variables), runOptions())
-      if (agent.spawnError) infrastructureFailure = true
+      for (const [index, step] of steps.entries()) {
+        const variables = { ...baseVariables, prompt: step.prompt, step: step.id }
+        const stepAgent = await runCommand(materializeCommand(competitor.command, variables), runOptions(step.timeoutMs ?? timeoutMs))
+        agent = stepAgent
+        agentSteps.push({ id: step.id, index, agent: stepAgent })
+        if (stepAgent.spawnError) {
+          infrastructureFailure = true
+          break
+        }
+
+        if (step.oracle) {
+          const stepOracle = await runCommand(
+            materializeCommand(step.oracle.command, variables),
+            runOptions(step.oracle.timeoutMs ?? step.timeoutMs ?? timeoutMs),
+          )
+          const expected = step.oracle.expect ?? "pass"
+          const actual = oracleActual(stepOracle)
+          const matched = actual !== null && actual === expected
+          stepOracles.push({ id: step.id, index, expected, actual, matched, oracle: stepOracle })
+          if (stepOracle.spawnError || stepOracle.timedOut) {
+            infrastructureFailure = true
+            break
+          }
+          if (!matched) {
+            stepFailure = { id: step.id, index, expected, actual }
+            break
+          }
+        }
+      }
     }
-    if (!infrastructureFailure) oracle = await runCommand(materializeCommand(scenario.oracle.command, variables), runOptions())
-    const passed = !infrastructureFailure && oracle?.exitCode === 0 && !oracle?.timedOut && !oracle?.spawnError
+
+    if (!infrastructureFailure) {
+      const finalVariables = { ...baseVariables, prompt: steps.at(-1)?.prompt ?? seedPrompt, step: "final" }
+      oracle = await runCommand(
+        materializeCommand(scenario.oracle.command, finalVariables),
+        runOptions(scenario.oracle.timeoutMs ?? timeoutMs),
+      )
+    }
+    const passed = !infrastructureFailure && !stepFailure && oracle?.exitCode === 0 && !oracle?.timedOut && !oracle?.spawnError
     return {
       competitor: competitor.id,
       competitorLabel: competitor.label ?? competitor.id,
@@ -121,6 +166,9 @@ export async function executeRun(root, manifest, spec, keepWorkspaces) {
       competitorSetup,
       setup,
       agent,
+      agentSteps,
+      stepOracles,
+      stepFailure,
       oracle,
     }
   } finally {

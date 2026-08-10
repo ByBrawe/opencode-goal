@@ -81,6 +81,14 @@
       "testFile": "test/storage-session-binding.test.mjs",
       "testName": "GoalStore rejects a live snapshot whose sessionID does not match its shard",
       "expected": "A live snapshot stored under another session's shard fails closed instead of being adopted or listed as trustworthy state."
+    },
+    {
+      "id": "storage-integrity.lock-root-path-escape",
+      "category": "storage-integrity",
+      "weight": 3,
+      "testFile": "test/storage-path-safety.test.mjs",
+      "testName": "process lease storage refuses symlink or junction escape before lock creation",
+      "expected": "Process-lease hardlink portability must not weaken path safety: a symlink/junction lock root is rejected before any external lock or live Goal write."
     }
   ]
 }

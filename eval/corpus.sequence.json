@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "requiredCategories": ["sequence", "tui"],
+  "cases": [
+    {
+      "id": "sequence.ordered-inert-contracts",
+      "category": "sequence",
+      "weight": 3,
+      "testFile": "test/sequence.test.mjs",
+      "testName": "ordered Goal queue persists multiple pending contracts without creating concurrent live Goals",
+      "expected": "Several future Goal contracts can be queued and reordered while exactly one live Goal remains authoritative and unchanged."
+    },
+    {
+      "id": "sequence.completed-idle-promotes-one",
+      "category": "sequence",
+      "weight": 3,
+      "testFile": "test/sequence.test.mjs",
+      "testName": "completed Goal promotes exactly one queued Goal at session idle with fresh proof state",
+      "expected": "Only a verified completed Goal may auto-advance at idle, and the promoted Goal starts with a fresh revision, usage/evidence state, and no false stalled turn."
+    },
+    {
+      "id": "sequence.unfinished-never-advances",
+      "category": "sequence",
+      "weight": 3,
+      "testFile": "test/sequence.test.mjs",
+      "testName": "unfinished live Goal never advances the ordered Goal sequence",
+      "expected": "An unfinished live Goal blocks queue promotion and leaves both the live Goal and queue head unchanged."
+    },
+    {
+      "id": "sequence.activation-crash-recovery",
+      "category": "sequence",
+      "weight": 3,
+      "testFile": "test/sequence.test.mjs",
+      "testName": "sequence activation marker recovers a crash after live promotion without duplicating the Goal",
+      "expected": "If the process crashes after writing the promoted live Goal but before popping the queue, recovery recognizes the reserved Goal ID and consumes the head exactly once."
+    },
+    {
+      "id": "sequence.cross-process-single-consumer",
+      "category": "sequence",
+      "weight": 3,
+      "testFile": "test/sequence.test.mjs",
+      "testName": "concurrent processes cannot consume more than one queued Goal",
+      "expected": "The existing process lease serializes competing promoters so exactly one process consumes the queue head and the next item remains pending."
+    },
+    {
+      "id": "sequence.restricted-context-no-autopromote",
+      "category": "sequence",
+      "weight": 3,
+      "testFile": "test/sequence.test.mjs",
+      "testName": "Plan or unknown execution context never auto-promotes a queued Goal",
+      "expected": "Automatic sequence progression requires a known non-Plan execution binding; restricted or unknown contexts remain inert until explicit user control."
+    },
+    {
+      "id": "tui.sidebar-readonly-fail-visible",
+      "category": "tui",
+      "weight": 3,
+      "testFile": "test/tui-sidebar.test.mjs",
+      "testName": "TUI Goal sidebar is read-only and fails visible on unsafe or corrupt storage",
+      "expected": "The sidebar projects persisted Goal/queue state without mutation and refuses to display data through unsafe storage paths."
+    },
+    {
+      "id": "storage-integrity.session-shard-binding",
+      "category": "storage-integrity",
+      "weight": 3,
+      "testFile": "test/storage-session-binding.test.mjs",
+      "testName": "GoalStore rejects a live snapshot whose sessionID does not match its shard",
+      "expected": "A live snapshot stored under another session's shard fails closed instead of being adopted or listed as trustworthy state."
+    }
+  ]
+}

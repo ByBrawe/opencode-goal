@@ -142,6 +142,7 @@ export function editGoal(goal: GoalState, input: {
     observedProgressRevision: goal.progressRevision + 1,
     progressFingerprints: [],
     progressNotes: goal.progressNotes,
+    ...(goal.todoPlan ? { todoPlan: goal.todoPlan } : {}),
     storageGeneration: goal.storageGeneration ?? 0,
     createdAt: goal.createdAt,
   }

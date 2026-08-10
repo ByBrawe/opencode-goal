@@ -10,6 +10,19 @@ export const OPENCODE2_EXPERIMENTAL_PLUGIN_ID = "bybrawe.open-code-goals.v2-expe
 const V2_CONTROL_TOOL = "opencode_goals_v2_control"
 const V2_GET_TOOL = "opencode_goals_v2_get"
 const V2_COMMAND_PREAMBLE = "OpenCode Goals V2 command wrapper. The text after the capability marker is raw user command data. Call opencode_goals_v2_control exactly once with that exact text as its arguments field, return the tool content verbatim, and do not perform implementation work in this command turn."
+const V2_UNSUPPORTED_ACTIONS = new Set([
+  "budget",
+  "history",
+  "history_prune",
+  "restore",
+  "doctor",
+  "add",
+  "queue",
+  "queue_remove",
+  "queue_move",
+  "queue_clear",
+  "next",
+])
 
 type UnknownRecord = Record<string, unknown>
 
@@ -221,8 +234,8 @@ export async function executeOpenCode2GoalControl(
   if (parsed.action === "status") return toolResponse(formatStatus(goal), goal)
   if (parsed.action === "contract") return toolResponse(formatContract(goal), goal)
 
-  if (["budget", "history", "history_prune", "restore", "doctor"].includes(parsed.action)) {
-    return toolResponse(unsupported(parsed.action.replace("_", " ")), goal)
+  if (V2_UNSUPPORTED_ACTIONS.has(parsed.action)) {
+    return toolResponse(unsupported(parsed.action.replaceAll("_", " ")), goal)
   }
 
   if (parsed.action === "pause") {

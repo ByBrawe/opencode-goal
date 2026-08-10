@@ -3,10 +3,10 @@ import assert from "node:assert/strict"
 import { mkdtemp, rm } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import { createGoal, editGoal, pauseGoal } from "../dist/domain/goal.js"
+import OpenCodeGoalPlugin from "../dist/index.js"
+import { createGoal } from "../dist/domain/goal.js"
 import { GoalStore } from "../dist/persistence/store.js"
 import { observeTodoPlan, todoPlanIsCurrent } from "../dist/runtime/todo-plan.js"
-import { installGoalTodoOrchestration } from "../dist/opencode/todo-orchestration.js"
 
 const initialTodos = [
   { id: "inspect", content: "Inspect the repository", status: "completed", priority: "high" },
@@ -20,6 +20,45 @@ const changedTodos = [
   { id: "verify", content: "Run acceptance tests", status: "in_progress", priority: "medium" },
 ]
 
+function fakeClient() {
+  return {
+    session: {
+      prompt() { return Promise.resolve({}) },
+      abort() { return Promise.resolve(true) },
+    },
+  }
+}
+
+async function runGoalCommand(hooks, sessionID, argumentsText) {
+  const output = { parts: [{ type: "text", text: "raw args" }] }
+  await hooks["command.execute.before"]({ command: "goal", sessionID, arguments: argumentsText }, output)
+  return output
+}
+
+async function bindCommandMessage(hooks, sessionID, messageID, output, agent = "build") {
+  await hooks["chat.message"](
+    { sessionID, messageID, agent },
+    { message: { id: messageID }, parts: output.parts },
+  )
+}
+
+async function activateAssistant(hooks, sessionID, userMessageID, assistantMessageID) {
+  await hooks.event({
+    event: {
+      type: "message.updated",
+      properties: {
+        info: {
+          id: assistantMessageID,
+          sessionID,
+          role: "assistant",
+          parentID: userMessageID,
+          time: { created: Date.now() },
+        },
+      },
+    },
+  })
+}
+
 async function todoCall(hooks, sessionID, callID, todos) {
   const event = { tool: "todowrite", sessionID, callID, args: { todos } }
   await hooks["tool.execute.before"](event)
@@ -30,18 +69,20 @@ test("native Todo writes bind to the active Goal revision without becoming progr
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-todo-bridge-"))
   try {
     const sessionID = "todo-bridge-session"
+    const hooks = await OpenCodeGoalPlugin({ client: fakeClient(), directory: root })
     const store = new GoalStore(root)
-    await store.save(createGoal({ sessionID, objective: "analyze this project and finish required gaps", now: 100 }))
 
-    const hooks = {
-      "tool.execute.before": async () => {},
-      "tool.execute.after": async () => {},
-    }
-    installGoalTodoOrchestration({ directory: root }, hooks)
+    const created = await runGoalCommand(hooks, sessionID, "analyze this project and finish required gaps")
+    await bindCommandMessage(hooks, sessionID, "goal-user-r1", created)
 
-    await todoCall(hooks, sessionID, "todo-1", initialTodos)
+    await todoCall(hooks, sessionID, "todo-unowned", initialTodos)
     let current = await store.load(sessionID)
     assert.ok(current)
+    assert.equal(current.todoPlan, undefined, "todowrite outside an owned assistant Goal turn must not bind planning telemetry")
+
+    await activateAssistant(hooks, sessionID, "goal-user-r1", "goal-assistant-r1")
+    await todoCall(hooks, sessionID, "todo-1", initialTodos)
+    current = await store.load(sessionID)
     assert.equal(todoPlanIsCurrent(current), true)
     assert.deepEqual(
       {
@@ -62,18 +103,16 @@ test("native Todo writes bind to the active Goal revision without becoming progr
 
     const staleEvent = { tool: "todowrite", sessionID, callID: "todo-stale-revision", args: { todos: changedTodos } }
     await hooks["tool.execute.before"](staleEvent)
-    current = await store.load(sessionID)
-    await store.save(editGoal(current, {
-      objective: "analyze this project and finish required gaps without changing the public API",
-      now: 300,
-    }))
+    const editedOutput = await runGoalCommand(hooks, sessionID, "edit analyze this project and finish required gaps without changing the public API")
     await hooks["tool.execute.after"](staleEvent, { metadata: { todos: changedTodos } })
 
     current = await store.load(sessionID)
     assert.equal(current.revision, 2)
-    assert.equal(current.todoPlan.goalRevision, 1, "an older todowrite call must not bind itself to a newer Goal revision")
+    assert.equal(current.todoPlan.goalRevision, 1, "an older assistant todowrite call must not bind itself to a newer Goal revision")
     assert.equal(todoPlanIsCurrent(current), false)
 
+    await bindCommandMessage(hooks, sessionID, "goal-user-r2", editedOutput)
+    await activateAssistant(hooks, sessionID, "goal-user-r2", "goal-assistant-r2")
     await todoCall(hooks, sessionID, "todo-current-r2", changedTodos)
     current = await store.load(sessionID)
     assert.equal(current.todoPlan.goalRevision, 2)
@@ -82,8 +121,7 @@ test("native Todo writes bind to the active Goal revision without becoming progr
 
     const pauseEvent = { tool: "todowrite", sessionID, callID: "todo-pause-race", args: { todos: initialTodos } }
     await hooks["tool.execute.before"](pauseEvent)
-    current = await store.load(sessionID)
-    await store.save(pauseGoal(current, "test pause", 400))
+    await runGoalCommand(hooks, sessionID, "pause")
     const generationAfterPause = (await store.load(sessionID)).storageGeneration
     await hooks["tool.execute.after"](pauseEvent, { metadata: { todos: initialTodos } })
 
@@ -107,22 +145,8 @@ test("restoring an archived Goal clears stale native Todo binding telemetry", as
     await store.clear(sessionID)
     assert.equal(await store.load(sessionID), null)
 
-    const hooks = {
-      "command.execute.before": async (event) => {
-        if (event.command !== "goal" || !String(event.arguments).startsWith("restore ")) return
-        const selector = String(event.arguments).slice("restore ".length).trim()
-        const result = await store.restore(event.sessionID, selector, 250)
-        assert.equal(result.ok, true)
-      },
-      "tool.execute.before": async () => {},
-      "tool.execute.after": async () => {},
-    }
-    installGoalTodoOrchestration({ directory: root }, hooks)
-
-    await hooks["command.execute.before"](
-      { command: "goal", sessionID, arguments: `restore ${goal.id.slice(0, 12)}` },
-      { parts: [] },
-    )
+    const hooks = await OpenCodeGoalPlugin({ client: fakeClient(), directory: root })
+    await runGoalCommand(hooks, sessionID, `restore ${goal.id.slice(0, 12)}`)
 
     const restored = await store.load(sessionID)
     assert.ok(restored)

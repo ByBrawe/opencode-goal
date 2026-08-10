@@ -25,6 +25,16 @@
           "@bybrawe/opencode-goal@1.2.0"
         ]
       },
+      "setup": {
+        "command": [
+          "node",
+          "{root}/scripts/benchmark/assert-command-version.mjs",
+          "opencode",
+          "1.17.15",
+          "--version"
+        ],
+        "timeoutMs": 30000
+      },
       "command": [
         "node",
         "{root}/scripts/benchmark/semantic-action-adapter-cli.mjs",
@@ -48,6 +58,16 @@
           }
         }
       },
+      "setup": {
+        "command": [
+          "node",
+          "{root}/scripts/benchmark/assert-command-version.mjs",
+          "opencode",
+          "1.17.15",
+          "--version"
+        ],
+        "timeoutMs": 30000
+      },
       "command": [
         "node",
         "{root}/scripts/benchmark/semantic-action-adapter-cli.mjs",
@@ -63,6 +83,16 @@
         "plugin": [
           "@prevalentware/opencode-goal-plugin@0.4.10"
         ]
+      },
+      "setup": {
+        "command": [
+          "node",
+          "{root}/scripts/benchmark/assert-command-version.mjs",
+          "opencode",
+          "1.17.15",
+          "--version"
+        ],
+        "timeoutMs": 30000
       },
       "command": [
         "node",

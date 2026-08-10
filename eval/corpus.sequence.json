@@ -89,6 +89,14 @@
       "testFile": "test/storage-path-safety.test.mjs",
       "testName": "process lease storage refuses symlink or junction escape before lock creation",
       "expected": "Process-lease hardlink portability must not weaken path safety: a symlink/junction lock root is rejected before any external lock or live Goal write."
+    },
+    {
+      "id": "opencode2.sequence-boundary-no-fallthrough",
+      "category": "opencode2-experimental",
+      "weight": 3,
+      "testFile": "test/opencode2-sequence-boundary.test.mjs",
+      "testName": "V2 sequence controls fail closed instead of creating or advancing stable V1 queue state",
+      "expected": "Stable V1 ordered-sequence controls remain unavailable in the experimental V2 adapter and never create or mutate live Goal state."
     }
   ]
 }

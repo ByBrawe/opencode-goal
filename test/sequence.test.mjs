@@ -43,8 +43,8 @@ async function markCompleted(store, sessionID, patch = {}) {
 
 function runWorker(root, sessionID) {
   return new Promise((resolve, reject) => {
-    const worker = path.resolve("scripts/sequence-race-worker.mjs")
-    const child = spawn(process.execPath, [worker, root, sessionID], {
+    const source = `import { GoalSequenceStore } from "./dist/persistence/sequence-store.js"; const [root, sessionID] = process.argv.slice(1); const result = await new GoalSequenceStore(root).promoteNext(sessionID); console.log(JSON.stringify(result.ok ? { ok: true, id: result.goal.id, recovered: result.recovered } : { ok: false, reason: result.reason, id: null }))`
+    const child = spawn(process.execPath, ["--input-type=module", "--eval", source, root, sessionID], {
       cwd: process.cwd(),
       stdio: ["ignore", "pipe", "pipe"],
     })

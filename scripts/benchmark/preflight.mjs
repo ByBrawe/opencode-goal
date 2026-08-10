@@ -152,6 +152,13 @@ export async function runPreflight(root, manifest, selection = {}) {
     await checkCommandExecutable(checks, `competitor:${competitor.id}:command`, competitor.command)
     await checkCommandExecutable(checks, `competitor:${competitor.id}:setup`, competitor.setup?.command)
 
+    const configPlaceholders = collectPlaceholderPaths(competitor.opencodeConfig ?? {}, `competitor:${competitor.id}:opencodeConfig`)
+    if (configPlaceholders.length) {
+      addCheck(checks, "error", `competitor:${competitor.id}:config-placeholders`, "OpenCode competitor config still contains placeholder values", configPlaceholders)
+    } else {
+      addCheck(checks, "pass", `competitor:${competitor.id}:config-placeholders`, "OpenCode competitor config contains no known placeholders")
+    }
+
     const plugins = competitor.opencodeConfig?.plugin
     if (plugins !== undefined && !Array.isArray(plugins)) {
       addCheck(checks, "error", `competitor:${competitor.id}:plugins`, "opencodeConfig.plugin must be an array for preflight pin checks")

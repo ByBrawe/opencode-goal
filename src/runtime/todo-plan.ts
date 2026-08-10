@@ -12,6 +12,26 @@ export interface NativeTodoItem {
 
 const TODO_STATUSES = new Set<NativeTodoStatus>(["pending", "in_progress", "completed", "cancelled"])
 
+function nonNegativeInteger(value: unknown): value is number {
+  return Number.isSafeInteger(value) && Number(value) >= 0
+}
+
+export function validGoalTodoPlan(value: unknown): value is GoalTodoPlan {
+  if (!value || typeof value !== "object") return false
+  const plan = value as Partial<GoalTodoPlan>
+  return nonNegativeInteger(plan.goalRevision)
+    && typeof plan.digest === "string"
+    && /^sha256:[0-9a-f]{64}$/i.test(plan.digest)
+    && nonNegativeInteger(plan.total)
+    && nonNegativeInteger(plan.pending)
+    && nonNegativeInteger(plan.inProgress)
+    && nonNegativeInteger(plan.completed)
+    && nonNegativeInteger(plan.cancelled)
+    && typeof plan.observedAt === "number"
+    && Number.isFinite(plan.observedAt)
+    && plan.total === plan.pending + plan.inProgress + plan.completed + plan.cancelled
+}
+
 export function normalizeNativeTodos(value: unknown): NativeTodoItem[] | null {
   if (!Array.isArray(value)) return null
   const result: NativeTodoItem[] = []
@@ -53,7 +73,7 @@ export function summarizeTodoPlan(goalRevision: number, todos: NativeTodoItem[],
 
 export function observeTodoPlan(goal: GoalState, todos: NativeTodoItem[], observedAt = Date.now()): GoalState {
   const next = summarizeTodoPlan(goal.revision, todos, observedAt)
-  const previous = goal.todoPlan
+  const previous = validGoalTodoPlan(goal.todoPlan) ? goal.todoPlan : undefined
   if (
     previous?.goalRevision === next.goalRevision
     && previous.digest === next.digest
@@ -72,12 +92,12 @@ export function observeTodoPlan(goal: GoalState, todos: NativeTodoItem[], observ
 }
 
 export function todoPlanIsCurrent(goal: GoalState): boolean {
-  return Boolean(goal.todoPlan && goal.todoPlan.goalRevision === goal.revision)
+  return validGoalTodoPlan(goal.todoPlan) && goal.todoPlan.goalRevision === goal.revision
 }
 
 export function formatTodoPlan(goal: GoalState): string {
-  const plan = goal.todoPlan
-  if (!plan) return "not observed"
+  const plan = validGoalTodoPlan(goal.todoPlan) ? goal.todoPlan : undefined
+  if (!plan) return goal.todoPlan === undefined ? "not observed" : "invalid advisory telemetry ignored"
   const freshness = plan.goalRevision === goal.revision ? `current r${plan.goalRevision}` : `STALE r${plan.goalRevision}`
   return `${freshness}; ${plan.total} total (${plan.pending} pending, ${plan.inProgress} in progress, ${plan.completed} completed, ${plan.cancelled} cancelled)`
 }

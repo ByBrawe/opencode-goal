@@ -2,6 +2,7 @@ import type CorePlugin from "./plugin.js"
 import type { EvidenceRecord, GoalRequirement, GoalState } from "../domain/types.js"
 import { GoalStore } from "../persistence/store.js"
 import { formatGoalBudget } from "../runtime/accounting.js"
+import { formatTodoPlan } from "../runtime/todo-plan.js"
 import { auditCompletion } from "../verification/audit.js"
 import { parseGoalCommand } from "./command.js"
 
@@ -73,7 +74,7 @@ export function formatGoalAudit(goal: GoalState | null): string {
     ? `\nBlocker: ${goal.blockerAudit.reason} | needed: ${goal.blockerAudit.needed} | consecutive turns: ${goal.blockerAudit.consecutiveTurns}`
     : ""
 
-  return `Goal Audit\nGoal ID: ${goal.id}\nSession: ${goal.sessionID}\nObjective: ${goal.objective}\nStatus: ${goal.status}\nRevision: ${goal.revision}\nStorage generation: ${goal.storageGeneration ?? 0}\nExecution: ${executionLine(goal)}\nBudget / usage: ${formatGoalBudget(goal)}\nProgress revisions: observed ${goal.observedProgressRevision} / claimed ${goal.progressRevision}\nStalled turns: ${goal.stalledTurns}${stop}${blocker}\n\n${gateSection(goal)}\n\nRequirement ledger:\n${requirements}\n\nEvidence records:\n${evidence}\n\nThis is a read-only snapshot. It does not run checks, invoke the verifier, or mutate Goal state.`
+  return `Goal Audit\nGoal ID: ${goal.id}\nSession: ${goal.sessionID}\nObjective: ${goal.objective}\nStatus: ${goal.status}\nRevision: ${goal.revision}\nStorage generation: ${goal.storageGeneration ?? 0}\nExecution: ${executionLine(goal)}\nBudget / usage: ${formatGoalBudget(goal)}\nProgress revisions: observed ${goal.observedProgressRevision} / claimed ${goal.progressRevision}\nNative Todo plan: ${formatTodoPlan(goal)} (advisory; never completion evidence)\nStalled turns: ${goal.stalledTurns}${stop}${blocker}\n\n${gateSection(goal)}\n\nRequirement ledger:\n${requirements}\n\nEvidence records:\n${evidence}\n\nThis is a read-only snapshot. It does not run checks, invoke the verifier, or mutate Goal state.`
 }
 
 export function installGoalAuditUX(input: PluginInput, hooks: PluginHooks): void {

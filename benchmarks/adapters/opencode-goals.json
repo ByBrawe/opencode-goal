@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "commandName": "goal",
+  "actions": {
+    "create": "{objective}",
+    "enqueue": "add {objective}",
+    "inspect_queue": "queue",
+    "advance": "next",
+    "pause": "pause",
+    "resume": "resume",
+    "clear_live": "clear",
+    "clear_queue": "queue clear"
+  }
+}

@@ -59,6 +59,14 @@
       "expected": "Automatic sequence progression requires a known non-Plan execution binding; restricted or unknown contexts remain inert until explicit user control."
     },
     {
+      "id": "sequence.doctor-diagnoses-queue",
+      "category": "sequence",
+      "weight": 3,
+      "testFile": "test/doctor.test.mjs",
+      "testName": "goal doctor reports corrupt queue storage without rewriting it",
+      "expected": "Read-only storage diagnostics report corrupt ordered-queue persistence and leave the exact queue bytes unchanged."
+    },
+    {
       "id": "tui.sidebar-readonly-fail-visible",
       "category": "tui",
       "weight": 3,

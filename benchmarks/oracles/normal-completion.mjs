@@ -4,8 +4,8 @@ const EXPECTED_TEST = `import test from "node:test"\nimport assert from "node:as
 
 try {
   const workspace = requireWorkspace()
-  await assertExactFile(workspace, "test/math.test.mjs", EXPECTED_TEST)
-  runNodeTests(workspace, "test/math.test.mjs")
+  await assertExactFile(workspace, "test/math.visible.mjs", EXPECTED_TEST)
+  runNodeTests(workspace, "test/math.visible.mjs")
   pass("visible tests pass and the test contract is unchanged")
 } catch (error) {
   fail(error)

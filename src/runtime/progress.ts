@@ -11,6 +11,10 @@ export function addProgressNote(goal: GoalState, input: { summary: string; next?
 
 export function closeObservedTurn(goal: GoalState, input: { maxStalledTurns?: number; now?: number } = {}): GoalState {
   const now = input.now ?? Date.now()
+  if (goal.pendingContinuation) {
+    const { pendingContinuation: _pendingContinuation, ...rest } = goal
+    return { ...rest, observedProgressRevision: goal.progressRevision, updatedAt: now }
+  }
   const limit = Math.max(1, input.maxStalledTurns ?? 3)
   const madeProgress = goal.progressRevision > goal.observedProgressRevision
   const stalledTurns = madeProgress ? 0 : goal.stalledTurns + 1

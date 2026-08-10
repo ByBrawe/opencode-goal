@@ -100,6 +100,8 @@ export interface GoalState {
   /** Stable host-observed change fingerprints for this goal revision. */
   progressFingerprints?: string[]
   stalledTurns: number
+  /** One-shot host marker: the Goal was activated at an idle boundary and still needs its first continuation dispatch. */
+  pendingContinuation?: boolean
   blockerAudit?: BlockerAudit
   progressNotes: ProgressNote[]
   completionSummary?: string

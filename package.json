@@ -9,6 +9,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./tui": {
+      "types": "./dist/tui/index.d.ts",
+      "import": "./dist/tui/index.js"
     }
   },
   "files": ["dist", "README.md", "CHANGELOG.md", "LICENSE"],
@@ -44,7 +48,7 @@
   "engines": { "node": ">=20" },
   "peerDependencies": { "@opencode-ai/plugin": ">=1.4.0" },
   "devDependencies": {
-    "@opencode-ai/plugin": "^1.18.15",
+    "@opencode-ai/plugin": "1.18.9",
     "@types/node": "^22.0.0",
     "typescript": "^5.8.3"
   }

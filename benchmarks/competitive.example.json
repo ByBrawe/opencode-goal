@@ -17,7 +17,7 @@
       "opencodeConfig": {
         "$schema": "https://opencode.ai/config.json",
         "plugin": [
-          "@bybrawe/opencode-goal@1.1.0"
+          "@bybrawe/opencode-goal@1.2.0"
         ]
       },
       "command": [

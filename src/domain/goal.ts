@@ -171,6 +171,6 @@ export function pauseGoal(goal: GoalState, reason = "paused by user", now = Date
 
 export function resumeGoal(goal: GoalState, now = Date.now()): GoalState {
   if (goal.status === "completed") return goal
-  const { blockerAudit: _blocker, stopReason: _reason, ...rest } = goal
+  const { blockerAudit: _blocker, stopReason: _reason, pendingContinuation: _pendingContinuation, ...rest } = goal
   return { ...rest, status: "active", stalledTurns: 0, observedProgressRevision: goal.progressRevision, updatedAt: now }
 }

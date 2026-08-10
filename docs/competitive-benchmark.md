@@ -12,6 +12,7 @@ The competitive benchmark is a developer-only CLI harness. It is deliberately se
 - Child processes inherit only a small platform environment plus names explicitly listed in `passEnv`. Repository/npm credentials are therefore not inherited accidentally.
 - Values selected by `passEnv`/`redactEnv`, plus obviously secret-looking manifest environment keys, are redacted from stored command/output tails.
 - Pin OpenCode, plugins, competitors, models, and providers so the same manifest is reproducible later.
+- Committed benchmark fixtures are normalized to LF through `.gitattributes`, keeping frozen byte contracts identical on Windows and Unix hosts.
 
 ## Usage
 
@@ -66,7 +67,7 @@ For stable OpenCode plugins this lets the manifest pin an npm plugin without rea
 {
   "opencodeConfig": {
     "$schema": "https://opencode.ai/config.json",
-    "plugin": ["@bybrawe/opencode-goal@1.1.0"]
+    "plugin": ["@bybrawe/opencode-goal@1.2.0"]
   }
 }
 ```

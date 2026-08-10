@@ -1,6 +1,6 @@
 {
   "name": "@bybrawe/opencode-goal",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Persistent, host-verified Goals for OpenCode.",
   "type": "module",
   "main": "./dist/index.js",
@@ -9,6 +9,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./tui": {
+      "types": "./dist/tui/index.d.ts",
+      "import": "./dist/tui/index.js"
     }
   },
   "files": ["dist", "README.md", "CHANGELOG.md", "LICENSE"],
@@ -27,7 +31,7 @@
     "clean": "rm -rf dist",
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node --test",
+    "test": "npm run build && node scripts/unit-tests.mjs",
     "eval": "npm run build && node scripts/eval-corpus.mjs",
     "package:smoke": "npm run build && node scripts/package-smoke.mjs",
     "release:check": "npm run check && npm test && npm run eval && npm run package:smoke",
@@ -44,7 +48,7 @@
   "engines": { "node": ">=20" },
   "peerDependencies": { "@opencode-ai/plugin": ">=1.4.0" },
   "devDependencies": {
-    "@opencode-ai/plugin": "^1.18.15",
+    "@opencode-ai/plugin": "1.18.9",
     "@types/node": "^22.0.0",
     "typescript": "^5.8.3"
   }

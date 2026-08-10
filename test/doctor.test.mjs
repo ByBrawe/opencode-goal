@@ -6,6 +6,7 @@ import path from "node:path"
 import OpenCodeGoalPlugin from "../dist/index.js"
 import { createGoal } from "../dist/domain/goal.js"
 import { captureStartupGoals } from "../dist/opencode/recovery.js"
+import { GoalSequenceStore } from "../dist/persistence/sequence-store.js"
 import { GoalStore } from "../dist/persistence/store.js"
 
 function fakeClient() {
@@ -55,6 +56,7 @@ test("goal doctor stays available for unsupported live storage and never rewrite
     assert.equal(output.noReply, true)
     assert.match(output.parts[0].text, /Goal storage doctor: ISSUES FOUND/)
     assert.match(output.parts[0].text, /Live snapshot: INVALID \(invalid_state\)/)
+    assert.match(output.parts[0].text, /Queue storage: missing/)
     assert.match(output.parts[0].text, /unsupported schemaVersion 2/)
     assert.match(output.parts[0].text, /No files were modified/)
     assert.equal(await readFile(file, "utf8"), future)
@@ -83,6 +85,7 @@ test("goal doctor reports corrupt archives without pausing a healthy live goal",
     const output = await runGoalCommand(hooks, sessionID, "doctor")
     assert.match(output.parts[0].text, /Live snapshot: valid/)
     assert.match(output.parts[0].text, /Archive storage: INVALID \(invalid_json\)/)
+    assert.match(output.parts[0].text, /Queue storage: missing/)
     assert.match(output.parts[0].text, /broken archive|file is not valid JSON/)
 
     await bindCommandMessage(hooks, sessionID, "doctor-command", output)
@@ -90,6 +93,32 @@ test("goal doctor reports corrupt archives without pausing a healthy live goal",
     assert.equal(unchanged.id, live.id)
     assert.equal(unchanged.status, "active", "read-only doctor must not pause the live Goal")
     assert.equal(await readFile(archiveFile, "utf8"), corrupt)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("goal doctor reports corrupt queue storage without rewriting it", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-doctor-queue-"))
+  try {
+    const sessionID = "doctor-corrupt-queue"
+    const sequences = new GoalSequenceStore(root)
+    const queueFile = sequences.fileFor(sessionID)
+    const corrupt = "{ broken queue\n"
+    await mkdir(path.dirname(queueFile), { recursive: true })
+    await writeFile(queueFile, corrupt, "utf8")
+
+    const hooks = await OpenCodeGoalPlugin({ client: fakeClient(), directory: root })
+    const output = await runGoalCommand(hooks, sessionID, "doctor")
+    assert.equal(output.noReply, true)
+    assert.match(output.parts[0].text, /Goal storage doctor: ISSUES FOUND/)
+    assert.match(output.parts[0].text, /Queue storage: INVALID \(invalid_json\)/)
+    assert.match(output.parts[0].text, /queue: invalid_json/)
+    assert.match(output.parts[0].text, /file is not valid JSON/)
+    assert.equal(await readFile(queueFile, "utf8"), corrupt)
+
+    await bindCommandMessage(hooks, sessionID, "doctor-command", output)
+    assert.equal(await readFile(queueFile, "utf8"), corrupt, "doctor response binding must not rewrite corrupt queue storage")
   } finally {
     await rm(root, { recursive: true, force: true })
   }

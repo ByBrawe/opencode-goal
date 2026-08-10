@@ -49,7 +49,7 @@ test("normal-completion fixture starts red and passes only after the implementat
 
 test("false-complete fixture has a green visible test while hidden acceptance still fails", async () => {
   await withFixture("false-complete-trap", async (workspace) => {
-    assert.equal(visibleTest(workspace, "test/slug.test.mjs").status, 0)
+    assert.equal(visibleTest(workspace, "test/slug.visible.mjs").status, 0)
     const initial = oracle("false-complete-trap", workspace)
     assert.notEqual(initial.status, 0)
     assert.match(initial.stderr, /hidden acceptance failed/)

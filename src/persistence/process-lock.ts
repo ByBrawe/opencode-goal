@@ -140,6 +140,26 @@ async function assertSafeWithRaceRetry(target: string, assertSafe: (target: stri
   }
 }
 
+/**
+ * Canonical lock files are hard links to private candidate files by design.
+ * On Windows, realpath() for a hard link may report a different equivalent
+ * path alias (for example an 8.3 short-name ancestor), which must not be
+ * mistaken for a storage escape. The parent directory remains the security
+ * boundary. Existing symbolic links/junctions are still sent through the full
+ * storage guard and therefore fail closed.
+ */
+async function assertSafeLockFile(target: string, assertSafe: (target: string) => Promise<void>): Promise<void> {
+  await assertSafeWithRaceRetry(path.dirname(target), assertSafe)
+  let stat
+  try {
+    stat = await fs.lstat(target)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return
+    throw error
+  }
+  if (stat.isSymbolicLink()) await assertSafeWithRaceRetry(target, assertSafe)
+}
+
 async function createCandidate(
   lockRoot: string,
   owner: LockOwner,
@@ -153,7 +173,7 @@ async function createCandidate(
 
 async function linkClaim(candidate: string, canonical: string, assertSafe: (target: string) => Promise<void>): Promise<boolean> {
   await assertSafeWithRaceRetry(candidate, assertSafe)
-  await assertSafeWithRaceRetry(canonical, assertSafe)
+  await assertSafeLockFile(canonical, assertSafe)
   try {
     await fs.link(candidate, canonical)
     return true
@@ -188,7 +208,7 @@ async function recoverDeadOwner(
     if (current.token !== stale.token || current.pid !== stale.pid) return false
     if (pidAlive(current.pid)) return false
 
-    await assertSafeWithRaceRetry(input.lockFile, input.assertSafe)
+    await assertSafeLockFile(input.lockFile, input.assertSafe)
     await removeWithRetry(input.lockFile)
     const staleCandidate = path.join(input.lockRoot, current.candidateName)
     await assertSafeWithRaceRetry(staleCandidate, input.assertSafe)
@@ -244,7 +264,7 @@ export async function acquireGoalStoreProcessLock(input: GoalStoreProcessLockInp
         if (!current || current.token !== owner.token || current.pid !== owner.pid) {
           throw new GoalStoreConcurrencyError("lock_lost", "session storage lease ownership changed before release", input.lockFile)
         }
-        await assertSafeWithRaceRetry(input.lockFile, input.assertSafe)
+        await assertSafeLockFile(input.lockFile, input.assertSafe)
         await removeWithRetry(input.lockFile)
         await removeWithRetry(candidate).catch(() => undefined)
       },

@@ -2,5 +2,5 @@
   "name": "benchmark-false-complete-trap",
   "private": true,
   "type": "module",
-  "scripts": { "test": "node --test test/slug.test.mjs" }
+  "scripts": { "test": "node --test test/slug.visible.mjs" }
 }

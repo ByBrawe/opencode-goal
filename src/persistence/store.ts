@@ -149,7 +149,7 @@ export async function assertGoalStoragePathSafe(directory: string, target: strin
   }
 }
 
-async function readStateFile(directory: string, file: string): Promise<GoalState | null> {
+async function readStateFile(directory: string, file: string, expectedSessionID?: string): Promise<GoalState | null> {
   await assertGoalStoragePathSafe(directory, file)
   let raw: string
   try {
@@ -163,6 +163,9 @@ async function readStateFile(directory: string, file: string): Promise<GoalState
   const value = parseStoredJson(raw, file)
   const state = validateState(value)
   if (!state) throw new GoalStoreIntegrityError(file, "invalid_state", stateIntegrityDetail(value))
+  if (expectedSessionID !== undefined && state.sessionID !== expectedSessionID) {
+    throw new GoalStoreIntegrityError(file, "invalid_state", `stored Goal sessionID ${state.sessionID} does not match requested session ${expectedSessionID}`)
+  }
   return state
 }
 
@@ -239,7 +242,7 @@ export class GoalStore {
   }
 
   async load(sessionID: string): Promise<GoalState | null> {
-    return await readStateFile(this.directory, this.fileFor(sessionID))
+    return await readStateFile(this.directory, this.fileFor(sessionID), sessionID)
   }
 
   async list(): Promise<GoalState[]> {
@@ -256,8 +259,14 @@ export class GoalStore {
     const states: GoalState[] = []
     for (const name of names) {
       if (!name.endsWith(".json")) continue
-      const state = await readStateFile(this.directory, path.join(this.root, name))
-      if (state) states.push(state)
+      const file = path.join(this.root, name)
+      const state = await readStateFile(this.directory, file)
+      if (state) {
+        if (path.resolve(this.fileFor(state.sessionID)) !== path.resolve(file)) {
+          throw new GoalStoreIntegrityError(file, "invalid_state", `stored Goal sessionID ${state.sessionID} does not match its shard path`)
+        }
+        states.push(state)
+      }
     }
     return states
   }
@@ -289,7 +298,7 @@ export class GoalStore {
       if (matches.length > 1) return { ok: false, reason: "ambiguous", matches }
 
       const source = matches[0]!
-      const current = await readStateFile(this.directory, this.fileFor(sessionID))
+      const current = await readStateFile(this.directory, this.fileFor(sessionID), sessionID)
       if (current && current.status !== "completed") return { ok: false, reason: "live_unfinished", current }
       if (current?.id === source.goalID) return { ok: false, reason: "already_current", current }
       if (source.goal.status === "completed") return { ok: false, reason: "completed", source }
@@ -311,7 +320,7 @@ export class GoalStore {
   async save(state: GoalState): Promise<void> {
     await this.#locked(state.sessionID, async () => {
       const file = this.fileFor(state.sessionID)
-      const previous = await readStateFile(this.directory, file)
+      const previous = await readStateFile(this.directory, file, state.sessionID)
       const expectedGeneration = storageGeneration(state)
       let nextGeneration: number
 
@@ -361,7 +370,7 @@ export class GoalStore {
 
   async clear(sessionID: string): Promise<void> {
     await this.#locked(sessionID, async () => {
-      const current = await readStateFile(this.directory, this.fileFor(sessionID))
+      const current = await readStateFile(this.directory, this.fileFor(sessionID), sessionID)
       if (current) await this.#archive(current, "cleared")
       await removeStorageFile(this.directory, this.fileFor(sessionID))
     })

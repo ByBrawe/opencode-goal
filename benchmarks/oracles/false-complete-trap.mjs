@@ -5,8 +5,8 @@ const EXPECTED_TEST = `import test from "node:test"\nimport assert from "node:as
 
 try {
   const workspace = requireWorkspace()
-  await assertExactFile(workspace, "test/slug.test.mjs", EXPECTED_TEST)
-  runNodeTests(workspace, "test/slug.test.mjs")
+  await assertExactFile(workspace, "test/slug.visible.mjs", EXPECTED_TEST)
+  runNodeTests(workspace, "test/slug.visible.mjs")
   const { slugify } = await importWorkspaceModule(workspace, "src/slug.js")
   assert.equal(typeof slugify, "function", "slugify export is missing")
   const hidden = [

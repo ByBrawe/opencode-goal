@@ -68,7 +68,9 @@ test("competitive benchmark timeout terminates the executor instead of hanging t
     redactions: [],
   })
   assert.equal(result.timedOut, true)
-  assert.notEqual(result.signal, null)
+  assert.equal(result.spawnError, null)
+  assert.ok(result.exitCode !== null || result.signal !== null, "timed-out child must report a process termination result")
+  assert.ok(result.durationMs < 2_500, `timed-out child exceeded bounded termination window: ${result.durationMs}ms`)
 })
 
 test("competitive benchmark validates competitor setup commands", () => {

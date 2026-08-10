@@ -60,7 +60,10 @@ function parsePackResult(stdout) {
 
 function assertPackageFiles(pack) {
   const files = new Set(pack.files.map((item) => String(item.path).replaceAll("\\", "/")))
-  const required = ["package.json", "README.md", "CHANGELOG.md", "LICENSE", "dist/index.js", "dist/index.d.ts"]
+  const required = [
+    "package.json", "README.md", "CHANGELOG.md", "LICENSE",
+    "dist/index.js", "dist/index.d.ts", "dist/tui/index.js", "dist/tui/index.d.ts",
+  ]
   for (const file of required) {
     if (!files.has(file)) throw new Error(`publish tarball is missing required file: ${file}`)
   }
@@ -79,6 +82,7 @@ async function main() {
   if (packageJSON.peerDependencies?.["@opencode-ai/plugin"] !== ">=1.4.0") {
     throw new Error("package smoke minimum peer fixture must match peerDependencies['@opencode-ai/plugin'] >=1.4.0")
   }
+  if (!packageJSON.exports?.["./tui"]?.import) throw new Error("package.json must expose the target-exclusive ./tui entrypoint")
   if (!packageJSON.repository?.url || !packageJSON.homepage || !packageJSON.bugs?.url) {
     throw new Error("package.json release metadata is incomplete (repository/homepage/bugs)")
   }
@@ -109,6 +113,10 @@ async function main() {
       if (typeof mod.default !== "function") throw new Error("default OpenCode plugin export is missing");
       if (typeof mod.createGoal !== "function") throw new Error("createGoal export is missing");
       if (typeof mod.parseGoalCommand !== "function") throw new Error("parseGoalCommand export is missing");
+      if (typeof mod.GoalSequenceStore !== "function") throw new Error("GoalSequenceStore export is missing");
+      const tui = await import("@bybrawe/opencode-goal/tui");
+      if (typeof tui.default?.tui !== "function") throw new Error("TUI plugin export is missing");
+      if (tui.default?.id !== "opencode-goal") throw new Error("TUI plugin id is incorrect");
       const entryDir = path.dirname(fileURLToPath(import.meta.resolve("@bybrawe/opencode-goal")));
       if (!fs.existsSync(path.join(entryDir, "index.d.ts"))) throw new Error("published type declarations are missing");
       console.log("consumer import ok");
@@ -136,7 +144,7 @@ async function main() {
     console.log(`package ${report.npmPackage}@${report.version}`)
     console.log(`minimum runtime peer ${minimumPeer}`)
     console.log(`tarball ${report.filename} files=${report.fileCount} packed=${report.packageSize} unpacked=${report.unpackedSize}`)
-    console.log("clean consumer install/import PASS")
+    console.log("clean consumer server + TUI import PASS")
 
     if (options.jsonPath) {
       const target = path.resolve(root, options.jsonPath)

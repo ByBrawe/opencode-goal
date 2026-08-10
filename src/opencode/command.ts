@@ -1,7 +1,7 @@
 import type { FileRequirementInput } from "../domain/types.js"
 
 export interface ParsedGoalCommand {
-  action: "create" | "status" | "contract" | "audit" | "pause" | "resume" | "clear" | "edit" | "budget" | "history" | "history_prune" | "restore" | "doctor" | "list"
+  action: "create" | "status" | "contract" | "audit" | "pause" | "resume" | "clear" | "edit" | "budget" | "history" | "history_prune" | "restore" | "doctor" | "list" | "add" | "queue" | "queue_remove" | "queue_move" | "queue_clear" | "next"
   objective: string
   acceptance: string[]
   constraints: string[]
@@ -9,6 +9,7 @@ export interface ParsedGoalCommand {
   files: FileRequirementInput[]
   goalIDPrefix?: string
   historyKeep?: number
+  queuePosition?: number
   maxTurns?: number
   maxTokens?: number
   maxRuntimeMs?: number
@@ -49,6 +50,12 @@ function parseHistoryKeep(raw: string | undefined): number {
   return value
 }
 
+function parsePositivePosition(raw: string | undefined): number {
+  const value = Number(raw)
+  if (raw === undefined || !Number.isInteger(value) || value < 1) throw new Error("/goal queue move expects a positive position")
+  return value
+}
+
 function parseOptionalGoalSelector(list: string[], command: string): ParsedGoalCommand {
   const goalIDPrefix = list[1]?.trim()
   if (list.length > 2) throw new Error(`/goal ${command} accepts at most one goal id prefix`)
@@ -57,6 +64,31 @@ function parseOptionalGoalSelector(list: string[], command: string): ParsedGoalC
     ...empty(command === "list" ? "list" : "history"),
     ...(goalIDPrefix ? { goalIDPrefix } : {}),
   }
+}
+
+function parseQueueCommand(list: string[]): ParsedGoalCommand {
+  const operation = (list[1] ?? "").toLowerCase()
+  if (!operation) {
+    if (list.length !== 1) throw new Error("/goal queue does not accept extra arguments")
+    return empty("queue")
+  }
+  if (operation === "clear") {
+    if (list.length !== 2) throw new Error("/goal queue clear does not accept arguments")
+    return empty("queue_clear")
+  }
+  if (operation === "remove") {
+    const goalIDPrefix = list[2]?.trim()
+    if (list.length !== 3 || !goalIDPrefix) throw new Error("/goal queue remove expects exactly one queued goal id prefix")
+    if (goalIDPrefix.startsWith("--")) throw new Error(`unknown goal option: ${goalIDPrefix}`)
+    return { ...empty("queue_remove"), goalIDPrefix }
+  }
+  if (operation === "move") {
+    const goalIDPrefix = list[2]?.trim()
+    if (list.length !== 4 || !goalIDPrefix) throw new Error("/goal queue move expects <goal-id-prefix> <position>")
+    if (goalIDPrefix.startsWith("--")) throw new Error(`unknown goal option: ${goalIDPrefix}`)
+    return { ...empty("queue_move"), goalIDPrefix, queuePosition: parsePositivePosition(list[3]) }
+  }
+  throw new Error(`unknown /goal queue operation: ${operation}`)
 }
 
 export function parseGoalCommand(input: string): ParsedGoalCommand {
@@ -74,7 +106,13 @@ export function parseGoalCommand(input: string): ParsedGoalCommand {
     if (list.length !== 1) throw new Error("/goal audit does not accept arguments")
     return empty("audit")
   }
+  if (sub === "queue") return parseQueueCommand(list)
+  if (sub === "next") {
+    if (list.length !== 1) throw new Error("/goal next does not accept arguments")
+    return empty("next")
+  }
   if (["status", "pause", "resume", "clear"].includes(sub)) {
+    if (list.length !== 1) throw new Error(`/goal ${sub} does not accept arguments`)
     return empty(sub as ParsedGoalCommand["action"])
   }
   if (sub === "list") return parseOptionalGoalSelector(list, "list")
@@ -101,7 +139,7 @@ export function parseGoalCommand(input: string): ParsedGoalCommand {
   }
 
   let action: ParsedGoalCommand["action"] = "create"
-  if (sub === "edit" || sub === "budget") {
+  if (sub === "edit" || sub === "budget" || sub === "add") {
     action = sub
     list.shift()
   }

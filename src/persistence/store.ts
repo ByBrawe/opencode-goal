@@ -67,6 +67,7 @@ function validateState(value: unknown): GoalState | null {
   const state = value as Partial<GoalState>
   if (state.schemaVersion !== 1 || typeof state.id !== "string" || typeof state.sessionID !== "string" || typeof state.objective !== "string") return null
   if (!Array.isArray(state.requirements) || !Array.isArray(state.evidence) || !validGeneration(state.storageGeneration)) return null
+  if (state.pendingContinuation !== undefined && typeof state.pendingContinuation !== "boolean") return null
   return value as GoalState
 }
 
@@ -99,6 +100,8 @@ function stateIntegrityDetail(value: unknown): string {
   if (schema !== 1) return `unsupported schemaVersion ${String(schema)}`
   const generation = value && typeof value === "object" ? (value as { storageGeneration?: unknown }).storageGeneration : undefined
   if (!validGeneration(generation)) return `invalid storageGeneration ${String(generation)}`
+  const pendingContinuation = value && typeof value === "object" ? (value as { pendingContinuation?: unknown }).pendingContinuation : undefined
+  if (pendingContinuation !== undefined && typeof pendingContinuation !== "boolean") return `invalid pendingContinuation ${String(pendingContinuation)}`
   return "stored Goal state shape is invalid"
 }
 

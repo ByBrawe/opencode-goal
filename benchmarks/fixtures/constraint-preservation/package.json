@@ -2,5 +2,5 @@
   "name": "benchmark-constraint-preservation",
   "private": true,
   "type": "module",
-  "scripts": { "test": "node --test test/greet.test.mjs" }
+  "scripts": { "test": "node --test test/greet.visible.mjs" }
 }

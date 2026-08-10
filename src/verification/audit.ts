@@ -1,4 +1,5 @@
 import type { CompletionAudit, EvidenceRecord, GoalState } from "../domain/types.js"
+import { todoPlanIsCurrent } from "../runtime/todo-plan.js"
 
 function latestVerificationEvidence(goal: GoalState): EvidenceRecord[] {
   const latest = new Map<string, EvidenceRecord>()
@@ -17,6 +18,10 @@ export function auditCompletion(goal: GoalState): CompletionAudit {
 
   if (!["active", "paused", "blocked", "budget_limited", "usage_limited"].includes(goal.status)) {
     reasons.push(`goal status ${goal.status} cannot enter completion audit`)
+  }
+
+  if (todoPlanIsCurrent(goal) && goal.todoPlan && (goal.todoPlan.pending > 0 || goal.todoPlan.inProgress > 0)) {
+    reasons.push(`current native Todo plan still has unfinished work: ${goal.todoPlan.pending} pending, ${goal.todoPlan.inProgress} in progress`)
   }
 
   for (const requirement of goal.requirements.filter((item) => item.required)) {

@@ -1,8 +1,8 @@
 import type CorePlugin from "./plugin.js"
 import type { GoalBudget, GoalState } from "../domain/types.js"
 import type { GoalSequenceState, QueuedGoalSpec } from "../domain/sequence.js"
-import { GoalStore, GoalStoreIntegrityError } from "../persistence/store.js"
-import { GoalSequenceIntegrityError, GoalSequenceStore } from "../persistence/sequence-store.js"
+import { GoalStore } from "../persistence/store.js"
+import { GoalSequenceStore } from "../persistence/sequence-store.js"
 import { parseGoalCommand } from "./command.js"
 import { showGoalToast } from "./toast.js"
 
@@ -65,17 +65,6 @@ function selectorFailure(prefix: string, result: { reason: string; matches: Queu
   return "That queued Goal is currently being activated. Retry after activation settles."
 }
 
-async function formatSequenceDiagnostic(sequences: GoalSequenceStore, sessionID: string): Promise<string> {
-  try {
-    const state = await sequences.load(sessionID)
-    return `Goal queue storage: OK (${state.items.length} pending, generation ${state.generation}).`
-  } catch (error) {
-    if (error instanceof GoalSequenceIntegrityError) return `Goal queue storage: INVALID (${error.kind}).`
-    if (error instanceof GoalStoreIntegrityError) return `Goal queue storage: INVALID (${error.kind}).`
-    throw error
-  }
-}
-
 export function installGoalSequence(input: PluginInput, hooks: PluginHooks): void {
   const commandHook = hooks["command.execute.before"]
   const chatHook = hooks["chat.message"]
@@ -93,13 +82,6 @@ export function installGoalSequence(input: PluginInput, hooks: PluginHooks): voi
     }
 
     const parsed = parseGoalCommand(event.arguments ?? "")
-    if (parsed.action === "doctor") {
-      await commandHook(event, output)
-      const owned = textFromParts(output.parts)
-      const diagnostic = await formatSequenceDiagnostic(sequences, event.sessionID)
-      translatedOutput(output, `${owned}\n${diagnostic}`, owned, translations, event.sessionID)
-      return
-    }
     if (!SEQUENCE_ACTIONS.has(parsed.action as SequenceAction)) {
       await commandHook(event, output)
       return

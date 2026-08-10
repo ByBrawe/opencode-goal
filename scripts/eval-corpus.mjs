@@ -8,6 +8,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const corpusPaths = [
   path.join(root, "eval", "corpus.json"),
   path.join(root, "eval", "corpus.project-index.json"),
+  path.join(root, "eval", "corpus.sequence.json"),
   path.join(root, "eval", "corpus.opencode2-experimental.json"),
 ]
 

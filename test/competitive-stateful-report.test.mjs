@@ -60,3 +60,49 @@ test("stateful benchmark report preserves weighted summary and names intermediat
   assert.doesNotMatch(markdown, /final state later became green.*Failure/i, "later final green state must not replace the intermediate failure reason")
   assert.match(markdown, /Agent narration and agent process exit codes do not prove task success/)
 })
+
+test("competitive report names explicit capability gaps instead of hiding them behind final oracle failure", () => {
+  const results = [{
+    competitor: "unsupported",
+    competitorLabel: "Unsupported competitor",
+    scenario: "ordered-sequence-two-objectives",
+    category: "workflow",
+    weight: 5,
+    repeat: 1,
+    passed: false,
+    infrastructureFailure: false,
+    agent: {
+      exitCode: 1,
+      stderr: "Error: BENCHMARK_CAPABILITY_UNSUPPORTED: canonical action start_sequence: no ordered sequence command\n",
+      stdout: "",
+      timedOut: false,
+      spawnError: null,
+    },
+    agentSteps: [{
+      id: "start-sequence",
+      index: 0,
+      agent: {
+        exitCode: 1,
+        stderr: "Error: BENCHMARK_CAPABILITY_UNSUPPORTED: canonical action start_sequence: no ordered sequence command\n",
+        stdout: "",
+        timedOut: false,
+        spawnError: null,
+      },
+    }],
+    stepOracles: [],
+    stepFailure: null,
+    oracle: { exitCode: 1, stdout: "order.log missing", stderr: "", timedOut: false, spawnError: null },
+  }]
+  const summary = summarize(results)
+  const markdown = renderMarkdown({
+    generatedAt: "now",
+    manifest: "cross-plugin.json",
+    manifestDigest: "sha256:test",
+    results,
+    summary,
+  })
+
+  assert.match(markdown, /capability unsupported: canonical action start_sequence: no ordered sequence command/i)
+  assert.match(markdown, /0\/1/)
+  assert.match(markdown, /Explicit capability gaps remain scored failures/)
+})

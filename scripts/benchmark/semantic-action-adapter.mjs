@@ -13,6 +13,22 @@ function stringField(value, label) {
   return value
 }
 
+function validateActionSpec(spec, label) {
+  if (typeof spec === "string") {
+    stringField(spec, label)
+    return
+  }
+  if (Array.isArray(spec)) {
+    assert(spec.length > 0, `${label} must not be an empty command sequence`)
+    spec.forEach((template, index) => stringField(template, `${label}[${index}]`))
+    return
+  }
+  assert(spec && typeof spec === "object", `${label} must be a command template, command sequence, or unsupported declaration`)
+  const keys = Object.keys(spec)
+  assert(keys.length === 1 && keys[0] === "unsupported", `${label} object form only accepts unsupported`)
+  stringField(spec.unsupported, `${label}.unsupported`)
+}
+
 export function validateActionAdapter(value, source = "adapter") {
   assert(value && typeof value === "object" && !Array.isArray(value), `${source} must be an object`)
   assert(value.schemaVersion === 1, `${source}.schemaVersion must be 1`)
@@ -20,9 +36,9 @@ export function validateActionAdapter(value, source = "adapter") {
   assert(value.actions && typeof value.actions === "object" && !Array.isArray(value.actions), `${source}.actions must be an object`)
   const entries = Object.entries(value.actions)
   assert(entries.length > 0, `${source}.actions must be non-empty`)
-  for (const [action, template] of entries) {
+  for (const [action, spec] of entries) {
     stringField(action, `${source}.actions key`)
-    stringField(template, `${source}.actions.${action}`)
+    validateActionSpec(spec, `${source}.actions.${action}`)
   }
   return value
 }
@@ -45,20 +61,32 @@ export function parseCanonicalAction(raw) {
   return { action, fields }
 }
 
-export function materializeSemanticAction(adapter, canonical) {
-  validateActionAdapter(adapter)
-  const parsed = typeof canonical === "string" ? parseCanonicalAction(canonical) : canonical
-  stringField(parsed?.action, "canonical action.action")
-  const template = adapter.actions[parsed.action]
-  assert(typeof template === "string" && template.trim(), `adapter does not support canonical action ${parsed.action}`)
-  const fields = parsed.fields ?? {}
+function materializeTemplate(template, fields, action) {
   const rawArguments = template.replace(/\{([A-Za-z][A-Za-z0-9_]*)\}/g, (_match, key) => {
-    assert(Object.prototype.hasOwnProperty.call(fields, key), `canonical action ${parsed.action} is missing template field ${key}`)
+    assert(Object.prototype.hasOwnProperty.call(fields, key), `canonical action ${action} is missing template field ${key}`)
     return fields[key]
   })
   const unresolved = rawArguments.match(/\{[A-Za-z][A-Za-z0-9_]*\}/)
   assert(!unresolved, `adapter template left unresolved placeholder ${unresolved?.[0]}`)
-  return { commandName: adapter.commandName, rawArguments }
+  return rawArguments
+}
+
+export function materializeSemanticAction(adapter, canonical) {
+  validateActionAdapter(adapter)
+  const parsed = typeof canonical === "string" ? parseCanonicalAction(canonical) : canonical
+  stringField(parsed?.action, "canonical action.action")
+  const spec = adapter.actions[parsed.action]
+  assert(spec !== undefined, `adapter does not support canonical action ${parsed.action}`)
+  if (spec && typeof spec === "object" && !Array.isArray(spec)) {
+    throw new Error(`BENCHMARK_CAPABILITY_UNSUPPORTED: canonical action ${parsed.action}: ${spec.unsupported}`)
+  }
+  const fields = parsed.fields ?? {}
+  const templates = Array.isArray(spec) ? spec : [spec]
+  const rawArguments = templates.map((template) => materializeTemplate(template, fields, parsed.action))
+  return {
+    commandName: adapter.commandName,
+    rawArguments: rawArguments.length === 1 ? rawArguments[0] : rawArguments,
+  }
 }
 
 async function loadAdapter(file) {
@@ -90,12 +118,19 @@ export async function main(argv = process.argv.slice(2)) {
   }
   const adapter = await loadAdapter(adapterPath)
   const action = materializeSemanticAction(adapter, canonicalRaw)
-  const result = await runDriver(action.commandName, action.rawArguments)
-  if (result.signal) {
-    process.kill(process.pid, result.signal)
-    return
+  const sequence = Array.isArray(action.rawArguments) ? action.rawArguments : [action.rawArguments]
+  for (const rawArguments of sequence) {
+    const result = await runDriver(action.commandName, rawArguments)
+    if (result.signal) {
+      process.kill(process.pid, result.signal)
+      return
+    }
+    if ((result.code ?? 1) !== 0) {
+      process.exitCode = result.code ?? 1
+      return
+    }
   }
-  process.exitCode = result.code ?? 1
+  process.exitCode = 0
 }
 
 const invoked = process.argv[1] ? pathToFileURLSafe(path.resolve(process.argv[1])) : null

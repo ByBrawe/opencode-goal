@@ -100,10 +100,15 @@ export function formatGoalDoctor(report: GoalStorageDiagnosticReport): string {
   const archives = report.archives.state === "valid"
     ? `valid (${report.archives.count} record(s))`
     : `INVALID (${report.archives.issue.kind})`
+  const queue = report.queue.state === "missing"
+    ? "missing"
+    : report.queue.state === "valid"
+      ? `valid (${report.queue.count} pending; generation ${report.queue.generation})`
+      : `INVALID (${report.queue.issue.kind})`
   const issues = report.issues.length
     ? `\nIssues:\n${report.issues.map(diagnosticIssueLine).join("\n")}`
     : ""
-  return `Goal storage doctor: ${report.issues.length ? "ISSUES FOUND" : "OK"}\nLive snapshot: ${live}\nArchive storage: ${archives}${issues}\nNo files were modified.`
+  return `Goal storage doctor: ${report.issues.length ? "ISSUES FOUND" : "OK"}\nLive snapshot: ${live}\nArchive storage: ${archives}\nQueue storage: ${queue}${issues}\nNo files were modified.`
 }
 
 function formatRestoreResult(result: GoalRestoreResult, selector: string): string {
@@ -274,11 +279,6 @@ export function enhanceGoalControls(input: PluginInput, hooks: PluginHooks): voi
     await store.save(next)
 
     if (beforeStatus === "budget_limited" && next.status === "active") {
-      // Ask the core hook to seed TurnOwnership for the exact continuation text,
-      // but restore our budget-updated snapshot because resumeGoal() also resets
-      // no-progress accounting that a budget change must not erase. The core
-      // save advances the persistence generation, so adopt only that generation
-      // after verifying the same Goal/revision before restoring the snapshot.
       await commandHook({ ...event, arguments: "resume" }, output)
       const resumed = await store.load(event.sessionID)
       if (!resumed || resumed.id !== next.id || resumed.revision !== next.revision || resumed.status !== "active") {

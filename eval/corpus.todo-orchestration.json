@@ -26,6 +26,14 @@
       "testFile": "test/todo-orchestration-prompt.test.mjs",
       "testName": "broad Goal continuation coordinates native Todos without making them completion evidence",
       "expected": "Broad Goals use native Todos as a living execution plan while Todo completion, assistant suggestions, and nice-to-haves cannot widen scope or prove Goal completion."
+    },
+    {
+      "id": "todo-orchestration.unfinished-plan-completion-veto",
+      "category": "todo-orchestration",
+      "weight": 3,
+      "testFile": "test/todo-plan.test.mjs",
+      "testName": "current unfinished Todo plan vetoes completion without becoming evidence",
+      "expected": "A current native Todo plan with pending or in-progress work blocks Goal completion, while completed Todo state creates no evidence and stale Todo telemetry cannot veto a newer Goal revision."
     }
   ]
 }

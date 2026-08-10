@@ -28,14 +28,16 @@
         "command": [
           "node",
           "{root}/scripts/benchmark/assert-command-version.mjs",
-          "opencode",
+          "node",
           "1.18.16",
+          "{root}/scripts/benchmark/local-opencode-cli.mjs",
           "--version"
         ],
         "timeoutMs": 30000
       },
       "command": [
-        "opencode",
+        "node",
+        "{root}/scripts/benchmark/local-opencode-cli.mjs",
         "run",
         "--command",
         "goal",

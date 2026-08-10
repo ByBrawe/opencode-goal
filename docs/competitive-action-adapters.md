@@ -73,6 +73,10 @@ The adapter materializes the plugin's command syntax, then delegates to the shar
 
 `benchmarks/adapters/opencode-goals.json` maps the stable OpenCode Goals 1.2 single-action surface. `benchmarks/ordered-sequence.semantic.pilot.json` remains a **single-plugin wiring pilot**, not ranking evidence.
 
+### Verified OpenCode Goals artifact
+
+The benchmark's OpenCode Goals entry uses the public npm artifact **`@bybrawe/opencode-goal@1.2.0`**. Its npm package page was manually verified as **Public / 1.2.0** on 2026-08-10. This exact version is therefore the release artifact to pin for cross-plugin benchmark runs; do not silently substitute a local checkout or a moving tag when producing comparable results.
+
 The cross-plugin ordered-sequence example uses a higher-level `start_sequence` action and dedicated audited mappings:
 
 - `opencode-goals-sequence.json`: OpenCode Goals implements the semantic action as `add {first}`, `add {second}`, then `next`.

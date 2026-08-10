@@ -1,0 +1,8 @@
+{
+  "name": "goal-todo-orchestration-fixture",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test"
+  }
+}

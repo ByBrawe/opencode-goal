@@ -3,7 +3,7 @@ import { constants as fsConstants } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import process from "node:process"
-import { materializeCommand } from "./manifest.mjs"
+import { materializeCommand, scenarioSteps } from "./manifest.mjs"
 import { collectRedactions, runCommand, safeChildEnv } from "./process.mjs"
 import { digestFixtureTree } from "./workspace.mjs"
 
@@ -75,7 +75,6 @@ function addCheck(checks, status, id, message, details = undefined) {
   checks.push({ status, id, message, ...(details === undefined ? {} : { details }) })
 }
 
-
 async function checkCommandExecutable(checks, id, command) {
   if (!command) return
   if (command.some(isPlaceholder)) {
@@ -96,13 +95,23 @@ async function preflightScenarioOracle(root, manifest, scenario, checks) {
   try {
     await mkdir(home, { recursive: true })
     await cp(source, workspace, { recursive: true, dereference: false, errorOnExist: false })
-    const variables = { root, workspace, home, prompt: scenario.prompt, competitor: "preflight", scenario: scenario.id, run: "0" }
+    const steps = scenarioSteps(scenario)
+    const variables = {
+      root,
+      workspace,
+      home,
+      prompt: steps.at(-1)?.prompt ?? "",
+      competitor: "preflight",
+      scenario: scenario.id,
+      run: "0",
+      step: "preflight",
+    }
     const env = safeChildEnv({ home, passEnv: manifest.passEnv ?? [], extra: manifest.env ?? {} })
     const redactions = collectRedactions(manifest, { env: {} }, env)
     const result = await runCommand(materializeCommand(scenario.oracle.command, variables), {
       cwd: workspace,
       env,
-      timeoutMs: Math.min(scenario.timeoutMs ?? manifest.timeoutMs ?? 30_000, 30_000),
+      timeoutMs: Math.min(scenario.oracle.timeoutMs ?? scenario.timeoutMs ?? manifest.timeoutMs ?? 30_000, 30_000),
       redactions,
     })
     if (result.spawnError || result.timedOut) {
@@ -162,6 +171,11 @@ export async function runPreflight(root, manifest, selection = {}) {
 
   for (const scenario of scenarios) {
     await checkCommandExecutable(checks, `scenario:${scenario.id}:setup`, scenario.setup?.command)
+    await checkCommandExecutable(checks, `scenario:${scenario.id}:oracle`, scenario.oracle?.command)
+    for (const step of scenarioSteps(scenario)) {
+      await checkCommandExecutable(checks, `scenario:${scenario.id}:step:${step.id}:oracle`, step.oracle?.command)
+    }
+
     const source = path.resolve(root, scenario.workspace)
     if (!insideRoot(root, source)) {
       addCheck(checks, "error", `scenario:${scenario.id}:workspace`, "scenario workspace escapes benchmark root")
@@ -201,6 +215,6 @@ export function renderPreflightMarkdown(report) {
     const detail = check.details === undefined ? "" : ` — ${typeof check.details === "string" ? check.details : JSON.stringify(check.details)}`
     lines.push(`| ${check.status.toUpperCase()} | \`${check.id}\` | ${(check.message + detail).replaceAll("|", "\\|")} |`)
   }
-  lines.push("", "Preflight never invokes a model. It verifies benchmark wiring, pinned inputs, required environment, fixture hashes, and declared baseline oracle state.", "")
+  lines.push("", "Preflight never invokes a model. It verifies benchmark wiring, pinned inputs, required environment, fixture hashes, command executables, and declared baseline oracle state.", "")
   return `${lines.join("\n")}\n`
 }

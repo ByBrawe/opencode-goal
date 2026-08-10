@@ -35,6 +35,14 @@
       "expected": "If the process crashes after writing the promoted live Goal but before popping the queue, recovery recognizes the reserved Goal ID and consumes the head exactly once."
     },
     {
+      "id": "sequence.recovered-turn-accounting",
+      "category": "sequence",
+      "weight": 3,
+      "testFile": "test/sequence-recovery-marker.test.mjs",
+      "testName": "sequence activation marker cannot suppress accounting after a real recovered turn",
+      "expected": "The one-shot activation marker may skip only the pre-turn activation idle; once a real assistant turn has been counted it is removed and normal no-progress accounting applies."
+    },
+    {
       "id": "sequence.cross-process-single-consumer",
       "category": "sequence",
       "weight": 3,

@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "repeats": 3,
+  "timeoutMs": 600000,
+  "metadata": {
+    "purpose": "model-driven broad Goal to native Todo orchestration validation",
+    "opencodeVersion": "1.18.16",
+    "model": "PIN_EXACT_PROVIDER_MODEL",
+    "provider": "PIN_PROVIDER_NAME",
+    "pluginSource": "local checkout dist/index.js from PR #40 feature branch",
+    "note": "The external oracle requires both repository correctness and a completed current-revision native Todo plan; Todo state never substitutes for Goal evidence."
+  },
+  "passEnv": [
+    "OPENAI_API_KEY"
+  ],
+  "requiredEnv": [
+    "OPENAI_API_KEY"
+  ],
+  "competitors": [
+    {
+      "id": "opencode-goals-todo-local",
+      "label": "OpenCode Goals Todo bridge (local checkout)",
+      "opencodeConfig": {
+        "$schema": "https://opencode.ai/config.json",
+        "model": "PIN_EXACT_PROVIDER_MODEL"
+      },
+      "setup": {
+        "command": [
+          "node",
+          "{root}/scripts/benchmark/assert-command-version.mjs",
+          "opencode",
+          "1.18.16",
+          "--version"
+        ],
+        "timeoutMs": 30000
+      },
+      "command": [
+        "opencode",
+        "run",
+        "--command",
+        "goal",
+        "{prompt}"
+      ]
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "broad-project-analysis-todo-orchestration",
+      "category": "todo-orchestration",
+      "weight": 5,
+      "workspace": "benchmarks/fixtures/goal-todo-orchestration",
+      "setup": {
+        "command": [
+          "node",
+          "{root}/scripts/benchmark/install-local-goal-plugin.mjs",
+          "{workspace}",
+          "{root}/dist/index.js"
+        ],
+        "timeoutMs": 30000
+      },
+      "prompt": "Analyze this project and finish every required existing-scope gap. Use the repository's current documentation and tests as the source of required work. Do not invent new features or change frozen contracts. Finish only when the repository is actually ready.",
+      "oracle": {
+        "command": [
+          "node",
+          "{root}/benchmarks/oracles/goal-todo-orchestration.mjs",
+          "{workspace}"
+        ],
+        "timeoutMs": 30000
+      },
+      "preflightOracle": "fail"
+    }
+  ]
+}

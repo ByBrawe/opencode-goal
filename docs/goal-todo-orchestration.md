@@ -51,6 +51,76 @@ Todo telemetry:
 - does **not** authorize scope changes;
 - does **not** block Goal execution if `todowrite` is unavailable or denied.
 
+## Deterministic real-host canary
+
+`scripts/host-todo-canary.mjs` runs against a real OpenCode server with a local deterministic OpenAI-compatible provider, so it spends no model quota. The provider forces the real Build agent to call its native `todowrite` tool and the canary verifies the resulting Goal snapshot.
+
+The canary requires all of these conditions at once:
+
+- the real Build agent exposes `todowrite`;
+- the continuation contains the Goal/Todo orchestration guidance;
+- exactly one real native Todo call creates a three-item plan for the current Goal revision;
+- `progressRevision` and `observedProgressRevision` remain zero;
+- no evidence or requirement proof is created by Todo planning;
+- the Goal remains unfinished until explicitly paused by the canary.
+
+The PR CI runs this canary on both Ubuntu and Windows immediately before the existing semantic completion canary. The current model-test template pins OpenCode `1.18.16`, the exact host version exercised successfully by this branch's deterministic canary. Changing that host pin requires rerunning the complete repository gates.
+
+## Model-driven benchmark stage
+
+The model test uses `benchmarks/goal-todo-orchestration.model.example.json`. It does **not** use the published `1.2.0` plugin. Scenario setup writes a disposable local plugin shim that imports the current checkout's built `dist/index.js`, so the test exercises the feature branch itself.
+
+The fixture begins red: implementation behavior is wrong and `STATUS.md` is `NOT READY`. Its hidden oracle lives outside the copied workspace and requires all of the following before a run can pass:
+
+- the documented public behavior and visible tests are correct;
+- frozen README/package/test contracts were not changed;
+- `STATUS.md` is exactly `READY`;
+- hidden behavior cases pass;
+- the persistent Goal is actually `completed` with every requirement proven and verifier-backed evidence present;
+- real file work produced host-observed progress;
+- native Todo telemetry belongs to the current Goal revision, has at least three completed items, and has zero pending/in-progress items.
+
+Prepare the checkout without publishing anything:
+
+```text
+npm install
+npm run build
+npm install --no-save --package-lock=false opencode-ai@1.18.16
+```
+
+Copy the example manifest and replace `PIN_EXACT_PROVIDER_MODEL` and `PIN_PROVIDER_NAME`. The example passes only `OPENAI_API_KEY`; if another provider is used, replace `passEnv`/`requiredEnv` with the minimum credential names that provider needs.
+
+```text
+cp benchmarks/goal-todo-orchestration.model.example.json benchmarks/goal-todo-orchestration.model.json
+```
+
+Validate everything before spending model quota:
+
+```text
+node scripts/competitive-benchmark.mjs \
+  --manifest benchmarks/goal-todo-orchestration.model.json \
+  --preflight \
+  --out benchmark-results/todo-orchestration
+```
+
+Inspect the selected matrix:
+
+```text
+node scripts/competitive-benchmark.mjs \
+  --manifest benchmarks/goal-todo-orchestration.model.json \
+  --dry-run
+```
+
+Then run the three-repeat real-model test:
+
+```text
+node scripts/competitive-benchmark.mjs \
+  --manifest benchmarks/goal-todo-orchestration.model.json \
+  --out benchmark-results/todo-orchestration
+```
+
+The files to retain for analysis are `benchmark-results/todo-orchestration/report.json` and `report.md`. Use `--keep-workspaces` only for debugging a failure because successful and failed normal runs are otherwise disposable.
+
 ## Manual real-host test
 
 Use a disposable repository with several discoverable required gaps and a deterministic acceptance script. Then run:
@@ -85,6 +155,8 @@ The repository tests cover:
 - Todo binding invalidation on archived Goal restore;
 - continuation/compaction scope rules;
 - read-only `/goal audit` Todo visibility;
-- mandatory adversarial eval cases for the Todo/Goal boundary.
+- mandatory adversarial eval cases for the Todo/Goal boundary;
+- the broad-project model fixture's red/pass/incomplete-Todo oracle geometry;
+- local feature-branch plugin installation for disposable benchmark workspaces.
 
-These deterministic gates make the branch safe to hand to a real-model OpenCode test. The real-host test remains necessary to evaluate whether a selected model actually uses the native planning tool well on broad repository objectives.
+These deterministic gates plus the real-host native Todo canary make the branch safe to hand to a selected real model. The model-driven benchmark remains necessary to evaluate whether that model performs good reconnaissance, maintains the plan throughout real edits/tests, and reconciles native Todos before verified Goal completion.

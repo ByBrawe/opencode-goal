@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "commandName": "goal",
+  "actions": {
+    "start_sequence": [
+      "add {first}",
+      "add {second}",
+      "next"
+    ]
+  }
+}

@@ -41,8 +41,23 @@ function pct(value) {
   return `${(value * 100).toFixed(1)}%`
 }
 
+function failedStepOracle(failure) {
+  if (!failure.stepFailure) return null
+  return failure.stepOracles?.find((item) => item.id === failure.stepFailure.id && item.index === failure.stepFailure.index) ?? null
+}
+
 function failureReason(failure) {
-  if (failure.infrastructureFailure) return "infrastructure failure"
+  if (failure.infrastructureFailure) {
+    const stepAgent = failure.agentSteps?.find((item) => item.agent?.spawnError)
+    if (stepAgent) return `step ${stepAgent.id} agent spawn error`
+    const stepOracle = failure.stepOracles?.find((item) => item.oracle?.spawnError || item.oracle?.timedOut)
+    if (stepOracle?.oracle?.spawnError) return `step ${stepOracle.id} oracle spawn error`
+    if (stepOracle?.oracle?.timedOut) return `step ${stepOracle.id} oracle timeout`
+    return "infrastructure failure"
+  }
+  if (failure.stepFailure) {
+    return `step ${failure.stepFailure.id} oracle expected ${String(failure.stepFailure.expected).toUpperCase()} but got ${String(failure.stepFailure.actual ?? "unavailable").toUpperCase()}`
+  }
   if (failure.oracle?.timedOut) return "oracle timeout"
   if (failure.oracle?.spawnError) return `oracle spawn error: ${failure.oracle.spawnError}`
   return `oracle exit ${failure.oracle?.exitCode ?? "n/a"}`
@@ -67,10 +82,15 @@ export function renderMarkdown(report) {
     lines.push("", "### Failures", "")
     if (!failures.length) lines.push("None.")
     for (const failure of failures) {
-      const oracleDetail = failure.oracle?.stderr || failure.oracle?.stdout
-      lines.push(`- \`${failure.scenario}\` run ${failure.repeat}: ${failureReason(failure)}; agent exit ${failure.agent?.exitCode ?? "n/a"}${failure.agent?.timedOut ? " (timeout)" : ""}${oracleDetail ? ` — ${oracleDetail.replace(/\s+/g, " ").slice(-500)}` : ""}`)
+      const stepOracle = failedStepOracle(failure)
+      const detailSource = stepOracle?.oracle ?? failure.oracle
+      const oracleDetail = detailSource?.stderr || detailSource?.stdout
+      const failedAgent = failure.stepFailure
+        ? failure.agentSteps?.find((item) => item.id === failure.stepFailure.id && item.index === failure.stepFailure.index)?.agent
+        : failure.agent
+      lines.push(`- \`${failure.scenario}\` run ${failure.repeat}: ${failureReason(failure)}; agent exit ${failedAgent?.exitCode ?? "n/a"}${failedAgent?.timedOut ? " (timeout)" : ""}${oracleDetail ? ` — ${oracleDetail.replace(/\s+/g, " ").slice(-500)}` : ""}`)
     }
   }
-  lines.push("", "## Interpretation", "", "A run passes only when the scenario oracle exits 0. Agent narration and the agent process exit code do not prove task success. Secret values selected by `passEnv`/`redactEnv` are removed from stored command/output tails.", "")
+  lines.push("", "## Interpretation", "", "A run passes only when every declared intermediate step oracle matches its expected state and the final scenario oracle exits 0. Agent narration and agent process exit codes do not prove task success. Stateful step failures stop later agent steps so a later action cannot hide an earlier ordering/safety violation. Secret values selected by `passEnv`/`redactEnv` are removed from stored command/output tails.", "")
   return `${lines.join("\n")}\n`
 }

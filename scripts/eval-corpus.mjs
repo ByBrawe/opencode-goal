@@ -9,6 +9,7 @@ const corpusPaths = [
   path.join(root, "eval", "corpus.json"),
   path.join(root, "eval", "corpus.project-index.json"),
   path.join(root, "eval", "corpus.sequence.json"),
+  path.join(root, "eval", "corpus.todo-orchestration.json"),
   path.join(root, "eval", "corpus.opencode2-experimental.json"),
 ]
 

@@ -77,6 +77,38 @@ The wrapper launches the first step with `opencode run --command <name> ...`. La
 
 Stateful scenarios remain model-free during `--preflight`. Preflight validates the final oracle executable, every intermediate oracle executable, fixture digest, required environment, competitor executable, and the declared final baseline oracle state. It does not run agent steps.
 
+## Ordered-sequence pilot
+
+`benchmarks/ordered-sequence.pilot.json` is a **single-plugin wiring pilot**, not cross-plugin competitive evidence. It pins OpenCode Goals `1.2.0` and exercises one observable sequence outcome:
+
+1. queue a Goal that must eventually create `order.log` containing exactly `first\n`;
+2. independently prove that `order.log` still does not exist;
+3. queue a second Goal that must append exactly `second\n` after the first line;
+4. independently prove the worktree is still untouched;
+5. explicitly activate the queue head with `/goal next`;
+6. require the final worktree to contain exactly `first\nsecond\n`.
+
+The pilot therefore measures inert pending contracts, ordered execution, and automatic continuation into the second queued Goal through an external worktree oracle. It never reads OpenCode Goals' internal queue JSON to award success.
+
+Run its model-free wiring check first:
+
+```text
+node scripts/competitive-benchmark.mjs \
+  --manifest benchmarks/ordered-sequence.pilot.json \
+  --preflight \
+  --out benchmark-results/ordered-sequence-pilot
+```
+
+Then run the three-repeat pilot only with the required provider environment and an exact OpenCode setup:
+
+```text
+node scripts/competitive-benchmark.mjs \
+  --manifest benchmarks/ordered-sequence.pilot.json \
+  --out benchmark-results/ordered-sequence-pilot
+```
+
+Do not use this pilot score in competitor ranking claims. The committed cross-plugin case must wait for the fairness layer below so each plugin receives the same semantic lifecycle actions even when command syntax differs.
+
 ## Fair competitor syntax
 
 Different Goal plugins may expose different command syntax for semantically equivalent lifecycle actions. Do not encode competitor-specific semantic advantages inside scenario prompts. Keep the scenario's intended state transitions identical and make syntax translation explicit and reviewable in the benchmark manifest or a thin competitor adapter.

@@ -44,7 +44,7 @@ npm run package:smoke -- --json package-smoke-report.json
 3. Keep `main` protected (or use an equivalent repository ruleset) so required checks cannot be bypassed by an accidental force push or unreviewed direct release change.
 4. Confirm npm Trusted Publishing is authorized for the repository/workflow and the `@bybrawe/opencode-goal` package.
 5. Inspect the release-readiness package-smoke evidence and `npm pack --dry-run` output before merging.
-6. For installer releases, verify the packed `dist/install.js` can create/update an isolated OpenCode config to the exact package version without mutating invalid config.
+6. For installer releases, verify `dist/install.js` can create/update an isolated OpenCode config and that `--uninstall` removes only Goal-owned registration/local plugin files while preserving unrelated config and project Goal state.
 7. Merge the green release pull request. Ordinary pull-request CI never publishes.
 
 The package declares `publishConfig.access = public`, so the scoped package is intentionally public.
@@ -56,7 +56,7 @@ The package declares `publishConfig.access = public`, so the scoped package is i
 The workflow is triggered by relevant changes reaching `main` (or by an explicit workflow dispatch), but publishing is guarded by an exact one-shot version check. For the current release candidate that guard is:
 
 ```text
-1.3.1
+1.3.2
 ```
 
 Before installing release dependencies or invoking `npm publish`, the workflow:
@@ -70,4 +70,4 @@ If all checks allow publication, it publishes with npm Trusted Publishing/OIDC u
 
 ## After publishing
 
-Verify the registry shows the exact version and that a clean project can install/import the published server and TUI entrypoints. Then run the public installer from a clean config directory and verify the resulting `plugin` entry is pinned to that exact release. Also verify OpenCode can load the published package by its npm name. Do not claim a release is published merely because the merge or publish workflow started; use the registry result as the final source of truth.
+Verify the registry shows the exact version and that a clean project can install/import the published server and TUI entrypoints. Then run the public installer from a clean config directory and verify the resulting `plugin` entry is pinned to that exact release. Also verify the public `--uninstall` path removes Goal registration without deleting unrelated config or project Goal state. Do not claim a release is published merely because the merge or publish workflow started; use the registry result as the final source of truth.

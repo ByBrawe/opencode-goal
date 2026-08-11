@@ -340,7 +340,7 @@ export function createSemanticVerifierRuntime(client: any, root: string, options
 
       const result = submitted.get(childID)
       if (!result || result.auditToken !== auditToken) {
-        throw new SemanticVerifierUnavailableError("semantic verifier finished without submitting a valid result")
+        throw new Error("semantic verifier did not submit a valid result")
       }
       const corroborated = await corroborateEvidence(root, goal, result.results, hostEvidenceRecords)
       return applySemanticVerifierResults(goal, corroborated)

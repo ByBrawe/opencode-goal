@@ -63,7 +63,8 @@ function assertPackageFiles(pack) {
   const files = new Set(pack.files.map((item) => String(item.path).replaceAll("\\", "/")))
   const required = [
     "package.json", "README.md", "CHANGELOG.md", "LICENSE",
-    "dist/index.js", "dist/index.d.ts", "dist/install.js", "dist/tui/index.js", "dist/tui/index.d.ts",
+    "dist/index.js", "dist/index.d.ts", "dist/server.js", "dist/server.d.ts",
+    "dist/install.js", "dist/tui/index.js", "dist/tui/index.d.ts",
   ]
   for (const file of required) {
     if (!files.has(file)) throw new Error(`publish tarball is missing required file: ${file}`)
@@ -93,6 +94,7 @@ async function main() {
   if (packageJSON.peerDependencies?.["@opencode-ai/plugin"] !== ">=1.4.0") {
     throw new Error("package smoke minimum peer fixture must match peerDependencies['@opencode-ai/plugin'] >=1.4.0")
   }
+  if (!packageJSON.exports?.["./server"]?.import) throw new Error("package.json must expose the OpenCode ./server entrypoint")
   if (!packageJSON.exports?.["./tui"]?.import) throw new Error("package.json must expose the target-exclusive ./tui entrypoint")
   if (packageJSON.bin?.["opencode-goal"] !== "./dist/install.js") throw new Error("package.json must expose the opencode-goal installer bin")
   if (!packageJSON.repository?.url || !packageJSON.homepage || !packageJSON.bugs?.url) {
@@ -122,10 +124,13 @@ async function main() {
       import path from "node:path";
       import { fileURLToPath } from "node:url";
       const mod = await import("@bybrawe/opencode-goal");
-      if (typeof mod.default !== "function") throw new Error("default OpenCode plugin export is missing");
+      if (typeof mod.default !== "function") throw new Error("default public OpenCode plugin export is missing");
       if (typeof mod.createGoal !== "function") throw new Error("createGoal export is missing");
       if (typeof mod.parseGoalCommand !== "function") throw new Error("parseGoalCommand export is missing");
       if (typeof mod.GoalSequenceStore !== "function") throw new Error("GoalSequenceStore export is missing");
+      const server = await import("@bybrawe/opencode-goal/server");
+      if (server.default?.id !== "@bybrawe/opencode-goal") throw new Error("server plugin id is incorrect");
+      if (typeof server.default?.server !== "function") throw new Error("server plugin export is missing");
       const tui = await import("@bybrawe/opencode-goal/tui");
       if (typeof tui.default?.tui !== "function") throw new Error("TUI plugin export is missing");
       if (tui.default?.id !== "opencode-goal") throw new Error("TUI plugin id is incorrect");
@@ -176,6 +181,7 @@ async function main() {
       fileCount: files.length,
       files,
       consumerImport: /consumer import ok/.test(String(consumerResult.stdout ?? "")),
+      serverEntrypoint: true,
       installer: true,
       commandDiscovery: true,
       uninstaller: true,
@@ -185,7 +191,7 @@ async function main() {
     console.log(`package ${report.npmPackage}@${report.version}`)
     console.log(`minimum runtime peer ${minimumPeer}`)
     console.log(`tarball ${report.filename} files=${report.fileCount} packed=${report.packageSize} unpacked=${report.unpackedSize}`)
-    console.log("clean consumer server + TUI import + installer + /goal command + uninstaller PASS")
+    console.log("clean consumer public API + server + TUI import + installer + /goal command + uninstaller PASS")
 
     if (options.jsonPath) {
       const target = path.resolve(root, options.jsonPath)

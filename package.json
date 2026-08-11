@@ -1,6 +1,6 @@
 {
   "name": "@bybrawe/opencode-goal",
-  "version": "1.3.2",
+  "version": "1.3.3",
   "description": "Persistent, host-verified Goals for OpenCode.",
   "type": "module",
   "main": "./dist/index.js",

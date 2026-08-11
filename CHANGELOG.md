@@ -2,6 +2,17 @@
 
 All notable changes to **OpenCode Goals** are documented here.
 
+## 1.3.5 — 2026-08-11
+
+OpenCode npm server-entry loader hotfix.
+
+- Added a dedicated `@bybrawe/opencode-goal/server` package export using OpenCode's current plugin-module shape (`{ id, server }`).
+- Fixed the remaining case where the managed `/goal` command was discoverable but the server plugin did not load because OpenCode fell back to legacy scanning of the multi-export public root API barrel.
+- Preserved the public root JavaScript API while routing OpenCode's npm server loader through a single-purpose server entrypoint.
+- Declared the supported OpenCode host range through `engines.opencode` while retaining the production `@opencode-ai/plugin` dependency introduced in 1.3.4.
+- Extended unit and packed-package smoke coverage to require `dist/server.js`/`dist/server.d.ts`, assert the server module exports only the plugin object, and prove clean production-only installation still carries the runtime SDK.
+- Updated troubleshooting for the visible `OpenCode Goals command bridge` fallback: update to 1.3.5 or newer and fully restart OpenCode.
+
 ## 1.3.4 — 2026-08-11
 
 OpenCode npm-plugin loading hotfix.

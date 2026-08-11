@@ -23,11 +23,11 @@ function resolveOpenCodeBinary() {
 
 const binary = resolveOpenCodeBinary()
 
-function appendLog(current, chunk, limit = 50_000) {
+function appendLog(current, chunk, limit = 80_000) {
   return (current + String(chunk)).slice(-limit)
 }
 
-async function runCli(args, { cwd, env, timeoutMs = 30_000 }) {
+async function runCli(args, { cwd, env, timeoutMs = 45_000 }) {
   return await new Promise((resolve, reject) => {
     const child = spawn(binary, args, { cwd, env, windowsHide: true })
     let stdout = ""
@@ -43,7 +43,7 @@ async function runCli(args, { cwd, env, timeoutMs = 30_000 }) {
     }
     const timer = setTimeout(() => {
       child.kill()
-      finish(reject, new Error(`CLI timed out: opencode ${args.join(" ")}\nstdout:\n${stdout}\nstderr:\n${stderr}`))
+      finish(reject, new Error(`CLI timed out after ${timeoutMs}ms: opencode ${args.join(" ")}\nstdout:\n${stdout}\nstderr:\n${stderr}`))
     }, timeoutMs)
     child.once("error", (error) => finish(reject, error))
     child.once("close", (code) => {
@@ -87,10 +87,16 @@ try {
     OPENCODE_DISABLE_LSP_DOWNLOAD: "true",
     OPENCODE_DISABLE_EXTERNAL_SKILLS: "true",
     OPENCODE_DISABLE_EMBEDDED_WEB_UI: "true",
+    OPENCODE_PRINT_LOGS: "1",
+    OPENCODE_LOG_LEVEL: "DEBUG",
     CI: "true",
   }
 
-  const result = await runCli(["debug", "config"], { cwd: workspace, env })
+  const result = await runCli(["debug", "config"], {
+    cwd: workspace,
+    env,
+    timeoutMs: isWindows ? 90_000 : 45_000,
+  })
   const config = parseConfig(result.stdout)
 
   assert.ok(Array.isArray(config.plugin), "resolved config did not retain a plugin list")

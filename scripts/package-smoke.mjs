@@ -7,7 +7,8 @@ import { fileURLToPath } from "node:url"
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const npmCLI = process.env.npm_execpath
-const minimumPeer = "@opencode-ai/plugin@1.4.0"
+const runtimeSDKVersion = "1.18.16"
+const minimumOpenCode = ">=1.4.0"
 const managedCommandMarker = "<!-- managed-by:@bybrawe/opencode-goal -->"
 
 function parseArgs(argv) {
@@ -91,8 +92,14 @@ async function main() {
   const packageJSON = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"))
   if (packageJSON.private === true) throw new Error("package.json is private and cannot be published")
   if (packageJSON.publishConfig?.access !== "public") throw new Error("scoped public package must set publishConfig.access=public")
-  if (packageJSON.peerDependencies?.["@opencode-ai/plugin"] !== ">=1.4.0") {
-    throw new Error("package smoke minimum peer fixture must match peerDependencies['@opencode-ai/plugin'] >=1.4.0")
+  if (packageJSON.engines?.opencode !== minimumOpenCode) {
+    throw new Error(`package smoke requires engines.opencode ${minimumOpenCode}`)
+  }
+  if (packageJSON.dependencies?.["@opencode-ai/plugin"] !== runtimeSDKVersion) {
+    throw new Error(`published runtime must depend on @opencode-ai/plugin@${runtimeSDKVersion}`)
+  }
+  if (packageJSON.peerDependencies?.["@opencode-ai/plugin"]) {
+    throw new Error("@opencode-ai/plugin is a runtime import and must not be peer-only")
   }
   if (!packageJSON.exports?.["./server"]?.import) throw new Error("package.json must expose the OpenCode ./server entrypoint")
   if (!packageJSON.exports?.["./tui"]?.import) throw new Error("package.json must expose the target-exclusive ./tui entrypoint")
@@ -115,7 +122,6 @@ async function main() {
       "--ignore-scripts",
       "--no-audit",
       "--no-fund",
-      minimumPeer,
       tarball,
     ], { cwd: consumer })
 
@@ -129,6 +135,7 @@ async function main() {
       if (typeof mod.parseGoalCommand !== "function") throw new Error("parseGoalCommand export is missing");
       if (typeof mod.GoalSequenceStore !== "function") throw new Error("GoalSequenceStore export is missing");
       const server = await import("@bybrawe/opencode-goal/server");
+      if (JSON.stringify(Object.keys(server)) !== JSON.stringify(["default"])) throw new Error("server entrypoint must export only the plugin module");
       if (server.default?.id !== "@bybrawe/opencode-goal") throw new Error("server plugin id is incorrect");
       if (typeof server.default?.server !== "function") throw new Error("server plugin export is missing");
       const tui = await import("@bybrawe/opencode-goal/tui");
@@ -136,6 +143,8 @@ async function main() {
       if (tui.default?.id !== "opencode-goal") throw new Error("TUI plugin id is incorrect");
       const entryDir = path.dirname(fileURLToPath(import.meta.resolve("@bybrawe/opencode-goal")));
       if (!fs.existsSync(path.join(entryDir, "index.d.ts"))) throw new Error("published type declarations are missing");
+      const runtimePkg = JSON.parse(fs.readFileSync(path.join(process.cwd(), "node_modules", "@opencode-ai", "plugin", "package.json"), "utf8"));
+      if (runtimePkg.version !== "${runtimeSDKVersion}") throw new Error(`wrong runtime SDK version: ${runtimePkg.version}`);
       console.log("consumer import ok");
     `
     const consumerResult = run(process.execPath, ["--input-type=module", "--eval", probe], { cwd: consumer })
@@ -174,7 +183,8 @@ async function main() {
       node: process.version,
       npmPackage: packageJSON.name,
       version: packageJSON.version,
-      minimumPeer,
+      minimumOpenCode,
+      runtimeSDKVersion,
       filename: packed.filename,
       packageSize: packed.size,
       unpackedSize: packed.unpackedSize,
@@ -182,6 +192,7 @@ async function main() {
       files,
       consumerImport: /consumer import ok/.test(String(consumerResult.stdout ?? "")),
       serverEntrypoint: true,
+      runtimeDependency: true,
       installer: true,
       commandDiscovery: true,
       uninstaller: true,
@@ -189,9 +200,9 @@ async function main() {
     }
 
     console.log(`package ${report.npmPackage}@${report.version}`)
-    console.log(`minimum runtime peer ${minimumPeer}`)
+    console.log(`minimum OpenCode ${minimumOpenCode}; runtime SDK @opencode-ai/plugin@${runtimeSDKVersion}`)
     console.log(`tarball ${report.filename} files=${report.fileCount} packed=${report.packageSize} unpacked=${report.unpackedSize}`)
-    console.log("clean consumer public API + server + TUI import + installer + /goal command + uninstaller PASS")
+    console.log("clean consumer public API + server + runtime dependency + TUI import + installer + /goal command + uninstaller PASS")
 
     if (options.jsonPath) {
       const target = path.resolve(root, options.jsonPath)

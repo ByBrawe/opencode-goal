@@ -6,6 +6,8 @@ import type { GoalState } from "../domain/types.js"
 import { applySemanticVerifierResults, type SemanticEvidenceRef, type SemanticRequirementResult } from "../verification/semantic.js"
 
 export const DEFAULT_VERIFIER_AGENT = "opencode-goal-verifier"
+export const DEFAULT_VERIFIER_TIMEOUT_MS = 30_000
+const VERIFIER_CLEANUP_TIMEOUT_MS = 1_500
 const VERIFIER_DESCRIPTION = "Independently verify semantic goal requirements without modifying the workspace."
 const VERIFIER_AGENT_PROMPT = "Act only as an independent completion verifier. Inspect current workspace evidence, preserve scope, fail closed on uncertainty, never modify files or execute commands, and submit verdicts only through opencode_goal_verifier_result."
 
@@ -89,10 +91,57 @@ async function corroborateEvidence(root: string, goal: GoalState, results: Seman
   return output
 }
 
-export function createSemanticVerifierRuntime(client: any, root: string) {
+async function bestEffortWithin(action: (() => Promise<unknown>) | undefined, timeoutMs = VERIFIER_CLEANUP_TIMEOUT_MS): Promise<void> {
+  if (!action) return
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, timeoutMs)
+    timer.unref?.()
+  })
+  try {
+    await Promise.race([
+      Promise.resolve().then(action).then(() => undefined).catch(() => undefined),
+      timeout,
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
+async function promptVerifier(client: any, childID: string, body: any, timeoutMs: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let timedOut = false
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      timedOut = true
+      reject(new Error(`semantic verifier timed out after ${timeoutMs}ms`))
+    }, timeoutMs)
+    timer.unref?.()
+  })
+  try {
+    await Promise.race([
+      client.session.prompt({ path: { id: childID }, body }),
+      timeout,
+    ])
+  } catch (error) {
+    if (timedOut) {
+      await bestEffortWithin(client.session.abort
+        ? () => client.session.abort({ path: { id: childID } })
+        : undefined)
+    }
+    throw error
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
+export function createSemanticVerifierRuntime(client: any, root: string, options: { timeoutMs?: number } = {}) {
   const pending = new Map<string, PendingAudit>()
   const submitted = new Map<string, SubmittedAudit>()
   const agentName = DEFAULT_VERIFIER_AGENT
+  const timeoutMs = Number.isFinite(options.timeoutMs) && Number(options.timeoutMs) > 0
+    ? Number(options.timeoutMs)
+    : DEFAULT_VERIFIER_TIMEOUT_MS
 
   function configure(config: any) {
     config.agent ||= {}
@@ -183,7 +232,7 @@ export function createSemanticVerifierRuntime(client: any, root: string) {
         ...(goal.execution?.model ? { model: goal.execution.model } : {}),
         parts: [{ type: "text", text: verificationPrompt(goal, auditToken) }],
       }
-      await client.session.prompt({ path: { id: childID }, body })
+      await promptVerifier(client, childID, body, timeoutMs)
       const result = submitted.get(childID)
       if (!result || result.auditToken !== auditToken) throw new Error("semantic verifier did not submit a valid result")
       const corroborated = await corroborateEvidence(root, goal, result.results)
@@ -192,9 +241,9 @@ export function createSemanticVerifierRuntime(client: any, root: string) {
       if (childID) {
         pending.delete(childID)
         submitted.delete(childID)
-        if (client.session.delete) {
-          try { await client.session.delete({ path: { id: childID } }) } catch {}
-        }
+        await bestEffortWithin(client.session.delete
+          ? () => client.session.delete({ path: { id: childID } })
+          : undefined)
       }
     }
   }

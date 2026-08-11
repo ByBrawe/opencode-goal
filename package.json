@@ -43,6 +43,7 @@
     "package:smoke": "npm run build && node scripts/package-smoke.mjs",
     "release:check": "npm run check && npm test && npm run eval && npm run package:smoke",
     "prepublishOnly": "npm run release:check",
+    "canary:npm-entry": "node scripts/npm-entry-canary.mjs",
     "canary:host": "node --import ./scripts/host-canary-bootstrap.mjs scripts/host-canary.mjs",
     "canary:semantic": "node --import ./scripts/host-canary-bootstrap.mjs scripts/host-semantic-canary.mjs",
     "canary:steering": "node --import ./scripts/host-canary-bootstrap.mjs scripts/host-steering-canary.mjs",

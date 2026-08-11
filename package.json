@@ -1,6 +1,6 @@
 {
   "name": "@bybrawe/opencode-goal",
-  "version": "1.3.3",
+  "version": "1.3.4",
   "description": "Persistent, host-verified Goals for OpenCode.",
   "type": "module",
   "main": "./dist/index.js",
@@ -9,6 +9,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./server": {
+      "types": "./dist/server.d.ts",
+      "import": "./dist/server.js"
     },
     "./tui": {
       "types": "./dist/tui/index.d.ts",

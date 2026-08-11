@@ -12,6 +12,9 @@ test("package exposes a dedicated OpenCode server entrypoint instead of legacy-l
 
   assert.equal(serverExport?.import, "./dist/server.js")
   assert.equal(serverExport?.types, "./dist/server.d.ts")
+  assert.equal(packageJSON.engines?.opencode, ">=1.4.0")
+  assert.equal(packageJSON.dependencies?.["@opencode-ai/plugin"], "1.18.16")
+  assert.equal(packageJSON.peerDependencies?.["@opencode-ai/plugin"], undefined)
 
   const publicModule = await import(pathToFileURL(path.join(root, "dist", "index.js")).href)
   assert.equal(typeof publicModule.default, "function")

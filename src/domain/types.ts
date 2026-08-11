@@ -113,6 +113,8 @@ export interface GoalState {
   checks: string[]
   execution?: GoalExecutionContext
   usage: GoalUsage
+  /** Completed-turn counter captured when the current revision started. Older snapshots default to 0. */
+  revisionTurnBaseline?: number
   budget: GoalBudget
   progressRevision: number
   observedProgressRevision: number

@@ -2,6 +2,25 @@
 
 All notable changes to **OpenCode Goals** are documented here.
 
+## 1.3.2 — 2026-08-11
+
+Installation/removal and documentation patch release.
+
+### Install, update, and uninstall
+
+- Promoted `npx -y @bybrawe/opencode-goal@latest` to the primary README installation/update path.
+- Added `npx -y @bybrawe/opencode-goal@latest --uninstall` for safe removal of Goal package registrations and known old local plugin copies.
+- Uninstall preserves project-local Goal history/state under `.opencode/goals`, `.opencode/goal-sequences`, and `.opencode/goal-locks` unless the user explicitly removes those directories.
+- Installer/uninstaller remains fail-closed on malformed non-array plugin configuration and preserves unrelated OpenCode settings.
+- Added uninstall regression coverage including JSONC preservation, unrelated-plugin preservation, local-copy cleanup, idempotence, and retained project state.
+
+### OpenCode Loop guidance
+
+- Reworked the README so install/update/uninstall are immediately visible.
+- Documented that OpenCode Goals and OpenCode Loop can be installed together because their packages, commands, and state directories are separate.
+- Documented the important same-session boundary: do not run `/goal` and Loop's experimental `/loop-goal` (or a competing prompt-producing Loop job) against the same work at the same time.
+- Recommends OpenCode Goals as the stronger persistent-goal/completion-verification layer while Loop remains useful for scheduling, command/shell jobs, compaction, and daemon workflows.
+
 ## 1.3.1 — 2026-08-11
 
 Installer/update patch release for npm-based OpenCode setup.

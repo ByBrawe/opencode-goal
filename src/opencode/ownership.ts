@@ -14,6 +14,11 @@ interface ActiveTurn {
   owner: GoalTurnOwner
 }
 
+interface PendingPromptOwner {
+  owner: GoalTurnOwner
+  expiresAt: number
+}
+
 export interface ToolCallOwner {
   messageID: string
   owner: GoalTurnOwner
@@ -29,6 +34,7 @@ export class TurnOwnership {
   #assistantOwners = new Map<string, GoalTurnOwner>()
   #assistantOrder: string[] = []
   #activeBySession = new Map<string, ActiveTurn>()
+  #pendingPromptOwnerBySession = new Map<string, PendingPromptOwner>()
   #toolOwners = new Map<string, ToolCallOwner>()
   #toolOrder: string[] = []
 
@@ -37,6 +43,7 @@ export class TurnOwnership {
     const existing = (this.#ownedPrompts.get(sessionID) ?? []).filter((item) => item.expiresAt > now)
     existing.push({ text, expiresAt: now + 60_000, ...(owner ? { owner } : {}) })
     this.#ownedPrompts.set(sessionID, existing.slice(-12))
+    if (owner) this.#pendingPromptOwnerBySession.set(sessionID, { owner, expiresAt: now + 60_000 })
   }
 
   consumePrompt(sessionID: string, text: string, userMessageID?: string): OwnedPrompt | null {
@@ -51,7 +58,10 @@ export class TurnOwnership {
     const [owned] = existing.splice(index, 1)
     if (existing.length) this.#ownedPrompts.set(sessionID, existing)
     else this.#ownedPrompts.delete(sessionID)
-    if (owned?.owner && userMessageID) this.#userOwners.set(userMessageID, owned.owner)
+    if (owned?.owner) {
+      this.#pendingPromptOwnerBySession.set(sessionID, { owner: owned.owner, expiresAt: now + 60_000 })
+      if (userMessageID) this.#userOwners.set(userMessageID, owned.owner)
+    }
     return owned ?? null
   }
 
@@ -96,8 +106,21 @@ export class TurnOwnership {
   rememberActiveTool(sessionID: string, callID: string): ToolCallOwner | undefined {
     if (!callID) return undefined
     const active = this.#activeBySession.get(sessionID)
-    if (!active) return undefined
-    return this.#rememberTool(sessionID, callID, { messageID: active.messageID, owner: active.owner })
+    if (active) return this.#rememberTool(sessionID, callID, { messageID: active.messageID, owner: active.owner })
+
+    const pending = this.#pendingPromptOwnerBySession.get(sessionID)
+    if (!pending) return undefined
+    if (pending.expiresAt <= Date.now()) {
+      this.#pendingPromptOwnerBySession.delete(sessionID)
+      return undefined
+    }
+
+    // OpenCode tool hooks expose sessionID/callID but not messageID. Fast models can
+    // reach tool.execute.before before the assistant message.updated event establishes
+    // activeBySession. The Goal-owned prompt is already known at dispatch time, so use
+    // that revision-bound owner as a temporary fallback instead of losing real host
+    // progress and tripping the three-turn no-progress guard.
+    return this.#rememberTool(sessionID, callID, { messageID: "", owner: pending.owner })
   }
 
   #rememberTool(sessionID: string, callID: string, value: ToolCallOwner): ToolCallOwner {

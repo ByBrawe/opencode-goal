@@ -56,7 +56,8 @@ npm run package:smoke -- --json package-smoke-report.json
 7. Inspect package-smoke evidence and `npm pack --dry-run` output.
 8. For installer releases, verify install/update and `--uninstall` against an isolated config directory.
 9. Verify the installer does not overwrite a user-owned `commands/goal.md` and uninstall does not remove user-owned command files or project Goal state.
-10. Merge only the green exact head.
+10. If more than one supported global OpenCode config filename exists, verify install/update stages every config first and then pins the same exact Goal package version in all of them so a later-loaded config cannot shadow the plugin registration.
+11. Merge only the green exact head.
 
 ## Trusted stable publication
 
@@ -65,7 +66,7 @@ npm run package:smoke -- --json package-smoke-report.json
 The current one-shot stable guard is:
 
 ```text
-1.3.5
+1.3.6
 ```
 
 Before `npm publish`, the workflow:
@@ -81,7 +82,7 @@ Publication uses npm Trusted Publishing/OIDC under the `latest` tag; no long-liv
 
 Verify the registry shows the exact version. From a clean config directory, run the public installer and verify:
 
-- the plugin entry is pinned to the published exact version;
+- the plugin entry is pinned to the published exact version in every supported global config file that already exists;
 - the published package exposes a valid dedicated `./server` entrypoint;
 - the package carries its required `@opencode-ai/plugin` runtime dependency;
 - `commands/goal.md` is created and recognized by OpenCode command discovery;

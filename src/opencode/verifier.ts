@@ -96,7 +96,6 @@ async function bestEffortWithin(action: (() => Promise<unknown>) | undefined, ti
   let timer: ReturnType<typeof setTimeout> | undefined
   const timeout = new Promise<void>((resolve) => {
     timer = setTimeout(resolve, timeoutMs)
-    timer.unref?.()
   })
   try {
     await Promise.race([
@@ -116,7 +115,6 @@ async function promptVerifier(client: any, childID: string, body: any, timeoutMs
       timedOut = true
       reject(new Error(`semantic verifier timed out after ${timeoutMs}ms`))
     }, timeoutMs)
-    timer.unref?.()
   })
   try {
     await Promise.race([

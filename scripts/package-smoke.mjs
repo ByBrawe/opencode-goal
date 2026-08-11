@@ -9,6 +9,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const npmCLI = process.env.npm_execpath
 const runtimeDependency = "@opencode-ai/plugin"
 const runtimeDependencyRange = ">=1.4.0 <2"
+const minimumOpenCode = ">=1.4.0"
 const managedCommandMarker = "<!-- managed-by:@bybrawe/opencode-goal -->"
 
 function parseArgs(argv) {
@@ -64,7 +65,8 @@ function assertPackageFiles(pack) {
   const files = new Set(pack.files.map((item) => String(item.path).replaceAll("\\", "/")))
   const required = [
     "package.json", "README.md", "CHANGELOG.md", "LICENSE",
-    "dist/index.js", "dist/index.d.ts", "dist/install.js", "dist/tui/index.js", "dist/tui/index.d.ts",
+    "dist/index.js", "dist/index.d.ts", "dist/server.js", "dist/server.d.ts",
+    "dist/install.js", "dist/tui/index.js", "dist/tui/index.d.ts",
   ]
   for (const file of required) {
     if (!files.has(file)) throw new Error(`publish tarball is missing required file: ${file}`)
@@ -91,12 +93,16 @@ async function main() {
   const packageJSON = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"))
   if (packageJSON.private === true) throw new Error("package.json is private and cannot be published")
   if (packageJSON.publishConfig?.access !== "public") throw new Error("scoped public package must set publishConfig.access=public")
+  if (packageJSON.engines?.opencode !== minimumOpenCode) {
+    throw new Error(`package smoke requires engines.opencode ${minimumOpenCode}`)
+  }
   if (packageJSON.dependencies?.[runtimeDependency] !== runtimeDependencyRange) {
     throw new Error(`package smoke requires ${runtimeDependency} as a production dependency (${runtimeDependencyRange}) because dist imports it at runtime`)
   }
   if (packageJSON.peerDependencies?.[runtimeDependency]) {
     throw new Error(`${runtimeDependency} must not be peer-only; OpenCode installs npm plugins into an isolated production cache`)
   }
+  if (!packageJSON.exports?.["./server"]?.import) throw new Error("package.json must expose the OpenCode ./server entrypoint")
   if (!packageJSON.exports?.["./tui"]?.import) throw new Error("package.json must expose the target-exclusive ./tui entrypoint")
   if (packageJSON.bin?.["opencode-goal"] !== "./dist/install.js") throw new Error("package.json must expose the opencode-goal installer bin")
   if (!packageJSON.repository?.url || !packageJSON.homepage || !packageJSON.bugs?.url) {
@@ -127,10 +133,16 @@ async function main() {
       import path from "node:path";
       import { fileURLToPath } from "node:url";
       const mod = await import("@bybrawe/opencode-goal");
-      if (typeof mod.default !== "function") throw new Error("default OpenCode plugin export is missing");
+      if (typeof mod.default !== "function") throw new Error("default public API plugin export is missing");
       if (typeof mod.createGoal !== "function") throw new Error("createGoal export is missing");
       if (typeof mod.parseGoalCommand !== "function") throw new Error("parseGoalCommand export is missing");
       if (typeof mod.GoalSequenceStore !== "function") throw new Error("GoalSequenceStore export is missing");
+      if (Object.keys(mod).length <= 1) throw new Error("public root API should remain a multi-export library barrel");
+      const server = await import("@bybrawe/opencode-goal/server");
+      if (JSON.stringify(Object.keys(server)) !== JSON.stringify(["default"])) throw new Error("server entrypoint must export only the plugin module");
+      if (server.default?.id !== "@bybrawe/opencode-goal") throw new Error("server plugin id is incorrect");
+      if (typeof server.default?.server !== "function") throw new Error("server plugin export is missing");
+      if (server.default.server !== mod.default) throw new Error("server entrypoint does not delegate to the public plugin implementation");
       const toolModule = await import("@opencode-ai/plugin/tool");
       if (typeof toolModule.tool !== "function") throw new Error("runtime OpenCode tool dependency is missing");
       const tui = await import("@bybrawe/opencode-goal/tui");
@@ -176,6 +188,7 @@ async function main() {
       node: process.version,
       npmPackage: packageJSON.name,
       version: packageJSON.version,
+      minimumOpenCode,
       runtimeDependency: `${runtimeDependency}@${runtimeDependencyRange}`,
       filename: packed.filename,
       packageSize: packed.size,
@@ -183,6 +196,7 @@ async function main() {
       fileCount: files.length,
       files,
       consumerImport: /consumer import ok/.test(String(consumerResult.stdout ?? "")),
+      serverEntrypoint: true,
       installer: true,
       commandDiscovery: true,
       uninstaller: true,
@@ -190,9 +204,10 @@ async function main() {
     }
 
     console.log(`package ${report.npmPackage}@${report.version}`)
+    console.log(`minimum OpenCode ${report.minimumOpenCode}`)
     console.log(`runtime dependency ${report.runtimeDependency}`)
     console.log(`tarball ${report.filename} files=${report.fileCount} packed=${report.packageSize} unpacked=${report.unpackedSize}`)
-    console.log("clean production-only consumer import + installer + /goal command + uninstaller PASS")
+    console.log("clean production-only consumer public API + server + TUI import + installer + /goal command + uninstaller PASS")
 
     if (options.jsonPath) {
       const target = path.resolve(root, options.jsonPath)

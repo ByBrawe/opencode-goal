@@ -12,15 +12,16 @@ Before a stable release reaches `main`, the exact pull-request head should have 
 - `Real Restart Recovery`
 - `Release Readiness`
 
-`CI` also exercises the minimum supported `@opencode-ai/plugin` peer and the current published plugin version plus real OpenCode lifecycle/semantic/steering/Todo canaries.
+`CI` also exercises the minimum supported `@opencode-ai/plugin` compatibility target and the current published plugin version plus real OpenCode lifecycle/semantic/steering/Todo canaries.
 
-`Release Readiness` runs on Ubuntu and Windows with Node 20 and Node 24. It runs checks/tests/evals, builds the npm tarball, installs it into a clean consumer, imports both public package entrypoints, and executes the packed installer artifact.
+`Release Readiness` runs on Ubuntu and Windows with Node 20 and Node 24. It runs checks/tests/evals, builds the npm tarball, installs it into a clean production-only consumer, imports both public package entrypoints and the runtime OpenCode tool dependency, and executes the packed installer artifact.
 
 For installer releases, package smoke must verify all of these from the packed artifact:
 
 ```text
 @bybrawe/opencode-goal
 @bybrawe/opencode-goal/tui
+@opencode-ai/plugin runtime dependency
 opencode-goal --version
 installer exact package pin
 managed commands/goal.md creation
@@ -45,11 +46,12 @@ npm run package:smoke -- --json package-smoke-report.json
 
 1. Keep release work on a pull request until all required gates are green on the exact head commit.
 2. Align `package.json`, `CHANGELOG.md`, README/release documentation, benchmark pins when applicable, and `.github/workflows/publish-npm.yml`.
-3. Confirm npm Trusted Publishing is authorized for this repository/workflow and package.
-4. Inspect package-smoke evidence and `npm pack --dry-run` output.
-5. For installer releases, verify install/update and `--uninstall` against an isolated config directory.
-6. Verify the installer does not overwrite a user-owned `commands/goal.md` and uninstall does not remove user-owned command files or project Goal state.
-7. Merge only the green exact head.
+3. Confirm every module imported by the compiled npm plugin at runtime is declared in production `dependencies`; do not rely on a peer/dev-only package being present in OpenCode's isolated plugin cache.
+4. Confirm npm Trusted Publishing is authorized for this repository/workflow and package.
+5. Inspect package-smoke evidence and `npm pack --dry-run` output.
+6. For installer releases, verify install/update and `--uninstall` against an isolated config directory.
+7. Verify the installer does not overwrite a user-owned `commands/goal.md` and uninstall does not remove user-owned command files or project Goal state.
+8. Merge only the green exact head.
 
 ## Trusted stable publication
 
@@ -58,7 +60,7 @@ npm run package:smoke -- --json package-smoke-report.json
 The current one-shot stable guard is:
 
 ```text
-1.3.3
+1.3.4
 ```
 
 Before `npm publish`, the workflow:
@@ -77,6 +79,7 @@ Verify the registry shows the exact version. From a clean config directory, run 
 - the plugin entry is pinned to the published exact version;
 - `commands/goal.md` is created and recognized by OpenCode command discovery;
 - `/goal` is visible after a full OpenCode restart;
+- `/goal status` is intercepted by the plugin rather than reaching the managed command bridge fallback;
 - `--uninstall` removes Goal-owned registration/command artifacts without deleting unrelated config or project Goal state.
 
 Do not claim a release is published merely because the merge or publish workflow started; the npm registry is the final publication source of truth.

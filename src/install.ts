@@ -14,7 +14,7 @@ const configDir = process.env.OPENCODE_CONFIG_DIR || join(homedir(), ".config", 
 const commandDir = join(configDir, "commands")
 const goalCommandPath = join(commandDir, "goal.md")
 const managedCommandMarker = "<!-- managed-by:@bybrawe/opencode-goal -->"
-const goalCommandContent = `---\ndescription: Set or manage a persistent evidence-verified goal\n---\n\n${managedCommandMarker}\n$ARGUMENTS\n`
+const goalCommandContent = `---\ndescription: Set or manage a persistent evidence-verified goal\n---\n\n${managedCommandMarker}\nOpenCode Goals command bridge. The OpenCode Goals plugin should intercept this command before model execution.\nIf this text reaches the model, do not perform the requested work. Tell the user the OpenCode Goals plugin did not load, then ask them to reinstall/update with npx -y @bybrawe/opencode-goal@latest and fully restart OpenCode.\n\nRequested /goal arguments:\n$ARGUMENTS\n`
 const configCandidates = ["opencode.json", "opencode.jsonc", "config.json", "config.jsonc"]
 const installerArgs = process.argv.slice(2)
 const uninstallRequested = installerArgs.length === 1 && ["--uninstall", "uninstall", "--remove"].includes(installerArgs[0] ?? "")

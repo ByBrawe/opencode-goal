@@ -2,6 +2,31 @@
 
 All notable changes to **OpenCode Goals** are documented here.
 
+## 1.3.2 — 2026-08-11
+
+Installation, command-discovery, removal, and documentation patch release.
+
+### Install, update, and `/goal` discovery
+
+- Made `npx -y @bybrawe/opencode-goal@latest` the primary README install/update path.
+- The installer now creates a managed global `commands/goal.md`, matching OpenCode's supported custom-command discovery path so `/goal` appears reliably in CLI/TUI command lists.
+- The managed command is a diagnostic bridge: if the Goal plugin fails to intercept it, the fallback prompt tells the user the plugin did not load instead of silently treating `/goal` arguments as ordinary work.
+- Installer refuses to overwrite a user-owned `commands/goal.md` and continues to preserve unrelated OpenCode config/JSONC content.
+- Existing package entries remain normalized to one exact `@bybrawe/opencode-goal@<installed-version>` pin to avoid stale package-cache resolution.
+
+### Uninstall
+
+- Added `npx -y @bybrawe/opencode-goal@latest --uninstall`.
+- Uninstall removes Goal package/local-plugin registrations plus only the installer-managed `/goal` command file.
+- User-owned `goal.md` is preserved.
+- Project-local Goal state under `.opencode/goals`, `.opencode/goal-sequences`, and `.opencode/goal-locks` is intentionally preserved unless the user explicitly removes it.
+
+### OpenCode Loop guidance and validation
+
+- Reworked README ordering so install/update/uninstall/troubleshooting are immediately visible.
+- Documented that OpenCode Goals and OpenCode Loop can be installed together, while `/goal` and Loop's experimental `/loop-goal`/competing prompt continuations should not drive the same work in one session.
+- Extended installer and packed-artifact regression coverage for command creation, command ownership conflicts, uninstall, JSONC preservation, retained project state, and idempotence.
+
 ## 1.3.1 — 2026-08-11
 
 Installer/update patch release for npm-based OpenCode setup.

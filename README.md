@@ -74,7 +74,7 @@ The config contains an exact package pin similar to:
 
 ```json
 {
-  "plugin": ["@bybrawe/opencode-goal@1.3.7"]
+  "plugin": ["@bybrawe/opencode-goal@1.3.8"]
 }
 ```
 
@@ -139,11 +139,21 @@ The installer will **not overwrite a user-owned `commands/goal.md`**. If one alr
 
 ## Goal completion stays busy or later commands remain `QUEUED`
 
-Update to `1.3.7` or newer if an executor finishes the requested work, calls `opencode_goal_complete`, and the parent OpenCode turn never returns while later commands remain queued.
+Update to `1.3.8` or newer if an executor finishes work, calls `opencode_goal_complete`, and semantic verification repeatedly times out or later commands keep getting queued behind repeated completion attempts.
 
-Before `1.3.7`, an independent semantic-verifier child session could wait indefinitely on a provider/model response. The parent completion tool waited for that child, so the parent session remained busy and OpenCode naturally queued later commands.
+Before `1.3.7`, an independent semantic-verifier child session could wait indefinitely on a provider/model response. `1.3.7` added a hard verifier deadline so one completion call could no longer wedge the parent turn forever. However, after that timeout the Goal could remain active, allowing the next idle continuation to retry completion and create a timeout loop.
 
-Current releases put a hard deadline around the semantic verifier, abort a timed-out verifier child, and separately bound cleanup. Completion still **fails closed** on timeout: a timeout cannot mark an unproven Goal completed, but it also cannot wedge the parent Goal turn forever. A command entered while a real Goal turn is still running can briefly appear queued; it should become runnable again after the active turn or verifier deadline finishes.
+`1.3.8` closes that second failure mode. Current OpenCode hosts use the asynchronous child-prompt transport when available, while the verifier still has a hard deadline and bounded cleanup. If verifier session creation, transport, or the deadline itself fails, completion remains **fail-closed** and the Goal is persisted as `paused` instead of being left active for another automatic retry. Already collected host check/file evidence is retained. The next `session.idle` therefore cannot start another verifier-timeout cycle, and a later user command is not trapped behind an endless autonomous retry loop.
+
+When the verifier/provider is healthy again, use:
+
+```text
+/goal resume
+```
+
+and let the active Goal retry normally. A verifier outage never marks an unproven Goal completed and never auto-promotes a queued Goal.
+
+For objectives that explicitly require work across multiple turns/cycles, current releases also tell the executor not to collapse the requested cadence into one batched edit. The semantic verifier receives host-observed current-revision Goal turn count plus distinct workspace-mutation evidence. A final file value by itself is not sufficient proof that a requested across-turn cadence actually happened.
 
 ## Quick start
 
@@ -250,11 +260,12 @@ Completion is an audit pipeline:
 2. declared file contracts are re-read by the plugin inside the project boundary;
 3. semantic requirements are sent to a separate read-only verifier session;
 4. verifier citations are checked against current files/evidence;
-5. stale, invented, indirect, or failing evidence is rejected;
-6. current native Todo work is rechecked;
-7. every required ledger item must be proven for the current revision before `completed` is persisted.
+5. host-observed current-revision turn/progress facts are available for temporal or across-turn requirements;
+6. stale, invented, indirect, or failing evidence is rejected;
+7. current native Todo work is rechecked;
+8. every required ledger item must be proven for the current revision before `completed` is persisted.
 
-If verification is unavailable, incomplete, stale, ambiguous, or races with a pause/edit, completion **fails closed**.
+If verification is unavailable, incomplete, stale, ambiguous, or races with a pause/edit, completion **fails closed**. Verifier infrastructure outages pause the Goal rather than causing an automatic timeout retry loop.
 
 ## Ordered Goal sequences
 

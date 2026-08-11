@@ -2,6 +2,19 @@
 
 All notable changes to **OpenCode Goals** are documented here.
 
+## 1.3.8 — 2026-08-12
+
+Semantic verifier retry-loop and across-turn verification hotfix.
+
+- Prefer OpenCode's asynchronous child-prompt transport when available for semantic verification, while retaining the bounded synchronous fallback for older hosts.
+- Classify verifier session creation, transport failure, and deadline expiry as verifier-infrastructure outages; persist the Goal as `paused` instead of leaving it active for another automatic idle retry.
+- Preserve already collected host command/file audit evidence when an infrastructure outage pauses completion; completion remains fail-closed and queued Goals are never auto-promoted by an outage.
+- Added current-revision host runtime evidence for Goal-owned turn count and distinct workspace mutation count so temporal/across-turn requirements cannot be proven from a final file state alone.
+- Strengthened continuation/compaction guidance so objectives that explicitly require work across multiple turns/cycles are not intentionally collapsed into one batched edit.
+- Hardened `opencode_goal_evidence_file` guidance so semantic/objective requirement IDs are not misused as file-evidence requests.
+- Added async-verifier transport, timeout classification, current-revision-turn evidence, and verifier circuit-breaker regressions.
+- Validated the feature head with the full required gate set, including real OpenCode native Todo and semantic completion canaries on Ubuntu and Windows.
+
 ## 1.3.7 — 2026-08-11
 
 Semantic verifier deadlock / queued-turn hotfix.

@@ -54,7 +54,7 @@ The package declares `publishConfig.access = public`, so the scoped package is i
 The workflow is triggered by relevant changes reaching `main` (or by an explicit workflow dispatch), but publishing is guarded by an exact one-shot version check. For the current release candidate that guard is:
 
 ```text
-1.2.0
+1.3.0
 ```
 
 Before installing release dependencies or invoking `npm publish`, the workflow:

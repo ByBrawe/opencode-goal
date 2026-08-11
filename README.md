@@ -8,11 +8,16 @@ OpenCode Goals keeps working toward an explicit outcome across turns, compaction
 
 ## Install
 
+
 ```text
-npm install @bybrawe/opencode-goal
+npx -y @bybrawe/opencode-goal@latest
 ```
 
 Package:
+
+```text
+npm install @bybrawe/opencode-goal
+```
 
 ```text
 @bybrawe/opencode-goal

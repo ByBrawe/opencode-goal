@@ -74,9 +74,11 @@ The config contains an exact package pin similar to:
 
 ```json
 {
-  "plugin": ["@bybrawe/opencode-goal@1.3.3"]
+  "plugin": ["@bybrawe/opencode-goal@1.3.5"]
 }
 ```
+
+OpenCode loads the npm package through its dedicated `./server` entrypoint. The root package export remains the public JavaScript API and is intentionally separate from the server-plugin module.
 
 ### Uninstall
 
@@ -107,9 +109,9 @@ Project Goal state is intentionally **not deleted**:
 
 Delete those project-local directories yourself only when you intentionally want to erase Goal history/state. Restart OpenCode after uninstalling.
 
-## `/goal` does not appear
+## `/goal` does not appear or the command bridge reaches the model
 
-If installation succeeded but `/goal` is missing:
+If installation succeeded but `/goal` is missing, or the model sees text beginning with `OpenCode Goals command bridge`, the command file loaded but the server plugin did not intercept it. Releases before `1.3.5` could still hit this because OpenCode may fall back to legacy root-module export scanning instead of a dedicated npm server entrypoint.
 
 1. Update/reinstall:
 
@@ -125,10 +127,11 @@ If installation succeeded but `/goal` is missing:
    ```
 
 2. Confirm the installer reports both an exact plugin pin and a managed `/goal` command.
-3. Confirm `commands/goal.md` exists in the global OpenCode config directory shown above.
-4. Fully close every OpenCode CLI/TUI/Desktop process, then reopen it.
-5. Do not start OpenCode with `--pure`; pure mode disables external plugins.
-6. Run OpenCode's config diagnostics and check for plugin load errors if the command is present but Goal behavior does not activate.
+3. Confirm the exact pin is `@bybrawe/opencode-goal@1.3.5` or newer.
+4. Confirm `commands/goal.md` exists in the global OpenCode config directory shown above.
+5. Fully close every OpenCode CLI/TUI/Desktop process, then reopen it.
+6. Do not start OpenCode with `--pure`; pure mode disables external plugins.
+7. Run OpenCode's config diagnostics and check for plugin load errors if the command is present but Goal behavior does not activate.
 
 OpenCode officially discovers global custom commands from `~/.config/opencode/commands/`, which is why current releases install `goal.md` there instead of relying only on runtime plugin config mutation.
 
@@ -305,7 +308,7 @@ npm package:
 @bybrawe/opencode-goal
 ```
 
-The repository includes deterministic regression tests, adversarial evals, minimum/current OpenCode compatibility lanes, real-host lifecycle/semantic/Todo/steering canaries, restart recovery, cross-platform package smoke tests, and installer/update/uninstall tests.
+The repository includes deterministic regression tests, adversarial evals, minimum/current OpenCode compatibility lanes, real-host lifecycle/semantic/Todo/steering canaries, restart recovery, cross-platform package smoke tests, dedicated server-entry regression coverage, and installer/update/uninstall tests.
 
 See [CHANGELOG.md](./CHANGELOG.md) for release history and [RELEASING.md](./RELEASING.md) for the release process.
 

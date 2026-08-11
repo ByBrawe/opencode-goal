@@ -93,6 +93,11 @@ jobs:
         env:
           OPENCODE_PRINT_LOGS: "1"
           OPENCODE_LOG_LEVEL: DEBUG
+      - name: Run real OpenCode package-entry canary
+        run: npm run canary:npm-entry
+        env:
+          OPENCODE_PRINT_LOGS: "1"
+          OPENCODE_LOG_LEVEL: DEBUG
       - name: Run real-host lifecycle canary
         run: npm run canary:host
         env:

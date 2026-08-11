@@ -16,6 +16,8 @@ function semanticGoal(overrides = {}) {
         required: true,
         verification: "semantic",
         status: "pending",
+        evidenceIDs: [],
+        updatedAt: Date.now(),
       },
     ],
     evidence: [],

@@ -64,17 +64,25 @@ async function assertManagedCommandWritable(): Promise<void> {
   throw new Error(`Refusing to overwrite user-owned OpenCode command: ${goalCommandPath}`)
 }
 
+function assertStageSuccess(result: ReturnType<typeof runLegacy>, source: string): void {
+  if (result.status === 0) return
+  const details = [String(result.stdout ?? ""), String(result.stderr ?? "")].filter(Boolean).join("\n")
+  throw new Error(`OpenCode Goals could not safely update ${source}. No config files were changed.\n${details}`)
+}
+
 async function stageConfig(name: string): Promise<{ target: string; content: string; commandContent: string }> {
   const stageDir = await mkdtemp(join(tmpdir(), "opencode-goal-config-stage-"))
   try {
     const source = join(configDir, name)
     const staged = join(stageDir, name)
     await copyFile(source, staged)
-    const result = runLegacy(stageDir, [], false)
-    if (result.status !== 0) {
-      const details = [String(result.stdout ?? ""), String(result.stderr ?? "")].filter(Boolean).join("\n")
-      throw new Error(`OpenCode Goals could not safely update ${source}. No config files were changed.\n${details}`)
-    }
+
+    // First pass performs the semantic install/update. A second pass reaches the
+    // legacy formatter's fixed point when it had to add a new plugin property,
+    // so the first real multi-config install is already byte-idempotent.
+    assertStageSuccess(runLegacy(stageDir, [], false), source)
+    assertStageSuccess(runLegacy(stageDir, [], false), source)
+
     return {
       target: source,
       content: await readFile(staged, "utf8"),

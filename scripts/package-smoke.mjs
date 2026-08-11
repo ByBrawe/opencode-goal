@@ -144,7 +144,7 @@ async function main() {
       const entryDir = path.dirname(fileURLToPath(import.meta.resolve("@bybrawe/opencode-goal")));
       if (!fs.existsSync(path.join(entryDir, "index.d.ts"))) throw new Error("published type declarations are missing");
       const runtimePkg = JSON.parse(fs.readFileSync(path.join(process.cwd(), "node_modules", "@opencode-ai", "plugin", "package.json"), "utf8"));
-      if (runtimePkg.version !== "${runtimeSDKVersion}") throw new Error(`wrong runtime SDK version: ${runtimePkg.version}`);
+      if (runtimePkg.version !== "${runtimeSDKVersion}") throw new Error("wrong runtime SDK version: " + runtimePkg.version);
       console.log("consumer import ok");
     `
     const consumerResult = run(process.execPath, ["--input-type=module", "--eval", probe], { cwd: consumer })

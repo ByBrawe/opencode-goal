@@ -48,6 +48,7 @@ test("installer help and version do not mutate OpenCode config", async () => {
     const help = await runInstaller(configDir, ["--help"])
     assert.equal(help.code, 0, help.stderr)
     assert.match(help.stdout, /OpenCode Goals installer\/updater/)
+    assert.match(help.stdout, /--uninstall/)
     assert.equal(await exists(path.join(configDir, "opencode.json")), false)
 
     const version = await runInstaller(configDir, ["--version"])
@@ -156,17 +157,67 @@ test("installer can add plugin property to an existing JSONC object without disc
   }
 })
 
-test("installer fails closed when plugin config is not an array", async () => {
+test("uninstall removes Goal registrations and local copies while preserving other plugins and project state", async () => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-installer-uninstall-"))
+  const configDir = path.join(temp, "config")
+  const pluginDir = path.join(configDir, "plugins")
+  const projectState = path.join(temp, "project", ".opencode", "goals", "saved.json")
+  try {
+    await mkdir(pluginDir, { recursive: true })
+    await mkdir(path.dirname(projectState), { recursive: true })
+    await writeFile(projectState, "preserve me", "utf8")
+    await writeFile(path.join(pluginDir, "opencode-goal.ts"), "legacy local plugin", "utf8")
+    await writeFile(path.join(configDir, "opencode.jsonc"), `{
+  // Preserve this OpenCode config comment.
+  "plugin": [
+    "other-plugin@2.0.0",
+    "@bybrawe/opencode-goal@1.0.0",
+    "./plugins/opencode-goal.ts",
+  ],
+  "permission": { "read": "allow" },
+}
+`, "utf8")
+
+    const result = await runInstaller(configDir, ["--uninstall"])
+    assert.equal(result.code, 0, result.stderr)
+    assert.match(result.stdout, /Removed OpenCode Goals registrations/)
+    assert.match(result.stdout, /Project Goal state .* is preserved/)
+    const updated = await readFile(path.join(configDir, "opencode.jsonc"), "utf8")
+    assert.match(updated, /Preserve this OpenCode config comment/)
+    assert.match(updated, /"other-plugin@2\.0\.0"/)
+    assert.match(updated, /"permission"/)
+    assert.doesNotMatch(updated, /@bybrawe\/opencode-goal/)
+    assert.doesNotMatch(updated, /plugins\/opencode-goal/)
+    assert.equal(await exists(path.join(pluginDir, "opencode-goal.ts")), false)
+    assert.equal(await readFile(projectState, "utf8"), "preserve me")
+
+    const second = await runInstaller(configDir, ["--uninstall"])
+    assert.equal(second.code, 0, second.stderr)
+    assert.match(second.stdout, /was not registered/)
+  } finally {
+    await rm(temp, { recursive: true, force: true })
+  }
+})
+
+test("installer and uninstall fail closed when plugin config is not an array", async () => {
   const temp = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-installer-invalid-"))
   const configDir = path.join(temp, "config")
   const configPath = path.join(configDir, "opencode.json")
+  const pluginPath = path.join(configDir, "plugins", "opencode-goal.ts")
   try {
-    await mkdir(configDir, { recursive: true })
+    await mkdir(path.dirname(pluginPath), { recursive: true })
     const original = JSON.stringify({ plugin: "other-plugin" }, null, 2)
     await writeFile(configPath, original, "utf8")
-    const result = await runInstaller(configDir)
-    assert.notEqual(result.code, 0)
+    await writeFile(pluginPath, "must survive failed uninstall", "utf8")
+
+    const installResult = await runInstaller(configDir)
+    assert.notEqual(installResult.code, 0)
     assert.equal(await readFile(configPath, "utf8"), original)
+
+    const uninstallResult = await runInstaller(configDir, ["--uninstall"])
+    assert.notEqual(uninstallResult.code, 0)
+    assert.equal(await readFile(configPath, "utf8"), original)
+    assert.equal(await readFile(pluginPath, "utf8"), "must survive failed uninstall")
   } finally {
     await rm(temp, { recursive: true, force: true })
   }

@@ -2,6 +2,25 @@
 
 All notable changes to **OpenCode Goals** are documented here.
 
+## 1.3.7 — 2026-08-11
+
+Semantic verifier deadlock / queued-turn hotfix.
+
+- Added a hard 30-second deadline to independent semantic-verifier child sessions so `opencode_goal_complete` cannot wedge the parent Goal turn indefinitely when a provider/model never returns.
+- Timed-out verifier child sessions are aborted, and child-session cleanup is separately time-bounded.
+- Completion remains fail-closed: a verifier timeout never marks an unproven Goal completed, while the parent turn is released so normal active-Goal continuation can resume.
+- Added a never-resolving semantic-verifier regression test and validated it across the Node 20/24 release matrix.
+- Preserved successful real OpenCode semantic completion behavior while preventing later commands from remaining permanently `QUEUED` behind a hung verifier.
+
+## 1.3.6 — 2026-08-11
+
+Multi-config installer shadowing hotfix.
+
+- Installer now normalizes every existing supported global OpenCode config filename (`opencode.json`, `opencode.jsonc`, `config.json`, `config.jsonc`) to the same exact Goal package pin.
+- Stages every config rewrite before committing any real config change, so an invalid secondary config fails closed without partial mutation.
+- Keeps the managed `/goal` command and known local-plugin cleanup behavior while making repeated multi-config installs byte-idempotent.
+- Extended cross-platform installer/package smoke coverage for multi-config registration and exact package pinning.
+
 ## 1.3.5 — 2026-08-11
 
 OpenCode npm server-entry loader hotfix.

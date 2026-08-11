@@ -2,6 +2,15 @@
 
 All notable changes to **OpenCode Goals** are documented here.
 
+## 1.3.3 — 2026-08-11
+
+npm installation/documentation patch release.
+
+- Added an explicit npm-based OpenCode installation path: `npm install -g @bybrawe/opencode-goal@latest` followed by `opencode-goal`.
+- Clarified that a project-local `npm install @bybrawe/opencode-goal` alone does not register the plugin with OpenCode.
+- Documented update and uninstall flows for both `npx` and global npm installation methods.
+- Updated README examples to show the exact `1.3.3` plugin pin and both Loop/Goals global npm installers.
+
 ## 1.3.2 — 2026-08-11
 
 Installation, command-discovery, removal, and documentation patch release.

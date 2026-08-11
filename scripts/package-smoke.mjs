@@ -62,7 +62,7 @@ function assertPackageFiles(pack) {
   const files = new Set(pack.files.map((item) => String(item.path).replaceAll("\\", "/")))
   const required = [
     "package.json", "README.md", "CHANGELOG.md", "LICENSE",
-    "dist/index.js", "dist/index.d.ts", "dist/tui/index.js", "dist/tui/index.d.ts",
+    "dist/index.js", "dist/index.d.ts", "dist/install.js", "dist/tui/index.js", "dist/tui/index.d.ts",
   ]
   for (const file of required) {
     if (!files.has(file)) throw new Error(`publish tarball is missing required file: ${file}`)
@@ -83,6 +83,7 @@ async function main() {
     throw new Error("package smoke minimum peer fixture must match peerDependencies['@opencode-ai/plugin'] >=1.4.0")
   }
   if (!packageJSON.exports?.["./tui"]?.import) throw new Error("package.json must expose the target-exclusive ./tui entrypoint")
+  if (packageJSON.bin?.["opencode-goal"] !== "./dist/install.js") throw new Error("package.json must expose the opencode-goal installer bin")
   if (!packageJSON.repository?.url || !packageJSON.homepage || !packageJSON.bugs?.url) {
     throw new Error("package.json release metadata is incomplete (repository/homepage/bugs)")
   }
@@ -123,6 +124,18 @@ async function main() {
     `
     const consumerResult = run(process.execPath, ["--input-type=module", "--eval", probe], { cwd: consumer })
 
+    const installedRoot = path.join(consumer, "node_modules", "@bybrawe", "opencode-goal")
+    const installerPath = path.join(installedRoot, "dist", "install.js")
+    const installerConfig = path.join(temp, "installer-config")
+    const installerEnv = { ...process.env, OPENCODE_CONFIG_DIR: installerConfig }
+    const installerVersion = run(process.execPath, [installerPath, "--version"], { cwd: consumer, env: installerEnv })
+    if (String(installerVersion.stdout ?? "").trim() !== packageJSON.version) throw new Error("published installer reports the wrong version")
+    run(process.execPath, [installerPath], { cwd: consumer, env: installerEnv })
+    const installedConfig = JSON.parse(await readFile(path.join(installerConfig, "opencode.json"), "utf8"))
+    if (!Array.isArray(installedConfig.plugin) || installedConfig.plugin.length !== 1 || installedConfig.plugin[0] !== `${packageJSON.name}@${packageJSON.version}`) {
+      throw new Error("published installer did not create the exact OpenCode plugin pin")
+    }
+
     const report = {
       schemaVersion: 1,
       generatedAt: new Date().toISOString(),
@@ -138,13 +151,14 @@ async function main() {
       fileCount: files.length,
       files,
       consumerImport: /consumer import ok/.test(String(consumerResult.stdout ?? "")),
+      installer: true,
       gate: true,
     }
 
     console.log(`package ${report.npmPackage}@${report.version}`)
     console.log(`minimum runtime peer ${minimumPeer}`)
     console.log(`tarball ${report.filename} files=${report.fileCount} packed=${report.packageSize} unpacked=${report.unpackedSize}`)
-    console.log("clean consumer server + TUI import PASS")
+    console.log("clean consumer server + TUI import + installer PASS")
 
     if (options.jsonPath) {
       const target = path.resolve(root, options.jsonPath)

@@ -2,6 +2,24 @@
 
 All notable changes to **OpenCode Goals** are documented here.
 
+## 1.3.1 — 2026-08-11
+
+Installer/update patch release for npm-based OpenCode setup.
+
+### One-command install and update
+
+- Added the `opencode-goal` package binary so `npx -y @bybrawe/opencode-goal@latest` can install or update OpenCode Goals directly in the user's global OpenCode config.
+- The installer creates `~/.config/opencode/opencode.json` when no config exists, or updates the existing OpenCode JSON/JSONC config while preserving unrelated settings and comments outside the managed plugin array.
+- Bare, `@latest`, old exact-version, duplicate package entries, and known local `opencode-goal.ts/js` plugin entries are normalized to one exact `@bybrawe/opencode-goal@<installed-version>` pin.
+- Re-running the latest installer is idempotent and advances the literal package spec, preventing OpenCode's npm-plugin cache from continuing to resolve an older release.
+- Known auto-discovered local Goal plugin copies are removed after the npm package entry becomes authoritative, avoiding double-loading.
+- Installer help/version modes are read-only and invalid non-array plugin configuration fails closed instead of rewriting unknown config state.
+
+### Release validation
+
+- Added cross-platform installer regression tests for first install, update/deduplication, JSONC preservation, idempotence, and invalid-config refusal.
+- Package smoke now requires the compiled installer in the npm tarball, executes the installed artifact in a clean consumer project, and verifies that it produces the exact OpenCode package pin.
+
 ## 1.3.0 — 2026-08-11
 
 Compatible feature release adding revision-bound coordination with OpenCode's native Todo planning while preserving Goal completion as a separate host-verified contract.

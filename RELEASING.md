@@ -1,10 +1,10 @@
 # Releasing OpenCode Goals
 
-This project intentionally separates **release readiness** from **publishing**. Pull-request CI proves that an exact commit is packageable; npm publication is performed only by the repository's narrowly scoped trusted-publishing workflow after a release-version change reaches `main`.
+This project separates **release readiness** from **publishing**. Pull-request CI proves an exact commit is packageable; npm publication is performed only by the repository's trusted-publishing workflow after the release version reaches `main`.
 
-## Automated release gate
+## Required release gates
 
-Before a stable release can reach `main`, the exact pull-request head should have all repository workflows green, including:
+Before a stable release reaches `main`, the exact pull-request head should have these workflows green:
 
 - `CI`
 - `Actions Security Gate`
@@ -12,17 +12,21 @@ Before a stable release can reach `main`, the exact pull-request head should hav
 - `Real Restart Recovery`
 - `Release Readiness`
 
-`CI` also exercises the minimum supported `@opencode-ai/plugin` peer and the current published plugin version, plus real OpenCode lifecycle/semantic/steering canaries on Ubuntu and Windows.
+`CI` also exercises the minimum supported `@opencode-ai/plugin` peer and the current published plugin version plus real OpenCode lifecycle/semantic/steering/Todo canaries.
 
-`Release Readiness` runs on Ubuntu and Windows with Node 20 and Node 24. Each matrix job runs TypeScript checks, the product unit/regression suite, the mandatory adversarial eval corpus, then builds the npm tarball, installs that tarball into a clean temporary consumer project, imports both public package entrypoints, and executes the published installer artifact:
+`Release Readiness` runs on Ubuntu and Windows with Node 20 and Node 24. It runs checks/tests/evals, builds the npm tarball, installs it into a clean consumer, imports both public package entrypoints, and executes the packed installer artifact.
+
+For installer releases, package smoke must verify all of these from the packed artifact:
 
 ```text
 @bybrawe/opencode-goal
 @bybrawe/opencode-goal/tui
-npx -y @bybrawe/opencode-goal@latest
+opencode-goal --version
+installer exact package pin
+managed commands/goal.md creation
+--uninstall package registration removal
+--uninstall managed command removal
 ```
-
-The package smoke test also rejects tarballs that are missing required package/documentation/build files and rejects accidental publication of source/tests/scripts/workflow/eval files.
 
 Local equivalent:
 
@@ -31,7 +35,7 @@ npm install
 npm run release:check
 ```
 
-For a machine-readable tarball report:
+Machine-readable package smoke:
 
 ```text
 npm run package:smoke -- --json package-smoke-report.json
@@ -39,35 +43,40 @@ npm run package:smoke -- --json package-smoke-report.json
 
 ## Preparing a stable release
 
-1. Keep the release work on a pull request until every required repository gate is green on the exact head commit.
-2. Update `package.json`, `CHANGELOG.md`, release documentation, benchmark examples/docs when their stable package pin changes, and `.github/workflows/publish-npm.yml` so release-facing version references are intentional and consistent.
-3. Keep `main` protected (or use an equivalent repository ruleset) so required checks cannot be bypassed by an accidental force push or unreviewed direct release change.
-4. Confirm npm Trusted Publishing is authorized for the repository/workflow and the `@bybrawe/opencode-goal` package.
-5. Inspect the release-readiness package-smoke evidence and `npm pack --dry-run` output before merging.
-6. For installer releases, verify the packed `dist/install.js` can create/update an isolated OpenCode config to the exact package version without mutating invalid config.
-7. Merge the green release pull request. Ordinary pull-request CI never publishes.
-
-The package declares `publishConfig.access = public`, so the scoped package is intentionally public.
+1. Keep release work on a pull request until all required gates are green on the exact head commit.
+2. Align `package.json`, `CHANGELOG.md`, README/release documentation, benchmark pins when applicable, and `.github/workflows/publish-npm.yml`.
+3. Confirm npm Trusted Publishing is authorized for this repository/workflow and package.
+4. Inspect package-smoke evidence and `npm pack --dry-run` output.
+5. For installer releases, verify install/update and `--uninstall` against an isolated config directory.
+6. Verify the installer does not overwrite a user-owned `commands/goal.md` and uninstall does not remove user-owned command files or project Goal state.
+7. Merge only the green exact head.
 
 ## Trusted stable publication
 
 `.github/workflows/publish-npm.yml` is the only workflow allowed `id-token: write`. It uses pinned release actions, `contents: read`, and checkout with persisted credentials disabled.
 
-The workflow is triggered by relevant changes reaching `main` (or by an explicit workflow dispatch), but publishing is guarded by an exact one-shot version check. For the current release candidate that guard is:
+The current one-shot stable guard is:
 
 ```text
-1.3.1
+1.3.2
 ```
 
-Before installing release dependencies or invoking `npm publish`, the workflow:
+Before `npm publish`, the workflow:
 
-1. runs the repository Actions security policy;
+1. runs the Actions security policy;
 2. verifies the trusted-publishing npm runtime;
-3. compares `package.json` to the expected one-shot version;
-4. checks the npm registry and skips if that exact version already exists.
+3. checks that `package.json` equals the expected one-shot version;
+4. checks the npm registry and skips if the exact version already exists.
 
-If all checks allow publication, it publishes with npm Trusted Publishing/OIDC under the `latest` tag. No long-lived npm token is stored in the workflow.
+Publication uses npm Trusted Publishing/OIDC under the `latest` tag; no long-lived npm token is stored in the workflow.
 
 ## After publishing
 
-Verify the registry shows the exact version and that a clean project can install/import the published server and TUI entrypoints. Then run the public installer from a clean config directory and verify the resulting `plugin` entry is pinned to that exact release. Also verify OpenCode can load the published package by its npm name. Do not claim a release is published merely because the merge or publish workflow started; use the registry result as the final source of truth.
+Verify the registry shows the exact version. From a clean config directory, run the public installer and verify:
+
+- the plugin entry is pinned to the published exact version;
+- `commands/goal.md` is created and recognized by OpenCode command discovery;
+- `/goal` is visible after a full OpenCode restart;
+- `--uninstall` removes Goal-owned registration/command artifacts without deleting unrelated config or project Goal state.
+
+Do not claim a release is published merely because the merge or publish workflow started; the npm registry is the final publication source of truth.

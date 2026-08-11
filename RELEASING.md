@@ -12,9 +12,9 @@ Before a stable release reaches `main`, the exact pull-request head should have 
 - `Real Restart Recovery`
 - `Release Readiness`
 
-`CI` also exercises the minimum supported `@opencode-ai/plugin` peer and the current published plugin version plus real OpenCode lifecycle/semantic/steering/Todo canaries.
+`CI` exercises the minimum supported OpenCode compatibility target, the current published OpenCode plugin SDK, and real OpenCode lifecycle/semantic/steering/Todo canaries. Host compatibility is declared with `engines.opencode`; runtime imports from `@opencode-ai/plugin` must be production dependencies so npm/OpenCode cache installs are self-contained.
 
-`Release Readiness` runs on Ubuntu and Windows with Node 20 and Node 24. It runs checks/tests/evals, builds the npm tarball, installs it into a clean consumer, imports the public API plus dedicated server/TUI entrypoints, and executes the packed installer artifact.
+`Release Readiness` runs on Ubuntu and Windows with Node 20 and Node 24. It runs checks/tests/evals, builds the npm tarball, installs it into a clean consumer without manually injecting runtime dependencies, imports the public API plus dedicated server/TUI entrypoints, and executes the packed installer artifact.
 
 For installer releases, package smoke must verify all of these from the packed artifact:
 
@@ -22,6 +22,7 @@ For installer releases, package smoke must verify all of these from the packed a
 @bybrawe/opencode-goal
 @bybrawe/opencode-goal/server
 @bybrawe/opencode-goal/tui
+@opencode-ai/plugin runtime dependency
 opencode-goal --version
 installer exact package pin
 managed commands/goal.md creation
@@ -53,7 +54,8 @@ npm run package:smoke -- --json package-smoke-report.json
 5. For installer releases, verify install/update and `--uninstall` against an isolated config directory.
 6. Verify the installer does not overwrite a user-owned `commands/goal.md` and uninstall does not remove user-owned command files or project Goal state.
 7. Verify `@bybrawe/opencode-goal/server` default-exports exactly one OpenCode plugin module with a callable `server` function.
-8. Merge only the green exact head.
+8. Verify the packed package installs and imports successfully without the smoke harness installing `@opencode-ai/plugin` separately.
+9. Merge only the green exact head.
 
 ## Trusted stable publication
 
@@ -80,6 +82,7 @@ Verify the registry shows the exact version. From a clean config directory, run 
 
 - the plugin entry is pinned to the published exact version;
 - the published package exposes a valid dedicated `./server` entrypoint;
+- the package carries its required `@opencode-ai/plugin` runtime dependency;
 - `commands/goal.md` is created and recognized by OpenCode command discovery;
 - `/goal` is visible after a full OpenCode restart;
 - executing `/goal status` or `/goal <objective>` is intercepted by the plugin instead of sending the managed command-bridge fallback text to the model;

@@ -69,6 +69,25 @@ export interface ProgressNote {
   next: string
 }
 
+/**
+ * Advisory telemetry for OpenCode's native session Todo plan.
+ *
+ * The Todo list is owned by OpenCode and remains execution-planning state, not
+ * Goal completion evidence. Only aggregate counts/digest are persisted here so
+ * a Goal can tell whether the native plan was observed for the current revision
+ * without duplicating the Todo database inside Goal storage.
+ */
+export interface GoalTodoPlan {
+  goalRevision: number
+  digest: string
+  total: number
+  pending: number
+  inProgress: number
+  completed: number
+  cancelled: number
+  observedAt: number
+}
+
 export interface FileRequirementInput {
   file: string
   contains?: string
@@ -102,6 +121,8 @@ export interface GoalState {
   stalledTurns: number
   /** One-shot host marker: the Goal was activated at an idle boundary and still needs its first continuation dispatch. */
   pendingContinuation?: boolean
+  /** Native OpenCode Todo-plan telemetry. Advisory only; never completion evidence. */
+  todoPlan?: GoalTodoPlan
   blockerAudit?: BlockerAudit
   progressNotes: ProgressNote[]
   completionSummary?: string

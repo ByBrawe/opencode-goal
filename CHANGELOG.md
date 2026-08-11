@@ -2,6 +2,33 @@
 
 All notable changes to **OpenCode Goals** are documented here.
 
+## 1.3.0 — 2026-08-11
+
+Compatible feature release adding revision-bound coordination with OpenCode's native Todo planning while preserving Goal completion as a separate host-verified contract.
+
+### Native Todo orchestration
+
+- Broad and multi-step Goal continuation now steers capable agents to use OpenCode's native `todowrite` plan instead of maintaining a duplicate plugin task database.
+- Persisted Todo state is limited to current-revision aggregate telemetry (digest, counts, observation time); Todo text/status never becomes Goal evidence, never increments host progress, and never widens the authorized Goal scope.
+- Exact assistant-turn ownership (`goalID + revision`) prevents stale Todo calls from crossing `/goal edit`, pause, restore, or revision boundaries.
+- Restore invalidates the archived Todo binding so a resumed Goal must observe current host Todo state again.
+- Compaction guidance preserves the Goal/Todo separation and requires the executor to reconcile required work before completion.
+
+### Completion-integrity hardening
+
+- A current observed Todo plan with `pending` or `in_progress` work is now a negative completion veto.
+- A fully completed Todo plan remains non-evidence: it cannot prove Goal requirements, host checks, file contracts, or semantic success criteria.
+- Missing or stale Todo telemetry cannot block completion because native Todo planning remains optional/advisory.
+- The final completion audit rechecks current Todo telemetry, so work reopened while semantic verification is running still prevents a false completion.
+- `/goal audit` reports Todo telemetry separately from the proof ledger and labels it advisory rather than completion evidence.
+
+### Validation and benchmark support
+
+- Added deterministic regression/adversarial coverage for Todo telemetry, ownership races, edit/pause/restore invalidation, compaction guidance, audit visibility, and unfinished-plan completion veto behavior.
+- Added real-host native Todo canaries on Ubuntu and Windows using an actual OpenCode host while proving Todo activity creates neither Goal progress nor evidence.
+- Added a disposable real-model benchmark fixture and hidden external oracle for weak/free-model testing of Todo discipline, repository correctness, verifier-backed completion, and false-completion resistance.
+- Existing CI, Actions Security Gate, Release Readiness, Real Host Progress, and Real Restart Recovery gates remain required for the exact release head.
+
 ## 1.2.0 — 2026-08-10
 
 Compatible feature release adding ordered multi-Goal workflows and a read-only TUI sidebar while preserving the one-unfinished-live-Goal/session safety model and persisted schema-v1 compatibility.

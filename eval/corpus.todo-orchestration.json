@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "requiredCategories": ["todo-orchestration"],
+  "minimumWeightedScore": 1,
+  "cases": [
+    {
+      "id": "todo-orchestration.advisory-not-evidence",
+      "category": "todo-orchestration",
+      "weight": 3,
+      "testFile": "test/todo-plan.test.mjs",
+      "testName": "native Todo telemetry is advisory, deterministic, and revision-bound",
+      "expected": "Native Todo planning is revision-bound telemetry only: it creates no completion evidence, does not increment host progress, and identical plan rewrites do not churn Goal state."
+    },
+    {
+      "id": "todo-orchestration.stale-turn-race-refused",
+      "category": "todo-orchestration",
+      "weight": 3,
+      "testFile": "test/todo-orchestration.test.mjs",
+      "testName": "native Todo writes bind to the active Goal revision without becoming progress or evidence",
+      "expected": "A todowrite call started under an older Goal revision or before a pause cannot attach planning state to the newer/non-active Goal."
+    },
+    {
+      "id": "todo-orchestration.scope-and-completion-boundary",
+      "category": "todo-orchestration",
+      "weight": 3,
+      "testFile": "test/todo-orchestration-prompt.test.mjs",
+      "testName": "broad Goal continuation coordinates native Todos without making them completion evidence",
+      "expected": "Broad Goals use native Todos as a living execution plan while Todo completion, assistant suggestions, and nice-to-haves cannot widen scope or prove Goal completion."
+    },
+    {
+      "id": "todo-orchestration.unfinished-plan-completion-veto",
+      "category": "todo-orchestration",
+      "weight": 3,
+      "testFile": "test/todo-plan.test.mjs",
+      "testName": "current unfinished Todo plan vetoes completion without becoming evidence",
+      "expected": "A current native Todo plan with pending or in-progress work blocks Goal completion, while completed Todo state creates no evidence and stale Todo telemetry cannot veto a newer Goal revision."
+    }
+  ]
+}

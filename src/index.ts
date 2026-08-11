@@ -3,6 +3,7 @@ import { enhanceGoalControls } from "./opencode/controls.js"
 import { installGoalAuditUX } from "./opencode/audit-ux.js"
 import { installProjectGoalIndex } from "./opencode/project-index.js"
 import { installGoalContractUX } from "./opencode/contract-ux.js"
+import { installGoalTodoOrchestration } from "./opencode/todo-orchestration.js"
 import { installGoalSequence } from "./opencode/sequence.js"
 import { installTaskDeferral } from "./opencode/task-deferral.js"
 import { installRestrictedAgentSafety } from "./opencode/agent-boundary.js"
@@ -19,6 +20,10 @@ export default async function OpenCodeGoalPlugin(input: Parameters<typeof OpenCo
   installGoalAuditUX(input, hooks)
   installProjectGoalIndex(input, hooks)
   installGoalContractUX(input, hooks)
+  // Native OpenCode Todos remain execution-planning state. The bridge records
+  // only current-revision aggregate telemetry and never turns Todo status into
+  // Goal completion evidence.
+  installGoalTodoOrchestration(input, hooks)
   // Ordered Goals stay below task/Plan wrappers. Parent task deferral and the
   // restricted-agent boundary therefore win before a sequence idle can advance.
   installGoalSequence(input, hooks)
@@ -40,6 +45,7 @@ export * from "./runtime/accounting.js"
 export * from "./runtime/blocker.js"
 export * from "./runtime/limits.js"
 export * from "./runtime/progress.js"
+export * from "./runtime/todo-plan.js"
 export * from "./persistence/sequence-store.js"
 export * from "./opencode/command.js"
 export * from "./opencode/audit-ux.js"
@@ -47,3 +53,4 @@ export * from "./opencode/agent-boundary.js"
 export * from "./opencode/task-deferral.js"
 export * from "./opencode/project-index.js"
 export * from "./opencode/sequence.js"
+export * from "./opencode/todo-orchestration.js"

@@ -199,7 +199,7 @@ test("cross-plugin ordered-sequence example pins identical semantics and exact p
 
   const pluginSpecs = manifest.competitors.flatMap((competitor) => competitor.opencodeConfig.plugin ?? [])
   assert.deepEqual(pluginSpecs, [
-    "@bybrawe/opencode-goal@1.2.0",
+    "@bybrawe/opencode-goal@1.3.0",
     "opencode-goal-plugin@0.6.5",
     "@prevalentware/opencode-goal-plugin@0.4.10",
   ])

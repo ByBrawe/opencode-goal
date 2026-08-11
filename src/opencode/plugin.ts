@@ -1,12 +1,13 @@
 import { tool } from "@opencode-ai/plugin/tool"
 import { createGoal, editGoal, pauseGoal, resumeGoal } from "../domain/goal.js"
 import type { GoalExecutionContext, GoalState } from "../domain/types.js"
-import { GoalStore } from "../persistence/store.js"
+import { GoalStore, GoalStoreConcurrencyError } from "../persistence/store.js"
 import { accountAssistantUsage } from "../runtime/accounting.js"
 import { reportBlocker } from "../runtime/blocker.js"
 import { runConfiguredChecks } from "../runtime/checks.js"
 import { collectMutationFingerprints } from "../runtime/mutation-progress.js"
 import { addProgressNote, closeObservedTurn, markHostProgress } from "../runtime/progress.js"
+import { normalizeNativeTodos, observeTodoPlan } from "../runtime/todo-plan.js"
 import { completeGoal } from "../verification/audit.js"
 import { verifyDeclaredFiles } from "../verification/contracts.js"
 import { proveRequirementsFromEvidence, recordFileEvidence } from "../verification/evidence.js"
@@ -16,6 +17,7 @@ import { compactionContext, continuationPrompt } from "./prompt.js"
 import { createSemanticVerifierRuntime } from "./verifier.js"
 
 const FILE_MUTATION_TOOLS = new Set(["write", "edit", "apply_patch"])
+const TODO_TOOL = "todowrite"
 
 function replaceParts(parts: any[], text: string) {
   parts.splice(0, parts.length, { type: "text", text })
@@ -271,14 +273,35 @@ export default async function OpenCodeGoalPlugin(input: any) {
     },
 
     "tool.execute.before": async (event: any) => {
-      if (!FILE_MUTATION_TOOLS.has(event.tool)) return
+      if (event.tool !== TODO_TOOL && !FILE_MUTATION_TOOLS.has(event.tool)) return
       ownership.rememberActiveTool(event.sessionID, event.callID)
     },
 
     "tool.execute.after": async (event: any, output: any) => {
-      if (!FILE_MUTATION_TOOLS.has(event.tool)) return
+      if (event.tool !== TODO_TOOL && !FILE_MUTATION_TOOLS.has(event.tool)) return
       const call = ownership.consumeToolCall(event.sessionID, event.callID)
       if (!call) return
+
+      if (event.tool === TODO_TOOL) {
+        const todos = normalizeNativeTodos(output?.metadata?.todos ?? event?.args?.todos)
+        if (!todos) return
+        await serialize(event.sessionID, async () => {
+          const goal = await load(event.sessionID)
+          if (!goal || goal.status !== "active" || !sameGoalTurn(call.owner, goalTurnOwner(goal))) return
+          const next = observeTodoPlan(goal, todos)
+          if (next === goal) return
+          try {
+            await save(next)
+          } catch (error) {
+            // Todo telemetry is advisory. Cross-process contention must not turn
+            // an otherwise successful native todowrite into a Goal failure.
+            if (error instanceof GoalStoreConcurrencyError) return
+            throw error
+          }
+        })
+        return
+      }
+
       const fingerprints = await collectMutationFingerprints({
         root: directory,
         tool: event.tool,

@@ -65,23 +65,38 @@ export class TurnOwnership {
     return owned ?? null
   }
 
+  #rememberAssistant(messageID: string, owner: GoalTurnOwner) {
+    if (this.#assistantOwners.has(messageID)) return
+    this.#assistantOwners.set(messageID, owner)
+    this.#assistantOrder.push(messageID)
+    while (this.#assistantOrder.length > 256) {
+      const stale = this.#assistantOrder.shift()
+      if (stale) this.#assistantOwners.delete(stale)
+    }
+  }
+
+  #pendingOwner(sessionID: string): GoalTurnOwner | undefined {
+    const pending = this.#pendingPromptOwnerBySession.get(sessionID)
+    if (!pending) return undefined
+    if (pending.expiresAt <= Date.now()) {
+      this.#pendingPromptOwnerBySession.delete(sessionID)
+      return undefined
+    }
+    return pending.owner
+  }
+
   observeAssistant(info: any): GoalTurnOwner | undefined {
     const messageID = typeof info?.id === "string" ? info.id : ""
     if (!messageID) return undefined
     const parentID = typeof info?.parentID === "string" ? info.parentID : ""
-    const owner = this.#assistantOwners.get(messageID) ?? (parentID ? this.#userOwners.get(parentID) : undefined)
+    const sessionID = typeof info?.sessionID === "string" ? info.sessionID : ""
+    const owner = this.#assistantOwners.get(messageID)
+      ?? (parentID ? this.#userOwners.get(parentID) : undefined)
+      ?? (sessionID ? this.#pendingOwner(sessionID) : undefined)
     if (!owner) return undefined
 
-    if (!this.#assistantOwners.has(messageID)) {
-      this.#assistantOwners.set(messageID, owner)
-      this.#assistantOrder.push(messageID)
-      while (this.#assistantOrder.length > 256) {
-        const stale = this.#assistantOrder.shift()
-        if (stale) this.#assistantOwners.delete(stale)
-      }
-    }
+    this.#rememberAssistant(messageID, owner)
 
-    const sessionID = typeof info?.sessionID === "string" ? info.sessionID : ""
     if (sessionID) {
       if (info?.time?.completed) {
         const active = this.#activeBySession.get(sessionID)
@@ -98,29 +113,31 @@ export class TurnOwnership {
     const callID = typeof part?.callID === "string" ? part.callID : ""
     const messageID = typeof part?.messageID === "string" ? part.messageID : ""
     if (!callID || !messageID) return undefined
-    const owner = this.#assistantOwners.get(messageID)
+    const owner = this.#assistantOwners.get(messageID) ?? this.#pendingOwner(sessionID)
     if (!owner) return undefined
+    this.#rememberAssistant(messageID, owner)
+    this.#activeBySession.set(sessionID, { messageID, owner })
     return this.#rememberTool(sessionID, callID, { messageID, owner })
   }
 
   rememberActiveTool(sessionID: string, callID: string): ToolCallOwner | undefined {
     if (!callID) return undefined
+    const key = `${sessionID}\u0000${callID}`
+    const existing = this.#toolOwners.get(key)
+    if (existing) return existing
+
     const active = this.#activeBySession.get(sessionID)
     if (active) return this.#rememberTool(sessionID, callID, { messageID: active.messageID, owner: active.owner })
 
-    const pending = this.#pendingPromptOwnerBySession.get(sessionID)
-    if (!pending) return undefined
-    if (pending.expiresAt <= Date.now()) {
-      this.#pendingPromptOwnerBySession.delete(sessionID)
-      return undefined
-    }
+    const owner = this.#pendingOwner(sessionID)
+    if (!owner) return undefined
 
     // OpenCode tool hooks expose sessionID/callID but not messageID. Fast models can
     // reach tool.execute.before before the assistant message.updated event establishes
     // activeBySession. The Goal-owned prompt is already known at dispatch time, so use
     // that revision-bound owner as a temporary fallback instead of losing real host
     // progress and tripping the three-turn no-progress guard.
-    return this.#rememberTool(sessionID, callID, { messageID: "", owner: pending.owner })
+    return this.#rememberTool(sessionID, callID, { messageID: "", owner })
   }
 
   #rememberTool(sessionID: string, callID: string, value: ToolCallOwner): ToolCallOwner {

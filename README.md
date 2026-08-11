@@ -74,7 +74,7 @@ The config contains an exact package pin similar to:
 
 ```json
 {
-  "plugin": ["@bybrawe/opencode-goal@1.3.5"]
+  "plugin": ["@bybrawe/opencode-goal@1.3.7"]
 }
 ```
 
@@ -136,6 +136,14 @@ If installation succeeded but `/goal` is missing, or the model sees text beginni
 OpenCode officially discovers global custom commands from `~/.config/opencode/commands/`, which is why current releases install `goal.md` there instead of relying only on runtime plugin config mutation.
 
 The installer will **not overwrite a user-owned `commands/goal.md`**. If one already exists, move/rename it or intentionally merge its behavior before reinstalling.
+
+## Goal completion stays busy or later commands remain `QUEUED`
+
+Update to `1.3.7` or newer if an executor finishes the requested work, calls `opencode_goal_complete`, and the parent OpenCode turn never returns while later commands remain queued.
+
+Before `1.3.7`, an independent semantic-verifier child session could wait indefinitely on a provider/model response. The parent completion tool waited for that child, so the parent session remained busy and OpenCode naturally queued later commands.
+
+Current releases put a hard deadline around the semantic verifier, abort a timed-out verifier child, and separately bound cleanup. Completion still **fails closed** on timeout: a timeout cannot mark an unproven Goal completed, but it also cannot wedge the parent Goal turn forever. A command entered while a real Goal turn is still running can briefly appear queued; it should become runnable again after the active turn or verifier deadline finishes.
 
 ## Quick start
 

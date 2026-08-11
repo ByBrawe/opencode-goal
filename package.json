@@ -52,10 +52,14 @@
   },
   "keywords": ["opencode", "opencode-plugin", "goals", "goal", "agent", "autonomous", "codex", "plugin"],
   "license": "MIT",
-  "engines": { "node": ">=20" },
-  "peerDependencies": { "@opencode-ai/plugin": ">=1.4.0" },
+  "engines": {
+    "node": ">=20",
+    "opencode": ">=1.4.0"
+  },
+  "dependencies": {
+    "@opencode-ai/plugin": "1.18.16"
+  },
   "devDependencies": {
-    "@opencode-ai/plugin": "1.18.9",
     "@types/node": "^22.0.0",
     "typescript": "^5.8.3"
   }

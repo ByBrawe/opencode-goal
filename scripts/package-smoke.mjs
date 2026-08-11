@@ -130,10 +130,18 @@ async function main() {
     const installerEnv = { ...process.env, OPENCODE_CONFIG_DIR: installerConfig }
     const installerVersion = run(process.execPath, [installerPath, "--version"], { cwd: consumer, env: installerEnv })
     if (String(installerVersion.stdout ?? "").trim() !== packageJSON.version) throw new Error("published installer reports the wrong version")
+
     run(process.execPath, [installerPath], { cwd: consumer, env: installerEnv })
-    const installedConfig = JSON.parse(await readFile(path.join(installerConfig, "opencode.json"), "utf8"))
+    const configPath = path.join(installerConfig, "opencode.json")
+    const installedConfig = JSON.parse(await readFile(configPath, "utf8"))
     if (!Array.isArray(installedConfig.plugin) || installedConfig.plugin.length !== 1 || installedConfig.plugin[0] !== `${packageJSON.name}@${packageJSON.version}`) {
       throw new Error("published installer did not create the exact OpenCode plugin pin")
+    }
+
+    run(process.execPath, [installerPath, "--uninstall"], { cwd: consumer, env: installerEnv })
+    const uninstalledConfig = JSON.parse(await readFile(configPath, "utf8"))
+    if (!Array.isArray(uninstalledConfig.plugin) || uninstalledConfig.plugin.some((value) => String(value).startsWith(packageJSON.name))) {
+      throw new Error("published installer uninstall did not remove the OpenCode Goals package registration")
     }
 
     const report = {
@@ -152,13 +160,14 @@ async function main() {
       files,
       consumerImport: /consumer import ok/.test(String(consumerResult.stdout ?? "")),
       installer: true,
+      uninstaller: true,
       gate: true,
     }
 
     console.log(`package ${report.npmPackage}@${report.version}`)
     console.log(`minimum runtime peer ${minimumPeer}`)
     console.log(`tarball ${report.filename} files=${report.fileCount} packed=${report.packageSize} unpacked=${report.unpackedSize}`)
-    console.log("clean consumer server + TUI import + installer PASS")
+    console.log("clean consumer server + TUI import + installer + uninstaller PASS")
 
     if (options.jsonPath) {
       const target = path.resolve(root, options.jsonPath)

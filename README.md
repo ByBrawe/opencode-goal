@@ -6,13 +6,35 @@ OpenCode Goals keeps an explicit outcome alive across turns, compaction, delegat
 
 ## Install or update
 
-Recommended installation for OpenCode CLI/TUI/Desktop/headless sessions:
+Choose either installation method below. Both end by running the same OpenCode Goals installer, which registers the plugin and installs the `/goal` command.
+
+### Option 1 — one-command install with `npx` (recommended)
 
 ```bash
 npx -y @bybrawe/opencode-goal@latest
 ```
 
-The same command is also the supported update path. The installer:
+Run the same command again whenever you want to update to the latest release.
+
+### Option 2 — install with npm
+
+Install the package globally so the `opencode-goal` installer command is available:
+
+```bash
+npm install -g @bybrawe/opencode-goal@latest
+opencode-goal
+```
+
+To update later:
+
+```bash
+npm install -g @bybrawe/opencode-goal@latest
+opencode-goal
+```
+
+`npm install @bybrawe/opencode-goal` by itself only installs a Node package into the current project. It does **not** register the plugin in OpenCode. For an OpenCode installation, use the global npm method above or the recommended `npx` command.
+
+The installer:
 
 - finds the global OpenCode config directory;
 - creates a config if none exists;
@@ -52,15 +74,26 @@ The config contains an exact package pin similar to:
 
 ```json
 {
-  "plugin": ["@bybrawe/opencode-goal@1.3.2"]
+  "plugin": ["@bybrawe/opencode-goal@1.3.3"]
 }
 ```
 
 ### Uninstall
 
+If you installed/updated with `npx`:
+
 ```bash
 npx -y @bybrawe/opencode-goal@latest --uninstall
 ```
+
+If you installed the CLI globally with npm:
+
+```bash
+opencode-goal --uninstall
+npm uninstall -g @bybrawe/opencode-goal
+```
+
+Run `opencode-goal --uninstall` **before** removing the global npm package so the installer can remove its OpenCode registrations and managed command file.
 
 Uninstall removes Goal package registrations, known old local Goal plugin copies, and the installer-managed `/goal` command file while preserving unrelated OpenCode config.
 
@@ -82,6 +115,13 @@ If installation succeeded but `/goal` is missing:
 
    ```bash
    npx -y @bybrawe/opencode-goal@latest
+   ```
+
+   or, for a global npm installation:
+
+   ```bash
+   npm install -g @bybrawe/opencode-goal@latest
+   opencode-goal
    ```
 
 2. Confirm the installer reports both an exact plugin pin and a managed `/goal` command.
@@ -236,6 +276,14 @@ Both plugins can be installed together:
 ```bash
 npx -y @bybrawe/opencode-loop@latest
 npx -y @bybrawe/opencode-goal@latest
+```
+
+Or with global npm installer commands:
+
+```bash
+npm install -g @bybrawe/opencode-loop@latest @bybrawe/opencode-goal@latest
+opencode-loop
+opencode-goal
 ```
 
 Recommended split:

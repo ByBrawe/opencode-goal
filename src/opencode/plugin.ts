@@ -14,7 +14,7 @@ import { proveRequirementsFromEvidence, recordFileEvidence } from "../verificati
 import { parseGoalCommand } from "./command.js"
 import { TurnOwnership, goalTurnOwner, sameGoalTurn } from "./ownership.js"
 import { compactionContext, continuationPrompt } from "./prompt.js"
-import { createSemanticVerifierRuntime } from "./verifier.js"
+import { createSemanticVerifierRuntime, SemanticVerifierUnavailableError } from "./verifier.js"
 
 const FILE_MUTATION_TOOLS = new Set(["write", "edit", "apply_patch"])
 const TODO_TOOL = "todowrite"
@@ -75,6 +75,17 @@ export default async function OpenCodeGoalPlugin(input: any) {
 
   async function load(sessionID: string) { return await store.load(sessionID) }
   async function save(goal: GoalState) { await store.save(goal); return goal }
+
+  function mergeAuditEvaluation(latest: GoalState, evaluated: GoalState): GoalState {
+    const latestEvidenceIDs = new Set(latest.evidence.map((item) => item.id))
+    return {
+      ...latest,
+      requirements: evaluated.requirements,
+      evidence: [...latest.evidence, ...evaluated.evidence.filter((item) => !latestEvidenceIDs.has(item.id))].slice(-500),
+      progressRevision: Math.max(latest.progressRevision, evaluated.progressRevision),
+      updatedAt: Date.now(),
+    }
+  }
 
   function rememberToolProgress(messageID: string) {
     if (toolProgressMessages.has(messageID)) return
@@ -414,7 +425,7 @@ export default async function OpenCodeGoalPlugin(input: any) {
         }),
       }),
       opencode_goal_evidence_file: tool({
-        description: "Ask the host to verify a predeclared project-file requirement.",
+        description: "Ask the host to verify a predeclared project-file requirement. Use only the exact ID of a requirement whose verification kind is file; semantic/objective requirements are verified by completion audit instead.",
         args: { requirementID: tool.schema.string() },
         execute: async (args: any, context: any) => await serialize(context.sessionID, async () => {
           let goal = await load(context.sessionID)
@@ -429,7 +440,7 @@ export default async function OpenCodeGoalPlugin(input: any) {
         }),
       }),
       opencode_goal_complete: tool({
-        description: "Attempt verified completion. Host contracts run independently and semantic requirements are audited by a read-only verifier. Completion fails closed.",
+        description: "Attempt verified completion. Host contracts run independently and semantic requirements are audited by a read-only verifier. Completion fails closed. If verifier infrastructure is unavailable, the Goal is paused instead of retry-looping.",
         args: { summary: tool.schema.string() },
         execute: async (args: any, context: any) => {
           const snapshot = await serialize(context.sessionID, async () => await load(context.sessionID))
@@ -440,8 +451,22 @@ export default async function OpenCodeGoalPlugin(input: any) {
           let evaluated = await runConfiguredChecks(snapshot, directory)
           evaluated = await verifyDeclaredFiles(evaluated, directory)
           try {
-            evaluated = await semanticVerifier.verify(context.sessionID, evaluated)
+            evaluated = await semanticVerifier.verify(context.sessionID, evaluated, {
+              ...(typeof context.messageID === "string" ? { currentMessageID: context.messageID } : {}),
+            })
           } catch (error) {
+            if (error instanceof SemanticVerifierUnavailableError) {
+              return await serialize(context.sessionID, async () => {
+                const latest = await load(context.sessionID)
+                if (!latest || latest.id !== snapshot.id || latest.revision !== snapshot.revision || latest.status !== "active") {
+                  return "Completion not verified: goal changed, paused, or stopped while semantic verification was unavailable."
+                }
+                const merged = mergeAuditEvaluation(latest, evaluated)
+                const reason = `Independent semantic verification unavailable: ${error.message}`
+                await save(pauseGoal(merged, reason))
+                return `Completion not verified: ${error.message}. Goal paused to prevent repeated verifier retries. Use /goal resume to retry after the verifier/provider recovers.`
+              })
+            }
             return `Completion rejected: independent semantic verification failed closed (${String(error)}).`
           }
           return await serialize(context.sessionID, async () => {
@@ -449,14 +474,7 @@ export default async function OpenCodeGoalPlugin(input: any) {
             if (!latest || latest.id !== snapshot.id || latest.revision !== snapshot.revision || latest.status !== "active") {
               return "Completion rejected: goal changed, paused, or stopped while verification was running."
             }
-            const latestEvidenceIDs = new Set(latest.evidence.map((item) => item.id))
-            const merged: GoalState = {
-              ...latest,
-              requirements: evaluated.requirements,
-              evidence: [...latest.evidence, ...evaluated.evidence.filter((item) => !latestEvidenceIDs.has(item.id))].slice(-500),
-              progressRevision: Math.max(latest.progressRevision, evaluated.progressRevision),
-              updatedAt: Date.now(),
-            }
+            const merged = mergeAuditEvaluation(latest, evaluated)
             const result = completeGoal(merged, args.summary)
             await save(result.goal)
             return result.audit.ok ? "Goal completed with host and verifier-backed evidence." : `Completion rejected:\n- ${result.audit.reasons.join("\n- ")}`

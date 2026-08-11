@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto"
 import { promises as fs } from "node:fs"
 import path from "node:path"
 import { tool } from "@opencode-ai/plugin/tool"
-import type { GoalState } from "../domain/types.js"
+import type { EvidenceRecord, GoalState } from "../domain/types.js"
 import { applySemanticVerifierResults, type SemanticEvidenceRef, type SemanticRequirementResult } from "../verification/semantic.js"
 
 export const DEFAULT_VERIFIER_AGENT = "opencode-goal-verifier"
@@ -10,6 +10,15 @@ export const DEFAULT_VERIFIER_TIMEOUT_MS = 30_000
 const VERIFIER_CLEANUP_TIMEOUT_MS = 1_500
 const VERIFIER_DESCRIPTION = "Independently verify semantic goal requirements without modifying the workspace."
 const VERIFIER_AGENT_PROMPT = "Act only as an independent completion verifier. Inspect current workspace evidence, preserve scope, fail closed on uncertainty, never modify files or execute commands, and submit verdicts only through opencode_goal_verifier_result."
+
+export class SemanticVerifierUnavailableError extends Error {
+  readonly code = "SEMANTIC_VERIFIER_UNAVAILABLE"
+
+  constructor(message: string) {
+    super(message)
+    this.name = "SemanticVerifierUnavailableError"
+  }
+}
 
 interface PendingAudit {
   auditToken: string
@@ -28,11 +37,61 @@ function unwrapData<T = any>(value: any): T {
   return (value && typeof value === "object" && "data" in value ? value.data : value) as T
 }
 
-function verificationPrompt(goal: GoalState, auditToken: string): string {
+function errorText(error: unknown): string {
+  if (error instanceof Error && error.message) return error.message
+  return String(error)
+}
+
+function sdkResponseError(value: any): string | null {
+  if (!value || typeof value !== "object" || !("error" in value) || !value.error) return null
+  return errorText(value.error)
+}
+
+function currentRevisionTurns(goal: GoalState, currentMessageID?: string): number {
+  const baseline = Math.max(0, goal.revisionTurnBaseline ?? 0)
+  const completed = Math.max(0, goal.usage.turns - baseline)
+  const current = currentMessageID && !goal.usage.seenMessageIDs.includes(currentMessageID) ? 1 : 0
+  return completed + current
+}
+
+function verifierHostEvidence(goal: GoalState, currentMessageID?: string): EvidenceRecord[] {
+  const turns = currentRevisionTurns(goal, currentMessageID)
+  const mutations = goal.progressFingerprints?.length ?? 0
+  const runtime: EvidenceRecord[] = [
+    {
+      id: `goal-runtime-turns-r${goal.revision}`,
+      kind: "runtime",
+      trust: "host",
+      summary: `Host-observed Goal-owned assistant turns for the current revision, including the current completion turn when applicable: ${turns}.`,
+      createdAt: goal.updatedAt,
+      goalRevision: goal.revision,
+      requirementIDs: [],
+      source: "goal-runtime",
+      passed: true,
+      metadata: { turns },
+    },
+    {
+      id: `goal-runtime-progress-r${goal.revision}`,
+      kind: "runtime",
+      trust: "host",
+      summary: `Host-observed distinct workspace mutation fingerprints for the current revision: ${mutations}.`,
+      createdAt: goal.updatedAt,
+      goalRevision: goal.revision,
+      requirementIDs: [],
+      source: "goal-runtime",
+      passed: true,
+      metadata: { mutations, progressRevision: goal.progressRevision },
+    },
+  ]
+  const persisted = goal.evidence
+    .filter((item) => item.goalRevision === goal.revision && item.trust === "host" && item.passed === true)
+    .slice(-28)
+  return [...runtime, ...persisted]
+}
+
+function verificationPrompt(goal: GoalState, auditToken: string, hostEvidenceRecords: EvidenceRecord[]): string {
   const semantic = goal.requirements.filter((item) => item.required && item.verification === "semantic")
-  const hostEvidence = goal.evidence
-    .filter((item) => item.goalRevision === goal.revision && item.trust === "host")
-    .slice(-30)
+  const hostEvidence = hostEvidenceRecords
     .map((item) => `- [${item.id}] ${item.summary}`)
     .join("\n") || "- none"
   const request = JSON.stringify({
@@ -42,7 +101,7 @@ function verificationPrompt(goal: GoalState, auditToken: string): string {
     objective: goal.objective,
     requirements: semantic.map((item) => ({ id: item.id, text: item.text })),
   }, null, 2)
-  return `Independently audit the semantic requirements for an OpenCode goal.\n\nThe goal executor's claims are not proof. Inspect the current workspace yourself using only read/search tools. Never edit files, run shell commands, delegate tasks, or mutate goal state. Preserve the full requested scope.\n\nVerdicts:\n- proven: current authoritative workspace evidence directly establishes the requirement. Support proven verdicts with exact file excerpts as {path, quote} and/or IDs of current passing host evidence. The host will independently re-read file quotes and validate every host-evidence ID.\n- failed: current evidence directly contradicts the requirement.\n- unknown: evidence is missing, indirect, ambiguous, external, or would require executing a command you cannot run.\n\nDo not treat a vague statement, plan, TODO, changelog claim, or unverified test claim as proof. Host-run verification evidence, when present below, may be used only for what it actually establishes. A path without an exact quote is not proof, and an unknown host-evidence ID is not proof.\n\nHost evidence:\n${hostEvidence}\n\nVerification request:\n${request}\n\nCall opencode_goal_verifier_result exactly once with the auditToken and one result for every listed requirement. Do not return a success verdict outside that tool.`
+  return `Independently audit the semantic requirements for an OpenCode goal.\n\nThe goal executor's claims are not proof. Inspect the current workspace yourself using only read/search tools. Never edit files, run shell commands, delegate tasks, or mutate goal state. Preserve the full requested scope.\n\nVerdicts:\n- proven: current authoritative workspace evidence directly establishes the requirement. Support proven verdicts with exact file excerpts as {path, quote} and/or IDs of current passing host evidence. The host will independently re-read file quotes and validate every host-evidence ID.\n- failed: current evidence directly contradicts the requirement.\n- unknown: evidence is missing, indirect, ambiguous, external, or would require executing a command you cannot run.\n\nDo not treat a vague statement, plan, TODO, changelog claim, or unverified test claim as proof. Host-run verification evidence, when present below, may be used only for what it actually establishes. A path without an exact quote is not proof, and an unknown host-evidence ID is not proof. Temporal/process requirements such as doing an action across N distinct turns are not proven by a final file value alone: use the host runtime turn/progress evidence below and return unknown or failed when the requested cadence/count is not established.\n\nHost evidence:\n${hostEvidence}\n\nVerification request:\n${request}\n\nCall opencode_goal_verifier_result exactly once with the auditToken and one result for every listed requirement. Do not return a success verdict outside that tool.`
 }
 
 function resolveInside(root: string, candidate: string): string {
@@ -54,8 +113,14 @@ function resolveInside(root: string, candidate: string): string {
   return resolved
 }
 
-async function corroborateEvidence(root: string, goal: GoalState, results: SemanticRequirementResult[]): Promise<SemanticRequirementResult[]> {
+async function corroborateEvidence(
+  root: string,
+  goal: GoalState,
+  results: SemanticRequirementResult[],
+  hostEvidenceRecords: EvidenceRecord[],
+): Promise<SemanticRequirementResult[]> {
   const cache = new Map<string, { content: string; sha256: string }>()
+  const hostEvidenceByID = new Map(hostEvidenceRecords.map((item) => [item.id, item]))
   const output: SemanticRequirementResult[] = []
   for (const result of results) {
     const evidence: SemanticEvidenceRef[] = []
@@ -78,7 +143,7 @@ async function corroborateEvidence(root: string, goal: GoalState, results: Seman
     }
     const hostEvidenceIDs = [...new Set(result.hostEvidenceIDs.map((item) => item.trim()).filter(Boolean))]
     for (const id of hostEvidenceIDs) {
-      const hostEvidence = goal.evidence.find((item) => item.id === id)
+      const hostEvidence = hostEvidenceByID.get(id)
       if (!hostEvidence || hostEvidence.goalRevision !== goal.revision || hostEvidence.trust !== "host" || hostEvidence.passed !== true) {
         throw new Error(`verifier referenced invalid or non-passing host evidence: ${id}`)
       }
@@ -107,26 +172,25 @@ async function bestEffortWithin(action: (() => Promise<unknown>) | undefined, ti
   }
 }
 
-async function promptVerifier(client: any, childID: string, body: any, timeoutMs: number): Promise<void> {
+async function abortVerifier(client: any, childID: string): Promise<void> {
+  await bestEffortWithin(client.session.abort
+    ? () => client.session.abort({ path: { id: childID } })
+    : undefined)
+}
+
+async function withinVerifierDeadline<T>(client: any, childID: string, work: Promise<T>, timeoutMs: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
   let timedOut = false
   const timeout = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => {
       timedOut = true
-      reject(new Error(`semantic verifier timed out after ${timeoutMs}ms`))
+      reject(new SemanticVerifierUnavailableError(`semantic verifier timed out after ${timeoutMs}ms`))
     }, timeoutMs)
   })
   try {
-    await Promise.race([
-      client.session.prompt({ path: { id: childID }, body }),
-      timeout,
-    ])
+    return await Promise.race([work, timeout])
   } catch (error) {
-    if (timedOut) {
-      await bestEffortWithin(client.session.abort
-        ? () => client.session.abort({ path: { id: childID } })
-        : undefined)
-    }
+    if (timedOut) await abortVerifier(client, childID)
     throw error
   } finally {
     if (timer) clearTimeout(timer)
@@ -136,6 +200,7 @@ async function promptVerifier(client: any, childID: string, body: any, timeoutMs
 export function createSemanticVerifierRuntime(client: any, root: string, options: { timeoutMs?: number } = {}) {
   const pending = new Map<string, PendingAudit>()
   const submitted = new Map<string, SubmittedAudit>()
+  const resultSignals = new Map<string, () => void>()
   const agentName = DEFAULT_VERIFIER_AGENT
   const timeoutMs = Number.isFinite(options.timeoutMs) && Number(options.timeoutMs) > 0
     ? Number(options.timeoutMs)
@@ -205,19 +270,26 @@ export function createSemanticVerifierRuntime(client: any, root: string, options
         results.push({ requirementID: String(item.requirementID), verdict: verdict as SemanticRequirementResult["verdict"], reason, evidence, hostEvidenceIDs })
       }
       submitted.set(context.sessionID, { auditToken: request.auditToken, results })
+      resultSignals.get(context.sessionID)?.()
       return "Semantic verifier result accepted."
     },
   })
 
-  async function verify(parentSessionID: string, goal: GoalState): Promise<GoalState> {
+  async function verify(parentSessionID: string, goal: GoalState, verifyOptions: { currentMessageID?: string } = {}): Promise<GoalState> {
     const semantic = goal.requirements.filter((item) => item.required && item.verification === "semantic")
     if (semantic.length === 0) return goal
     const auditToken = randomUUID()
+    const hostEvidenceRecords = verifierHostEvidence(goal, verifyOptions.currentMessageID)
     let childID = ""
     try {
-      const created = unwrapData<any>(await client.session.create({ body: { parentID: parentSessionID, title: "Goal verification" } }))
+      let created: any
+      try {
+        created = unwrapData<any>(await client.session.create({ body: { parentID: parentSessionID, title: "Goal verification" } }))
+      } catch (error) {
+        throw new SemanticVerifierUnavailableError(`semantic verifier session creation failed: ${errorText(error)}`)
+      }
       childID = String(created?.id ?? "")
-      if (!childID) throw new Error("OpenCode did not return a verifier session id")
+      if (!childID) throw new SemanticVerifierUnavailableError("OpenCode did not return a verifier session id")
       pending.set(childID, {
         auditToken,
         parentSessionID,
@@ -228,17 +300,55 @@ export function createSemanticVerifierRuntime(client: any, root: string, options
       const body = {
         agent: agentName,
         ...(goal.execution?.model ? { model: goal.execution.model } : {}),
-        parts: [{ type: "text", text: verificationPrompt(goal, auditToken) }],
+        parts: [{ type: "text", text: verificationPrompt(goal, auditToken, hostEvidenceRecords) }],
       }
-      await promptVerifier(client, childID, body, timeoutMs)
+
+      if (typeof client.session.promptAsync === "function") {
+        let resolveResult!: () => void
+        const resultSignal = new Promise<void>((resolve) => { resolveResult = resolve })
+        resultSignals.set(childID, resolveResult)
+        let dispatched: any
+        try {
+          dispatched = await client.session.promptAsync({ path: { id: childID }, body })
+        } catch (error) {
+          await abortVerifier(client, childID)
+          throw new SemanticVerifierUnavailableError(`semantic verifier async dispatch failed: ${errorText(error)}`)
+        }
+        const dispatchError = sdkResponseError(dispatched)
+        if (dispatchError) {
+          await abortVerifier(client, childID)
+          throw new SemanticVerifierUnavailableError(`semantic verifier async dispatch failed: ${dispatchError}`)
+        }
+        await withinVerifierDeadline(client, childID, resultSignal, timeoutMs)
+      } else {
+        try {
+          await withinVerifierDeadline(
+            client,
+            childID,
+            Promise.resolve(client.session.prompt({ path: { id: childID }, body })).then((response) => {
+              const dispatchError = sdkResponseError(response)
+              if (dispatchError) throw new Error(dispatchError)
+            }),
+            timeoutMs,
+          )
+        } catch (error) {
+          if (error instanceof SemanticVerifierUnavailableError) throw error
+          await abortVerifier(client, childID)
+          throw new SemanticVerifierUnavailableError(`semantic verifier dispatch failed: ${errorText(error)}`)
+        }
+      }
+
       const result = submitted.get(childID)
-      if (!result || result.auditToken !== auditToken) throw new Error("semantic verifier did not submit a valid result")
-      const corroborated = await corroborateEvidence(root, goal, result.results)
+      if (!result || result.auditToken !== auditToken) {
+        throw new Error("semantic verifier did not submit a valid result")
+      }
+      const corroborated = await corroborateEvidence(root, goal, result.results, hostEvidenceRecords)
       return applySemanticVerifierResults(goal, corroborated)
     } finally {
       if (childID) {
         pending.delete(childID)
         submitted.delete(childID)
+        resultSignals.delete(childID)
         await bestEffortWithin(client.session.delete
           ? () => client.session.delete({ path: { id: childID } })
           : undefined)

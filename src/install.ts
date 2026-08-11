@@ -13,9 +13,10 @@ const packageSpec = `${packageName}@${packageVersion}`
 const configDir = process.env.OPENCODE_CONFIG_DIR || join(homedir(), ".config", "opencode")
 const configCandidates = ["opencode.json", "opencode.jsonc", "config.json", "config.jsonc"]
 const installerArgs = process.argv.slice(2)
+const uninstallRequested = installerArgs.length === 1 && ["--uninstall", "uninstall", "--remove"].includes(installerArgs[0] ?? "")
 
 if (installerArgs.includes("--help") || installerArgs.includes("-h")) {
-  console.log(`OpenCode Goals installer/updater\n\nUsage:\n  opencode-goal\n  npx -y @bybrawe/opencode-goal@latest\n\nAdds or updates ${packageName} in the global OpenCode config.\nRe-running the latest installer pins the config to the new exact package version,\nwhich avoids stale OpenCode package-cache entries.\n\nSet OPENCODE_CONFIG_DIR to target a non-default OpenCode config directory.`)
+  console.log(`OpenCode Goals installer/updater\n\nUsage:\n  opencode-goal\n  npx -y @bybrawe/opencode-goal@latest\n  npx -y @bybrawe/opencode-goal@latest --uninstall\n\nInstall/update adds ${packageName} to the global OpenCode config and pins the exact package version.\nUninstall removes OpenCode Goals package/local plugin registrations but preserves project Goal state.\n\nSet OPENCODE_CONFIG_DIR to target a non-default OpenCode config directory.`)
   process.exit(0)
 }
 
@@ -24,7 +25,7 @@ if (installerArgs.includes("--version") || installerArgs.includes("-v")) {
   process.exit(0)
 }
 
-if (installerArgs.length) {
+if (installerArgs.length && !uninstallRequested) {
   console.error(`Unknown installer option: ${installerArgs[0]}`)
   process.exit(2)
 }
@@ -167,7 +168,7 @@ function skipJsonValue(source: string, start: number): number {
   if (first === '"') return readJsonString(source, valueStart).end
   if (first === "{" || first === "[") {
     const stack: string[] = []
-    let quote = false
+    let quoted = false
     let escaped = false
     let lineComment = false
     let blockComment = false
@@ -185,14 +186,14 @@ function skipJsonValue(source: string, start: number): number {
         }
         continue
       }
-      if (quote) {
+      if (quoted) {
         if (escaped) escaped = false
         else if (char === "\\") escaped = true
-        else if (char === '"') quote = false
+        else if (char === '"') quoted = false
         continue
       }
       if (char === '"') {
-        quote = true
+        quoted = true
         continue
       }
       if (char === "/" && next === "/") {
@@ -226,7 +227,7 @@ function skipJsonValue(source: string, start: number): number {
 }
 
 type RootPropertyScan = {
-  property?: { keyStart: number; valueStart: number; valueEnd: number; indent: string }
+  property?: { valueStart: number; valueEnd: number; indent: string }
   rootClose: number
   firstIndent?: string
   lastValueEnd?: number
@@ -244,16 +245,17 @@ function scanRootProperty(source: string, propertyName: string): RootPropertySca
   while (true) {
     index = skipTrivia(source, index)
     if (source[index] === "}") {
-      const result: RootPropertyScan = { rootClose: index, lastHadComma }
-      if (firstIndent !== undefined) result.firstIndent = firstIndent
-      if (lastValueEnd !== undefined) result.lastValueEnd = lastValueEnd
-      return result
+      return {
+        rootClose: index,
+        lastHadComma,
+        ...(firstIndent !== undefined ? { firstIndent } : {}),
+        ...(lastValueEnd !== undefined ? { lastValueEnd } : {}),
+      }
     }
     const keyStart = index
     const key = readJsonString(source, keyStart)
     const lineStart = Math.max(source.lastIndexOf("\n", keyStart - 1), source.lastIndexOf("\r", keyStart - 1)) + 1
-    const indentMatch = source.slice(lineStart, keyStart).match(/^[\t ]*/)
-    const indent = indentMatch?.[0] ?? "  "
+    const indent = source.slice(lineStart, keyStart).match(/^[\t ]*/)?.[0] ?? "  "
     if (firstIndent === undefined) firstIndent = indent
 
     index = skipTrivia(source, key.end)
@@ -261,39 +263,18 @@ function scanRootProperty(source: string, propertyName: string): RootPropertySca
     const valueStart = skipTrivia(source, index + 1)
     const valueEnd = skipJsonValue(source, valueStart)
     lastValueEnd = valueEnd
-
     const afterValue = skipTrivia(source, valueEnd)
     const hadComma = source[afterValue] === ","
     lastHadComma = hadComma
 
     if (key.value === propertyName) {
-      const tailStart = hadComma ? afterValue + 1 : afterValue
-      let cursor = tailStart
-      let rootClose = -1
-      while (cursor < source.length) {
-        cursor = skipTrivia(source, cursor)
-        if (source[cursor] === "}") {
-          rootClose = cursor
-          break
-        }
-        const nextKey = readJsonString(source, cursor)
-        cursor = skipTrivia(source, nextKey.end)
-        if (source[cursor] !== ":") throw new Error(`expected ':' after config property ${nextKey.value}`)
-        const nextValueStart = skipTrivia(source, cursor + 1)
-        const nextValueEnd = skipJsonValue(source, nextValueStart)
-        const nextAfter = skipTrivia(source, nextValueEnd)
-        if (source[nextAfter] === ",") cursor = nextAfter + 1
-        else cursor = nextAfter
-      }
-      if (rootClose < 0) throw new Error("unterminated OpenCode config root object")
-      const result: RootPropertyScan = {
-        property: { keyStart, valueStart, valueEnd, indent },
-        rootClose,
+      return {
+        property: { valueStart, valueEnd, indent },
+        rootClose: findRootClose(source, hadComma ? afterValue + 1 : afterValue),
         lastHadComma,
+        ...(firstIndent !== undefined ? { firstIndent } : {}),
+        ...(lastValueEnd !== undefined ? { lastValueEnd } : {}),
       }
-      if (firstIndent !== undefined) result.firstIndent = firstIndent
-      if (lastValueEnd !== undefined) result.lastValueEnd = lastValueEnd
-      return result
     }
 
     if (hadComma) {
@@ -301,12 +282,30 @@ function scanRootProperty(source: string, propertyName: string): RootPropertySca
       continue
     }
     if (source[afterValue] === "}") {
-      const result: RootPropertyScan = { rootClose: afterValue, lastHadComma: false }
-      if (firstIndent !== undefined) result.firstIndent = firstIndent
-      if (lastValueEnd !== undefined) result.lastValueEnd = lastValueEnd
-      return result
+      return {
+        rootClose: afterValue,
+        lastHadComma: false,
+        ...(firstIndent !== undefined ? { firstIndent } : {}),
+        ...(lastValueEnd !== undefined ? { lastValueEnd } : {}),
+      }
     }
     throw new Error(`expected ',' or '}' after config property ${key.value}`)
+  }
+}
+
+function findRootClose(source: string, start: number): number {
+  let index = start
+  while (true) {
+    index = skipTrivia(source, index)
+    if (source[index] === "}") return index
+    const key = readJsonString(source, index)
+    index = skipTrivia(source, key.end)
+    if (source[index] !== ":") throw new Error(`expected ':' after config property ${key.value}`)
+    const valueEnd = skipJsonValue(source, index + 1)
+    const afterValue = skipTrivia(source, valueEnd)
+    if (source[afterValue] === ",") index = afterValue + 1
+    else if (source[afterValue] === "}") return afterValue
+    else throw new Error(`expected ',' or '}' after config property ${key.value}`)
   }
 }
 
@@ -331,32 +330,21 @@ function formatPluginArray(values: unknown[], indent: string, eol: string): stri
   return `[${eol}${values.map((value) => `${childIndent}${JSON.stringify(value)}`).join(`,${eol}`)}${eol}${indent}]`
 }
 
-function upsertPackageInConfig(source: string): { content: string; changed: boolean } {
+function rewritePluginConfig(source: string, mode: "install" | "uninstall"): { content: string; changed: boolean } {
   const parsed = parseJsonc(source)
   const existing = parsed.plugin
   if (existing !== undefined && !Array.isArray(existing)) throw new Error("OpenCode config 'plugin' must be an array")
-  const plugins = (existing ?? []) as unknown[]
-  const nextPlugins: unknown[] = []
-  let inserted = false
-  for (const value of plugins) {
-    if (isPackageSpec(value) || isKnownLocalGoalSpec(value)) {
-      if (!inserted) {
-        nextPlugins.push(packageSpec)
-        inserted = true
-      }
-      continue
-    }
-    nextPlugins.push(value)
-  }
-  if (!inserted) nextPlugins.push(packageSpec)
-
+  const filtered = ((existing ?? []) as unknown[]).filter((value) => !isPackageSpec(value) && !isKnownLocalGoalSpec(value))
+  const nextPlugins = mode === "install" ? [...filtered, packageSpec] : filtered
   const scan = scanRootProperty(source, "plugin")
   const eol = source.includes("\r\n") ? "\r\n" : "\n"
+
   if (scan.property) {
     const replacement = formatPluginArray(nextPlugins, scan.property.indent, eol)
     const content = `${source.slice(0, scan.property.valueStart)}${replacement}${source.slice(scan.property.valueEnd)}`
     return { content, changed: content !== source }
   }
+  if (mode === "uninstall") return { content: source, changed: false }
 
   const propertyIndent = scan.firstIndent || "  "
   const lineStart = Math.max(source.lastIndexOf("\n", scan.rootClose - 1), source.lastIndexOf("\r", scan.rootClose - 1)) + 1
@@ -368,8 +356,8 @@ function upsertPackageInConfig(source: string): { content: string; changed: bool
     content = `${content.slice(0, scan.lastValueEnd)},${content.slice(scan.lastValueEnd)}`
     if (scan.lastValueEnd <= adjustedInsertion) adjustedInsertion += 1
   }
-  const prefix = adjustedInsertion > 0 && !content.slice(0, adjustedInsertion).endsWith("\n") && !content.slice(0, adjustedInsertion).endsWith("\r") ? eol : ""
-  const insertion = `${prefix}${propertyIndent}"plugin": [${JSON.stringify(packageSpec)}]${eol}`
+  const needsLineBreak = adjustedInsertion > 0 && !content.slice(0, adjustedInsertion).endsWith("\n") && !content.slice(0, adjustedInsertion).endsWith("\r")
+  const insertion = `${needsLineBreak ? eol : ""}${propertyIndent}"plugin": [${JSON.stringify(packageSpec)}]${eol}`
   content = `${content.slice(0, adjustedInsertion)}${insertion}${content.slice(adjustedInsertion)}`
   return { content, changed: content !== source }
 }
@@ -400,32 +388,64 @@ async function writeAtomic(target: string, content: string): Promise<void> {
   }
 }
 
-await mkdir(configDir, { recursive: true })
-let target: string | undefined
-for (const name of configCandidates) {
-  const candidate = join(configDir, name)
-  if (await fileExists(candidate)) {
-    target = candidate
-    break
+async function removeLegacyLocalCopies(): Promise<void> {
+  const pluginDir = join(configDir, "plugins")
+  for (const localName of ["opencode-goal.ts", "opencode-goal.js"]) {
+    await rm(join(pluginDir, localName), { force: true })
   }
 }
 
-if (!target) {
-  target = join(configDir, "opencode.json")
-  const initial = `${JSON.stringify({ $schema: "https://opencode.ai/config.json", plugin: [packageSpec] }, null, 2)}\n`
-  await writeAtomic(target, initial)
-  console.log(`Installed OpenCode Goals ${packageVersion} in ${target}`)
-} else {
-  const source = await readFile(target, "utf8")
-  const updated = upsertPackageInConfig(source)
-  if (updated.changed) await writeAtomic(target, updated.content)
-  console.log(`${updated.changed ? "Installed/updated" : "Already configured"} OpenCode Goals ${packageVersion} in ${target}`)
+async function uninstall(): Promise<void> {
+  const plans: Array<{ target: string; content: string; changed: boolean }> = []
+  for (const name of configCandidates) {
+    const target = join(configDir, name)
+    if (!(await fileExists(target))) continue
+    const source = await readFile(target, "utf8")
+    const updated = rewritePluginConfig(source, "uninstall")
+    plans.push({ target, ...updated })
+  }
+
+  for (const plan of plans) {
+    if (plan.changed) await writeAtomic(plan.target, plan.content)
+  }
+  await removeLegacyLocalCopies()
+
+  const changedCount = plans.filter((plan) => plan.changed).length
+  console.log(changedCount > 0
+    ? `Removed OpenCode Goals registrations from ${changedCount} OpenCode config file(s).`
+    : "OpenCode Goals was not registered in the inspected OpenCode config files.")
+  console.log("Removed known local opencode-goal.ts/js plugin copies when present.")
+  console.log("Project Goal state under .opencode/goals, .opencode/goal-sequences, and .opencode/goal-locks is preserved.")
+  console.log("Restart OpenCode to finish unloading the plugin.")
 }
 
-const pluginDir = join(configDir, "plugins")
-for (const localName of ["opencode-goal.ts", "opencode-goal.js"]) {
-  await rm(join(pluginDir, localName), { force: true })
+async function installOrUpdate(): Promise<void> {
+  await mkdir(configDir, { recursive: true })
+  let target: string | undefined
+  for (const name of configCandidates) {
+    const candidate = join(configDir, name)
+    if (await fileExists(candidate)) {
+      target = candidate
+      break
+    }
+  }
+
+  if (!target) {
+    target = join(configDir, "opencode.json")
+    const initial = `${JSON.stringify({ $schema: "https://opencode.ai/config.json", plugin: [packageSpec] }, null, 2)}\n`
+    await writeAtomic(target, initial)
+    console.log(`Installed OpenCode Goals ${packageVersion} in ${target}`)
+  } else {
+    const source = await readFile(target, "utf8")
+    const updated = rewritePluginConfig(source, "install")
+    if (updated.changed) await writeAtomic(target, updated.content)
+    console.log(`${updated.changed ? "Installed/updated" : "Already configured"} OpenCode Goals ${packageVersion} in ${target}`)
+  }
+
+  await removeLegacyLocalCopies()
+  console.log(`Pinned plugin spec: ${packageSpec}`)
+  console.log("Restart OpenCode so it installs/loads the pinned npm package, then run: /goal status")
 }
 
-console.log(`Pinned plugin spec: ${packageSpec}`)
-console.log("Restart OpenCode so it installs/loads the pinned npm package, then run: /goal status")
+if (uninstallRequested) await uninstall()
+else await installOrUpdate()

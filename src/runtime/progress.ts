@@ -1,4 +1,5 @@
 import type { GoalState } from "../domain/types.js"
+import { settleReachedGoalBudget } from "./accounting.js"
 
 export function addProgressNote(goal: GoalState, input: { summary: string; next?: string; now?: number }): GoalState {
   const now = input.now ?? Date.now()
@@ -13,20 +14,21 @@ export function closeObservedTurn(goal: GoalState, input: { maxStalledTurns?: nu
   const now = input.now ?? Date.now()
   if (goal.pendingContinuation && goal.usage.turns === 0) {
     const { pendingContinuation: _pendingContinuation, ...rest } = goal
-    return { ...rest, observedProgressRevision: goal.progressRevision, updatedAt: now }
+    return settleReachedGoalBudget({ ...rest, observedProgressRevision: goal.progressRevision, updatedAt: now }, now)
   }
   const { pendingContinuation: _pendingContinuation, ...settled } = goal
   const limit = Math.max(1, input.maxStalledTurns ?? 3)
   const madeProgress = settled.progressRevision > settled.observedProgressRevision
   const stalledTurns = madeProgress ? 0 : settled.stalledTurns + 1
   const paused = stalledTurns >= limit && settled.status === "active"
-  return {
+  const closed: GoalState = {
     ...settled,
     stalledTurns,
     observedProgressRevision: settled.progressRevision,
     ...(paused ? { status: "paused" as const, stopReason: `Paused after ${stalledTurns} continuation turns without host-observed progress.` } : {}),
     updatedAt: now,
   }
+  return settleReachedGoalBudget(closed, now)
 }
 
 export function markHostProgress(goal: GoalState, input: {

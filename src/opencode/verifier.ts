@@ -12,9 +12,9 @@ const VERIFIER_DESCRIPTION = "Independently verify semantic goal requirements wi
 const VERIFIER_AGENT_PROMPT = "Act only as an independent completion verifier. Inspect current workspace evidence, preserve scope, fail closed on uncertainty, never modify files or execute commands, and submit verdicts only through opencode_goal_verifier_result."
 
 export interface SemanticVerifierOptions {
-  timeoutMs?: number
+  timeoutMs?: number | undefined
   /** OpenCode model ref in provider/model format. When omitted, small_model/model host config is preferred. */
-  model?: string
+  model?: string | undefined
 }
 
 export class SemanticVerifierUnavailableError extends Error {

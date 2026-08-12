@@ -409,6 +409,12 @@ async function main() {
 
   try {
     await waitForTcp(port, server, () => serverLog)
+    const sessionsBefore = await api("/session", {
+      method: "GET",
+      signal: AbortSignal.timeout(45_000),
+    })
+    assert.ok(Array.isArray(sessionsBefore?.data ?? sessionsBefore), "GET /session bootstrap probe did not return a session array")
+
     const createdPayload = await api("/session", {
       method: "POST",
       body: JSON.stringify({ title: "opencode-goal native Todo canary" }),

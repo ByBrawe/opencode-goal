@@ -101,6 +101,20 @@ export function applyGoalBudget(goal: GoalState, patch: Partial<GoalBudget>, now
   }
 }
 
+/**
+ * Apply a reached cumulative Goal budget only at a host-observed Goal-turn
+ * boundary. Usage is accounted as assistant messages finish, but changing the
+ * Goal to budget_limited in the middle of one OpenCode prompt can otherwise
+ * disable cadence/completion guards while that same prompt is still executing.
+ */
+export function settleReachedGoalBudget(goal: GoalState, now = Date.now()): GoalState {
+  if (goal.status !== "active") return goal
+  const reason = budgetStopReason(goal.usage, goal.budget)
+  if (!reason) return goal
+  const { stopReason: _previousStopReason, ...rest } = goal
+  return { ...rest, status: "budget_limited", stopReason: reason, updatedAt: now }
+}
+
 export function accountAssistantUsage(goal: GoalState, sample: AssistantUsageSample, now = Date.now()): GoalState {
   if (!sample.messageID || goal.usage.seenMessageIDs.includes(sample.messageID)) return goal
   const tokens = Math.max(0, sample.inputTokens ?? 0) + Math.max(0, sample.outputTokens ?? 0) + Math.max(0, sample.reasoningTokens ?? 0)
@@ -114,12 +128,8 @@ export function accountAssistantUsage(goal: GoalState, sample: AssistantUsageSam
     runtimeMs: goal.usage.runtimeMs + runtimeMs,
     seenMessageIDs: [...goal.usage.seenMessageIDs, sample.messageID].slice(-5000),
   }
-  const reason = budgetStopReason(usage, goal.budget)
-  let status = goal.status
-  let stopReason = goal.stopReason
-  if (reason && status === "active") {
-    status = "budget_limited"
-    stopReason = reason
-  }
-  return { ...goal, usage, status, ...(stopReason ? { stopReason } : {}), updatedAt: now }
+  // Budget state is intentionally settled by closeObservedTurn/session.idle so
+  // the currently executing Goal-owned prompt can still enforce its mutation
+  // cadence and attempt final verification before autonomous continuation stops.
+  return { ...goal, usage, updatedAt: now }
 }

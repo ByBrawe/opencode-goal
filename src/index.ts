@@ -10,12 +10,15 @@ import { installRestrictedAgentSafety } from "./opencode/agent-boundary.js"
 import { installHostLimitHandling } from "./opencode/host-limits.js"
 import { captureStartupGoals, scheduleStartupRecovery } from "./opencode/recovery.js"
 
-export default async function OpenCodeGoalPlugin(input: Parameters<typeof OpenCodeGoalCorePlugin>[0]) {
+export default async function OpenCodeGoalPlugin(
+  input: Parameters<typeof OpenCodeGoalCorePlugin>[0],
+  options: Parameters<typeof OpenCodeGoalCorePlugin>[1] = {},
+) {
   // Snapshot only goals that existed before this plugin instance loaded. This
   // prevents startup recovery from racing with a brand-new /goal created by
   // the same host instance.
   const startupGoals = await captureStartupGoals(input.directory)
-  const hooks = await OpenCodeGoalCorePlugin(input)
+  const hooks = await OpenCodeGoalCorePlugin(input, options)
   enhanceGoalControls(input, hooks)
   installGoalAuditUX(input, hooks)
   installProjectGoalIndex(input, hooks)
@@ -44,6 +47,7 @@ export * from "./verification/evidence.js"
 export * from "./runtime/accounting.js"
 export * from "./runtime/blocker.js"
 export * from "./runtime/limits.js"
+export * from "./runtime/model-context.js"
 export * from "./runtime/progress.js"
 export * from "./runtime/todo-plan.js"
 export * from "./persistence/sequence-store.js"

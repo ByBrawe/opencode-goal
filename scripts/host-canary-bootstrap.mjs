@@ -1,5 +1,5 @@
 const originalFetch = globalThis.fetch.bind(globalThis)
-const bootstrappedOrigins = new Set()
+const bootstrappedRequests = new Set()
 
 function requestURL(input) {
   if (typeof input === "string") return input
@@ -20,34 +20,40 @@ globalThis.fetch = async (input, init = {}) => {
   try { origin = new URL(url).origin } catch {}
 
   const isScopedSessionBootstrap =
-    method === "GET" &&
+    (method === "GET" || method === "POST") &&
     url.includes("/session?") &&
     url.includes("directory=") &&
-    origin &&
-    !bootstrappedOrigins.has(origin)
+    origin
 
-  if (!isScopedSessionBootstrap) return await originalFetch(input, init)
+  const bootstrapKey = `${origin}:${method}`
+  if (!isScopedSessionBootstrap || bootstrappedRequests.has(bootstrapKey)) {
+    return await originalFetch(input, init)
+  }
 
-  // A restart canary talks to more than one OpenCode server from the same Node
-  // process. Each server/port owns a separate lazy directory instance and may
-  // need its own one-time bounded bootstrap retry on hosted Linux runners.
-  bootstrappedOrigins.add(origin)
+  // OpenCode initializes a directory-scoped instance lazily. On hosted Windows,
+  // the first POST /session can spend more than the canary's normal 15s request
+  // budget loading config/plugins even after the TCP listener is reachable.
+  // Give that one bootstrap request a bounded 45s window. GET is idempotent and
+  // can safely retry once; POST session creation is not retried to avoid creating
+  // a duplicate session if the server committed the first request before timeout.
+  bootstrappedRequests.add(bootstrapKey)
   const startedAt = Date.now()
+  const attempts = method === "GET" ? 2 : 1
   let lastError
-  for (let attempt = 1; attempt <= 2; attempt += 1) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
       const response = await originalFetch(input, {
         ...init,
         signal: AbortSignal.timeout(45_000),
       })
-      console.log(`canary: directory-scoped instance bootstrap HTTP completed in ${Date.now() - startedAt}ms (attempt ${attempt}, origin ${origin})`)
+      console.log(`canary: directory-scoped ${method} bootstrap HTTP completed in ${Date.now() - startedAt}ms (attempt ${attempt}, origin ${origin})`)
       return response
     } catch (error) {
       lastError = error
-      if (!isTimeout(error) || attempt === 2) break
-      console.warn(`canary: directory-scoped instance bootstrap timed out on attempt ${attempt} for ${origin}; retrying once`)
+      if (!isTimeout(error) || attempt === attempts) break
+      console.warn(`canary: directory-scoped ${method} bootstrap timed out on attempt ${attempt} for ${origin}; retrying once`)
       await sleep(250)
     }
   }
-  throw new Error(`directory-scoped OpenCode instance bootstrap did not complete after 2 bounded attempts for ${origin}: ${String(lastError)}`)
+  throw new Error(`directory-scoped OpenCode ${method} bootstrap did not complete after ${attempts} bounded attempt${attempts === 1 ? "" : "s"} for ${origin}: ${String(lastError)}`)
 }

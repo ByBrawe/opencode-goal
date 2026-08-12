@@ -1,7 +1,7 @@
 {
   "name": "@bybrawe/opencode-goal",
   "version": "1.3.14",
-  "description": "Persistent, host-verified Goals for OpenCode.",
+  "description": "OpenCode goal plugin for persistent autonomous multi-turn coding agents with host-verified completion, restart recovery, and /goal workflows.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -50,7 +50,27 @@
     "canary:restart": "node --import ./scripts/host-canary-bootstrap.mjs --import ./scripts/host-restart-hard-crash.mjs scripts/host-restart-canary.mjs",
     "pack:check": "npm pack --dry-run"
   },
-  "keywords": ["opencode", "opencode-plugin", "goals", "goal", "agent", "autonomous", "codex", "plugin"],
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "opencode-goal",
+    "opencode-goals",
+    "goal-plugin",
+    "goal-mode",
+    "persistent-goals",
+    "autonomous-agent",
+    "ai-coding-agent",
+    "coding-agent",
+    "multi-turn",
+    "long-running-agent",
+    "completion-verification",
+    "host-verified",
+    "restart-recovery",
+    "slash-command",
+    "codex-style",
+    "agent",
+    "plugin"
+  ],
   "license": "MIT",
   "engines": {
     "node": ">=20",

@@ -1,5 +1,7 @@
 # OpenCode Goals
 
+**Language:** **English** · [Türkçe](./README.tr.md)
+
 [![npm version](https://img.shields.io/npm/v/%40bybrawe%2Fopencode-goal)](https://www.npmjs.com/package/@bybrawe/opencode-goal)
 [![npm downloads](https://img.shields.io/npm/dm/%40bybrawe%2Fopencode-goal)](https://www.npmjs.com/package/@bybrawe/opencode-goal)
 [![license](https://img.shields.io/npm/l/%40bybrawe%2Fopencode-goal)](./LICENSE)

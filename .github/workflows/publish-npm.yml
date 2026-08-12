@@ -57,3 +57,18 @@ jobs:
       - name: Publish stable with npm trusted publishing
         if: steps.release.outputs.publish == 'true'
         run: npm publish --tag latest --access public
+      - name: Verify published installer bin
+        if: steps.release.outputs.publish == 'true'
+        shell: bash
+        run: |
+          EXPECTED="1.3.11"
+          BIN="$(npm view "@bybrawe/opencode-goal@$EXPECTED" bin.opencode-goal --registry=https://registry.npmjs.org)"
+          if [ "$BIN" != "bin/opencode-goal.js" ] && [ "$BIN" != "./bin/opencode-goal.js" ]; then
+            echo "Published installer bin mismatch: $BIN"
+            exit 1
+          fi
+          INSTALLED_VERSION="$(npx -y "@bybrawe/opencode-goal@$EXPECTED" --version)"
+          if [ "$INSTALLED_VERSION" != "$EXPECTED" ]; then
+            echo "Published installer reported $INSTALLED_VERSION instead of $EXPECTED"
+            exit 1
+          fi

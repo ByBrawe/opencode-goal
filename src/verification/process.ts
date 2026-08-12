@@ -84,7 +84,14 @@ function guarded(result: SemanticRequirementResult, verdict: "failed" | "unknown
 /**
  * Fail closed when a verifier model claims an explicit N-turn process was
  * proven but host-owned runtime evidence does not establish that cadence.
- * This makes temporal correctness independent of verifier model quality.
+ *
+ * When the requirement explicitly asks for a workspace mutation in every Goal
+ * turn, mutation fingerprints are the stronger temporal proof: the runtime
+ * cadence boundary prevents a second successful file mutation in the same
+ * Goal-owned turn. N distinct mutation fingerprints therefore establish N
+ * distinct mutation turns without relying on OpenCode's lower-level assistant
+ * message accounting, which may contain extra tool-loop messages inside one
+ * logical Goal turn.
  */
 export function guardSemanticProcessResults(
   goal: GoalState,
@@ -102,21 +109,6 @@ export function guardSemanticProcessResults(
     const expectation = inferProcessTurnExpectation(requirement.text)
     if (!expectation) return result
 
-    if (turns === undefined) {
-      return guarded(result, "unknown", `requirement asks for ${expectation.mode === "exactly" ? "exactly" : "at least"} ${expectation.turns} Goal turns, but host turn evidence is unavailable.`)
-    }
-
-    if (expectation.mode === "exactly") {
-      if (turns < expectation.turns) {
-        return guarded(result, "unknown", `requirement asks for exactly ${expectation.turns} Goal turns, but host observed only ${turns} current-revision turn(s).`)
-      }
-      if (turns > expectation.turns) {
-        return guarded(result, "failed", `requirement asks for exactly ${expectation.turns} Goal turns, but host observed ${turns} current-revision turn(s).`)
-      }
-    } else if (turns < expectation.turns) {
-      return guarded(result, "unknown", `requirement asks for at least ${expectation.turns} Goal turns, but host observed only ${turns} current-revision turn(s).`)
-    }
-
     if (expectation.requireMutationPerTurn) {
       if (mutations === undefined) {
         return guarded(result, "unknown", `requirement asks for a mutation in each of ${expectation.turns} Goal turns, but host mutation evidence is unavailable.`)
@@ -124,6 +116,25 @@ export function guardSemanticProcessResults(
       if (mutations < expectation.turns) {
         return guarded(result, "unknown", `requirement asks for a mutation in each of ${expectation.turns} Goal turns, but host observed only ${mutations} distinct mutation fingerprint(s).`)
       }
+      if (expectation.mode === "exactly" && mutations > expectation.turns) {
+        return guarded(result, "failed", `requirement asks for exactly ${expectation.turns} mutation turns, but host observed ${mutations} distinct mutation fingerprint(s).`)
+      }
+      return result
+    }
+
+    if (turns === undefined) {
+      return guarded(result, "unknown", `requirement asks for ${expectation.mode === "exactly" ? "exactly" : "at least"} ${expectation.turns} Goal turns, but host turn evidence is unavailable.`)
+    }
+
+    if (expectation.mode === "exactly") {
+      if (turns < expectation.turns) {
+        return guarded(result, "unknown", `requirement asks for exactly ${expectation.turns} Goal turns, but host observed only ${turns} current-revision assistant turn(s).`)
+      }
+      if (turns > expectation.turns) {
+        return guarded(result, "failed", `requirement asks for exactly ${expectation.turns} Goal turns, but host observed ${turns} current-revision assistant turn(s).`)
+      }
+    } else if (turns < expectation.turns) {
+      return guarded(result, "unknown", `requirement asks for at least ${expectation.turns} Goal turns, but host observed only ${turns} current-revision assistant turn(s).`)
     }
 
     return result

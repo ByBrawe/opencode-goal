@@ -140,6 +140,11 @@ jobs:
         env:
           OPENCODE_PRINT_LOGS: "1"
           OPENCODE_LOG_LEVEL: DEBUG
+      - name: Run real-host 10-turn completion canary
+        run: node --import ./scripts/host-canary-bootstrap.mjs scripts/host-multiturn-canary.mjs
+        env:
+          OPENCODE_PRINT_LOGS: "1"
+          OPENCODE_LOG_LEVEL: DEBUG
 
   real-opencode-steering-canary:
     name: real OpenCode active steering (${{ matrix.os }})

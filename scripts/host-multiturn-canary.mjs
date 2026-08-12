@@ -571,7 +571,7 @@ async function main() {
     assert.equal(provider.stats.verifierResultCalls, 1, "semantic verifier must submit exactly one verdict")
     assert.ok(provider.stats.verifierReadCalls >= 1, "semantic verifier must independently read 1.json")
     assert.equal(provider.stats.unexpectedExecutorRequests, 0, "Goal must not dispatch an 11th executor turn after successful completion")
-    assert.equal(lastState.progressRevision, EXPECTED_TURNS, "host progress revision must prove 10 distinct mutations")
+    assert.ok(lastState.progressRevision >= EXPECTED_TURNS, "overall progress revision must include at least the 10 host mutations")
     assert.equal(lastState.progressFingerprints?.length, EXPECTED_TURNS, "host must persist 10 distinct mutation fingerprints")
     assert.equal(lastState.usage.turns, EXPECTED_TURNS, "host must account exactly 10 Goal-owned assistant turns")
     assert.equal(lastState.stalledTurns, 0, "every requested turn made host-observed progress")

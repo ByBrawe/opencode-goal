@@ -203,7 +203,7 @@ async function withinVerifierDeadline<T>(client: any, childID: string, work: Pro
   try {
     return await Promise.race([work, timeout])
   } catch (error) {
-    if (timedOut) await abortVerifier(client, childID)
+    if (timedOut && childID) await abortVerifier(client, childID)
     throw error
   } finally {
     if (timer) clearTimeout(timer)
@@ -304,7 +304,12 @@ export function createSemanticVerifierRuntime(client: any, root: string, options
     try {
       let created: any
       try {
-        created = unwrapData<any>(await client.session.create({ body: { parentID: parentSessionID, title: "Goal verification" } }))
+        created = unwrapData<any>(await withinVerifierDeadline(
+          client,
+          "",
+          Promise.resolve().then(() => client.session.create({ body: { parentID: parentSessionID, title: "Goal verification" } })),
+          timeoutMs,
+        ))
       } catch (error) {
         throw new SemanticVerifierUnavailableError(`semantic verifier session creation failed: ${errorText(error)}`)
       }
@@ -332,8 +337,14 @@ export function createSemanticVerifierRuntime(client: any, root: string, options
         resultSignals.set(childID, resolveResult)
         let dispatched: any
         try {
-          dispatched = await client.session.promptAsync({ path: { id: childID }, body })
+          dispatched = await withinVerifierDeadline(
+            client,
+            childID,
+            Promise.resolve().then(() => client.session.promptAsync({ path: { id: childID }, body })),
+            timeoutMs,
+          )
         } catch (error) {
+          if (error instanceof SemanticVerifierUnavailableError) throw error
           await abortVerifier(client, childID)
           throw new SemanticVerifierUnavailableError(`semantic verifier async dispatch failed: ${errorText(error)}`)
         }

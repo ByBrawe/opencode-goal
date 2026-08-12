@@ -82,14 +82,17 @@ test("blocker requires three distinct turns", () => {
   assert.equal(goal.status, "blocked")
 })
 
-test("usage is deduplicated and budget limited instead of completed", () => {
+test("usage is deduplicated and reached budget settles instead of completing", () => {
   let goal = createGoal({ sessionID: "s1", objective: "work", budget: { maxTurns: 2 } })
   goal = accountAssistantUsage(goal, { messageID: "m1", inputTokens: 10, outputTokens: 5 })
   goal = accountAssistantUsage(goal, { messageID: "m1", inputTokens: 10, outputTokens: 5 })
   assert.equal(goal.usage.turns, 1)
   goal = accountAssistantUsage(goal, { messageID: "m2", inputTokens: 10, outputTokens: 5 })
-  assert.equal(goal.status, "budget_limited")
+  assert.equal(goal.status, "active", "mid-turn accounting must not disable Goal safety guards")
   assert.equal(goal.usage.turns, 2)
+  goal = closeObservedTurn(goal)
+  assert.equal(goal.status, "budget_limited")
+  assert.match(goal.stopReason, /turns 2 \/ 2/)
 })
 
 test("host-observed mutating activity resets stalled-turn accounting", () => {

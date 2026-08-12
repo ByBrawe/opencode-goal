@@ -75,24 +75,22 @@ test("downgrades a one-turn English batch even when verifier says proven", () =>
   const result = guardSemanticProcessResults(
     goal("Objective achieved: perform exactly 10 separate Goal turns; in each turn increment 1.json value by exactly 1"),
     weakProven(),
-    hostEvidence({ turns: 1, mutations: 10 }),
+    hostEvidence({ turns: 1, mutations: 1 }),
   )[0]
 
   assert.equal(result.verdict, "unknown")
-  assert.match(result.reason, /exactly 10 Goal turns/i)
-  assert.match(result.reason, /observed only 1/i)
+  assert.match(result.reason, /only 1 distinct mutation fingerprint/i)
 })
 
 test("downgrades a one-turn Turkish batch even when verifier says proven", () => {
   const result = guardSemanticProcessResults(
     goal("Objective achieved: 10 ayrı goal turu boyunca her goal turunda 1.json value değerini 1 artır"),
     weakProven(),
-    hostEvidence({ turns: 1, mutations: 10 }),
+    hostEvidence({ turns: 1, mutations: 1 }),
   )[0]
 
   assert.equal(result.verdict, "unknown")
-  assert.match(result.reason, /exactly 10 Goal turns/i)
-  assert.match(result.reason, /observed only 1/i)
+  assert.match(result.reason, /only 1 distinct mutation fingerprint/i)
 })
 
 test("preserves proven when exact turn and per-turn mutation evidence matches", () => {
@@ -101,6 +99,18 @@ test("preserves proven when exact turn and per-turn mutation evidence matches", 
     goal("Objective achieved: perform exactly 10 separate Goal turns; in each turn increment 1.json value by exactly 1"),
     input,
     hostEvidence({ turns: 10, mutations: 10 }),
+  )[0]
+
+  assert.equal(result.verdict, "proven")
+  assert.equal(result.reason, input[0].reason)
+})
+
+test("per-turn mutation proof ignores extra assistant tool-loop messages", () => {
+  const input = weakProven()
+  const result = guardSemanticProcessResults(
+    goal("Objective achieved: perform exactly 10 separate Goal turns; in each turn increment 1.json value by exactly 1"),
+    input,
+    hostEvidence({ turns: 11, mutations: 10 }),
   )[0]
 
   assert.equal(result.verdict, "proven")
@@ -118,11 +128,22 @@ test("downgrades when turns match but mutations were batched", () => {
   assert.match(result.reason, /only 1 distinct mutation fingerprint/i)
 })
 
-test("fails an exact cadence when host observed too many turns", () => {
+test("fails exact per-turn mutation cadence when host observed too many mutation turns", () => {
+  const result = guardSemanticProcessResults(
+    goal("Objective achieved: perform exactly 10 separate Goal turns; in each turn increment 1.json value by exactly 1"),
+    weakProven(),
+    hostEvidence({ turns: 11, mutations: 11 }),
+  )[0]
+
+  assert.equal(result.verdict, "failed")
+  assert.match(result.reason, /observed 11 distinct mutation fingerprint/i)
+})
+
+test("fails an exact cadence without per-turn mutations when host observed too many assistant turns", () => {
   const result = guardSemanticProcessResults(
     goal("Objective achieved: exactly 10 distinct Goal turns"),
     weakProven(),
-    hostEvidence({ turns: 11, mutations: 10 }),
+    hostEvidence({ turns: 11, mutations: 0 }),
   )[0]
 
   assert.equal(result.verdict, "failed")

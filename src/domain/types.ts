@@ -93,10 +93,27 @@ export interface FileRequirementInput {
   contains?: string
 }
 
+/**
+ * OpenCode model-window telemetry for the currently bound execution model.
+ * This is intentionally separate from GoalUsage/GoalBudget: Goal token usage is
+ * cumulative across the whole Goal, while these values describe one model's
+ * context limits and the most recently observed request size.
+ */
+export interface GoalModelContext {
+  contextLimit?: number
+  inputLimit?: number
+  outputLimit?: number
+  lastRequestTokens?: number
+  autoCompaction?: boolean
+  compactionReserved?: number
+  observedAt: number
+}
+
 export interface GoalExecutionContext {
   agent?: string
   model?: { providerID: string; modelID: string }
   variant?: string
+  modelContext?: GoalModelContext
 }
 
 export interface GoalState {

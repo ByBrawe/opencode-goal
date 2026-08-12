@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs"
 import path from "node:path"
 import { tool } from "@opencode-ai/plugin/tool"
 import type { EvidenceRecord, GoalState } from "../domain/types.js"
+import { guardSemanticProcessResults } from "../verification/process.js"
 import { applySemanticVerifierResults, type SemanticEvidenceRef, type SemanticRequirementResult } from "../verification/semantic.js"
 
 export const DEFAULT_VERIFIER_AGENT = "opencode-goal-verifier"
@@ -377,7 +378,8 @@ export function createSemanticVerifierRuntime(client: any, root: string, options
         throw new Error("semantic verifier did not submit a valid result")
       }
       const corroborated = await corroborateEvidence(root, goal, result.results, hostEvidenceRecords)
-      return applySemanticVerifierResults(goal, corroborated)
+      const processGuarded = guardSemanticProcessResults(goal, corroborated, hostEvidenceRecords)
+      return applySemanticVerifierResults(goal, processGuarded)
     } finally {
       if (childID) {
         pending.delete(childID)

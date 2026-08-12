@@ -3,9 +3,10 @@ import assert from "node:assert/strict"
 import { createGoal } from "../dist/domain/goal.js"
 import { accountAssistantUsage, applyGoalBudget, budgetLimitHits, budgetStopReason, formatGoalBudget } from "../dist/runtime/accounting.js"
 import { fatalProviderReason, hostUsageLimitReason, markUsageLimited } from "../dist/runtime/limits.js"
+import { closeObservedTurn } from "../dist/runtime/progress.js"
 import { parseGoalCommand } from "../dist/opencode/command.js"
 
-test("budget exhaustion reports the exact reached limit", () => {
+test("budget exhaustion is accounted immediately but settles at the Goal turn boundary", () => {
   let goal = createGoal({
     sessionID: "s1",
     objective: "work",
@@ -13,12 +14,16 @@ test("budget exhaustion reports the exact reached limit", () => {
   })
   goal = accountAssistantUsage(goal, { messageID: "m1", inputTokens: 20, outputTokens: 10 })
   goal = accountAssistantUsage(goal, { messageID: "m2", inputTokens: 20, outputTokens: 10 })
+  assert.equal(goal.status, "active")
+  assert.equal(goal.stopReason, undefined)
+  assert.deepEqual(budgetLimitHits(goal.usage, goal.budget).map((item) => item.kind), ["turns"])
+
+  goal = closeObservedTurn(goal)
   assert.equal(goal.status, "budget_limited")
   assert.match(goal.stopReason, /turns 2 \/ 2/)
-  assert.deepEqual(budgetLimitHits(goal.usage, goal.budget).map((item) => item.kind), ["turns"])
 })
 
-test("multiple budget limits are reported without double-accounting messages", () => {
+test("multiple budget limits settle without double-accounting messages", () => {
   let goal = createGoal({
     sessionID: "s1",
     objective: "work",
@@ -28,15 +33,20 @@ test("multiple budget limits are reported without double-accounting messages", (
   goal = accountAssistantUsage(goal, sample)
   goal = accountAssistantUsage(goal, sample)
   assert.equal(goal.usage.turns, 1)
+  assert.equal(goal.status, "active")
+  assert.equal(goal.stopReason, undefined)
+  goal = closeObservedTurn(goal)
   assert.match(goal.stopReason, /turns 1 \/ 1/)
   assert.match(goal.stopReason, /tokens 15 \/ 15/)
   assert.match(goal.stopReason, /cost 0\.5000 \/ 0\.5000/)
   assert.match(goal.stopReason, /runtime 0s \/ 0s|runtime/)
 })
 
-test("raising an exhausted budget reactivates without changing usage", () => {
+test("raising an exhausted boundary-settled budget reactivates without changing usage", () => {
   let goal = createGoal({ sessionID: "s1", objective: "work", budget: { maxTurns: 1 } })
   goal = accountAssistantUsage(goal, { messageID: "m1" })
+  assert.equal(goal.status, "active")
+  goal = closeObservedTurn(goal)
   assert.equal(goal.status, "budget_limited")
   const usage = structuredClone(goal.usage)
   goal = applyGoalBudget(goal, { maxTurns: 2 })

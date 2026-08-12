@@ -6,10 +6,16 @@ import type { EvidenceRecord, GoalState } from "../domain/types.js"
 import { applySemanticVerifierResults, type SemanticEvidenceRef, type SemanticRequirementResult } from "../verification/semantic.js"
 
 export const DEFAULT_VERIFIER_AGENT = "opencode-goal-verifier"
-export const DEFAULT_VERIFIER_TIMEOUT_MS = 30_000
+export const DEFAULT_VERIFIER_TIMEOUT_MS = 60_000
 const VERIFIER_CLEANUP_TIMEOUT_MS = 1_500
 const VERIFIER_DESCRIPTION = "Independently verify semantic goal requirements without modifying the workspace."
 const VERIFIER_AGENT_PROMPT = "Act only as an independent completion verifier. Inspect current workspace evidence, preserve scope, fail closed on uncertainty, never modify files or execute commands, and submit verdicts only through opencode_goal_verifier_result."
+
+export interface SemanticVerifierOptions {
+  timeoutMs?: number
+  /** OpenCode model ref in provider/model format. When omitted, small_model/model host config is preferred. */
+  model?: string
+}
 
 export class SemanticVerifierUnavailableError extends Error {
   readonly code = "SEMANTIC_VERIFIER_UNAVAILABLE"
@@ -45,6 +51,13 @@ function errorText(error: unknown): string {
 function sdkResponseError(value: any): string | null {
   if (!value || typeof value !== "object" || !("error" in value) || !value.error) return null
   return errorText(value.error)
+}
+
+function normalizeModelRef(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined
+  const trimmed = value.trim()
+  if (!trimmed || !trimmed.includes("/")) return undefined
+  return trimmed
 }
 
 function currentRevisionTurns(goal: GoalState, currentMessageID?: string): number {
@@ -197,7 +210,7 @@ async function withinVerifierDeadline<T>(client: any, childID: string, work: Pro
   }
 }
 
-export function createSemanticVerifierRuntime(client: any, root: string, options: { timeoutMs?: number } = {}) {
+export function createSemanticVerifierRuntime(client: any, root: string, options: SemanticVerifierOptions = {}) {
   const pending = new Map<string, PendingAudit>()
   const submitted = new Map<string, SubmittedAudit>()
   const resultSignals = new Map<string, () => void>()
@@ -205,12 +218,18 @@ export function createSemanticVerifierRuntime(client: any, root: string, options
   const timeoutMs = Number.isFinite(options.timeoutMs) && Number(options.timeoutMs) > 0
     ? Number(options.timeoutMs)
     : DEFAULT_VERIFIER_TIMEOUT_MS
+  const explicitModel = normalizeModelRef(options.model)
+  let resolvedModel = explicitModel
 
   function configure(config: any) {
     config.agent ||= {}
+    resolvedModel = explicitModel ?? normalizeModelRef(config.small_model) ?? normalizeModelRef(config.model)
     const existing = config.agent[agentName]
     if (existing) {
-      if (existing.hidden === true && existing.description === VERIFIER_DESCRIPTION && existing.prompt === VERIFIER_AGENT_PROMPT) return
+      if (existing.hidden === true && existing.description === VERIFIER_DESCRIPTION && existing.prompt === VERIFIER_AGENT_PROMPT) {
+        if (resolvedModel) existing.model = resolvedModel
+        return
+      }
       throw new Error(`Cannot safely register internal verifier agent ${agentName}: name already exists`)
     }
     config.agent[agentName] = {
@@ -218,6 +237,7 @@ export function createSemanticVerifierRuntime(client: any, root: string, options
       mode: "subagent",
       hidden: true,
       prompt: VERIFIER_AGENT_PROMPT,
+      ...(resolvedModel ? { model: resolvedModel } : {}),
       permission: {
         "*": "deny",
         read: "allow",
@@ -297,9 +317,12 @@ export function createSemanticVerifierRuntime(client: any, root: string, options
         revision: goal.revision,
         expectedRequirementIDs: new Set(semantic.map((item) => item.id)),
       })
+      // Deliberately do not pass goal.execution.model here. The verifier is an
+      // independent system agent and must not be forced onto the executor's
+      // weak/free/session-selected model. Its model comes from the verifier
+      // agent config (explicit option -> small_model -> default model).
       const body = {
         agent: agentName,
-        ...(goal.execution?.model ? { model: goal.execution.model } : {}),
         parts: [{ type: "text", text: verificationPrompt(goal, auditToken, hostEvidenceRecords) }],
       }
 
@@ -356,5 +379,12 @@ export function createSemanticVerifierRuntime(client: any, root: string, options
     }
   }
 
-  return { configure, resultTool, verify, get agentName() { return agentName } }
+  return {
+    configure,
+    resultTool,
+    verify,
+    get agentName() { return agentName },
+    get model() { return resolvedModel },
+    get timeout() { return timeoutMs },
+  }
 }

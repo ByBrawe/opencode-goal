@@ -8,6 +8,7 @@ import { installGoalSequence } from "./opencode/sequence.js"
 import { installTaskDeferral } from "./opencode/task-deferral.js"
 import { installRestrictedAgentSafety } from "./opencode/agent-boundary.js"
 import { installHostLimitHandling } from "./opencode/host-limits.js"
+import { installGoalLifecycleUX } from "./opencode/lifecycle-ux.js"
 import { captureStartupGoals, scheduleStartupRecovery } from "./opencode/recovery.js"
 
 export default async function OpenCodeGoalPlugin(
@@ -36,6 +37,10 @@ export default async function OpenCodeGoalPlugin(
   installRestrictedAgentSafety(input, hooks)
   installHostLimitHandling(input, hooks)
   scheduleStartupRecovery(input, hooks, startupGoals)
+  // Lifecycle UX is the outermost command wrapper so create-conflict and pause
+  // guidance is always visible to the user while the inner ownership wrappers
+  // still receive their original command-owned prompt text.
+  installGoalLifecycleUX(input, hooks)
   return hooks
 }
 
@@ -58,3 +63,4 @@ export * from "./opencode/task-deferral.js"
 export * from "./opencode/project-index.js"
 export * from "./opencode/sequence.js"
 export * from "./opencode/todo-orchestration.js"
+export * from "./opencode/lifecycle-ux.js"

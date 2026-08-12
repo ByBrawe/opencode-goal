@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   publish:
-    name: Publish 1.3.10
+    name: Publish 1.3.11
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -38,7 +38,7 @@ jobs:
         id: release
         shell: bash
         run: |
-          EXPECTED="1.3.10"
+          EXPECTED="1.3.11"
           ACTUAL="$(node -p "JSON.parse(require('fs').readFileSync('package.json', 'utf8')).version")"
           if [ "$ACTUAL" != "$EXPECTED" ]; then
             echo "Package version $ACTUAL is not the one-shot stable $EXPECTED; skipping."

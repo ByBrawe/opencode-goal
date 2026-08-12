@@ -4,6 +4,7 @@ import type { GoalExecutionContext, GoalState } from "../domain/types.js"
 import { GoalStore, GoalStoreConcurrencyError } from "../persistence/store.js"
 import { accountAssistantUsage } from "../runtime/accounting.js"
 import { reportBlocker } from "../runtime/blocker.js"
+import { CADENCE_BOUNDARY_MESSAGE, requiresDistinctGoalTurnCadence } from "../runtime/cadence.js"
 import { runConfiguredChecks } from "../runtime/checks.js"
 import { collectMutationFingerprints } from "../runtime/mutation-progress.js"
 import { addProgressNote, closeObservedTurn, markHostProgress } from "../runtime/progress.js"
@@ -18,6 +19,7 @@ import { createSemanticVerifierRuntime, SemanticVerifierUnavailableError } from 
 
 const FILE_MUTATION_TOOLS = new Set(["write", "edit", "apply_patch"])
 const TODO_TOOL = "todowrite"
+const SHELL_TOOL = "bash"
 
 function replaceParts(parts: any[], text: string) {
   parts.splice(0, parts.length, { type: "text", text })
@@ -65,6 +67,7 @@ export default async function OpenCodeGoalPlugin(input: any) {
   const sessionContexts = new Map<string, GoalExecutionContext>()
   const toolProgressMessages = new Set<string>()
   const toolProgressOrder: string[] = []
+  const cadenceMutationReservations = new Map<string, string>()
 
   function serialize<T>(sessionID: string, fn: () => Promise<T>): Promise<T> {
     const previous = sessionLocks.get(sessionID) ?? Promise.resolve()
@@ -75,6 +78,10 @@ export default async function OpenCodeGoalPlugin(input: any) {
 
   async function load(sessionID: string) { return await store.load(sessionID) }
   async function save(goal: GoalState) { await store.save(goal); return goal }
+
+  function resetCadenceTurn(sessionID: string) {
+    cadenceMutationReservations.delete(sessionID)
+  }
 
   function mergeAuditEvaluation(latest: GoalState, evaluated: GoalState): GoalState {
     const latestEvidenceIDs = new Set(latest.evidence.map((item) => item.id))
@@ -88,7 +95,7 @@ export default async function OpenCodeGoalPlugin(input: any) {
   }
 
   function rememberToolProgress(messageID: string) {
-    if (toolProgressMessages.has(messageID)) return
+    if (!messageID || toolProgressMessages.has(messageID)) return
     toolProgressMessages.add(messageID)
     toolProgressOrder.push(messageID)
     while (toolProgressOrder.length > 256) {
@@ -109,6 +116,7 @@ export default async function OpenCodeGoalPlugin(input: any) {
   }
 
   async function abortGoalTurn(sessionID: string, suppressIdle: boolean) {
+    resetCadenceTurn(sessionID)
     if (suppressIdle) suppressNextSteeringIdle(sessionID)
     deferredIdle.delete(sessionID)
     const aborted = await sdkAbort(client, sessionID)
@@ -145,6 +153,7 @@ export default async function OpenCodeGoalPlugin(input: any) {
       goal = closeObservedTurn(goal)
       await save(goal)
       if (goal.status !== "active") return null
+      resetCadenceTurn(sessionID)
       const token = Date.now() + Math.random()
       const text = continuationPrompt(goal)
       dispatching.set(sessionID, token)
@@ -198,6 +207,7 @@ export default async function OpenCodeGoalPlugin(input: any) {
           return
         }
         if (parsed.action === "pause") {
+          resetCadenceTurn(event.sessionID)
           if (goal) goal = await save(pauseGoal(goal))
           if (ownership.activeOwner(event.sessionID) || dispatching.has(event.sessionID)) abortControl = "pause"
           ;(output as any).noReply = true
@@ -205,11 +215,13 @@ export default async function OpenCodeGoalPlugin(input: any) {
           return
         }
         if (parsed.action === "resume") {
+          resetCadenceTurn(event.sessionID)
           if (goal) goal = await save(resumeGoal(goal))
           markCommandOutputOwned(event.sessionID, output, goal ? continuationPrompt(goal) : "No goal exists. Respond only with that fact.", goal ?? undefined)
           return
         }
         if (parsed.action === "clear") {
+          resetCadenceTurn(event.sessionID)
           if (ownership.activeOwner(event.sessionID) || dispatching.has(event.sessionID)) abortControl = "pause"
           await store.clear(event.sessionID)
           ;(output as any).noReply = true
@@ -218,6 +230,7 @@ export default async function OpenCodeGoalPlugin(input: any) {
         }
         if (!parsed.objective) throw new Error("Usage: /goal <objective> [--accept \"criterion\"] [--check \"command\"]")
         const execution = sessionContexts.get(event.sessionID)
+        resetCadenceTurn(event.sessionID)
         if (parsed.action === "edit") {
           if (!goal) throw new Error("No goal exists to edit")
           const previousOwner = goalTurnOwner(goal)
@@ -284,8 +297,25 @@ export default async function OpenCodeGoalPlugin(input: any) {
     },
 
     "tool.execute.before": async (event: any) => {
+      if (event.tool === SHELL_TOOL) {
+        await serialize(event.sessionID, async () => {
+          const goal = await load(event.sessionID)
+          if (goal?.status === "active" && requiresDistinctGoalTurnCadence(goal) && cadenceMutationReservations.has(event.sessionID)) {
+            throw new Error(CADENCE_BOUNDARY_MESSAGE)
+          }
+        })
+        return
+      }
       if (event.tool !== TODO_TOOL && !FILE_MUTATION_TOOLS.has(event.tool)) return
-      ownership.rememberActiveTool(event.sessionID, event.callID)
+      const call = ownership.rememberActiveTool(event.sessionID, event.callID, event.tool !== TODO_TOOL)
+      if (!call || event.tool === TODO_TOOL) return
+      await serialize(event.sessionID, async () => {
+        const goal = await load(event.sessionID)
+        if (!goal || goal.status !== "active" || !sameGoalTurn(call.owner, goalTurnOwner(goal)) || !requiresDistinctGoalTurnCadence(goal)) return
+        const reserved = cadenceMutationReservations.get(event.sessionID)
+        if (reserved && reserved !== event.callID) throw new Error(CADENCE_BOUNDARY_MESSAGE)
+        cadenceMutationReservations.set(event.sessionID, event.callID)
+      })
     },
 
     "tool.execute.after": async (event: any, output: any) => {
@@ -313,29 +343,37 @@ export default async function OpenCodeGoalPlugin(input: any) {
         return
       }
 
-      const fingerprints = await collectMutationFingerprints({
-        root: directory,
-        tool: event.tool,
-        args: event.args,
-        metadata: output?.metadata,
-      })
-      if (fingerprints.length === 0) return
-      await serialize(event.sessionID, async () => {
-        let goal = await load(event.sessionID)
-        if (!goal || goal.status !== "active" || !sameGoalTurn(call.owner, goalTurnOwner(goal))) return
-        const before = goal.progressRevision
-        for (const item of fingerprints) {
-          goal = markHostProgress(goal, {
-            fingerprint: item.fingerprint,
-            source: `tool:${event.tool}`,
-            summary: item.summary,
-          })
+      let madeProgress = false
+      try {
+        const fingerprints = await collectMutationFingerprints({
+          root: directory,
+          tool: event.tool,
+          args: event.args,
+          metadata: output?.metadata,
+        })
+        if (fingerprints.length === 0) return
+        await serialize(event.sessionID, async () => {
+          let goal = await load(event.sessionID)
+          if (!goal || goal.status !== "active" || !sameGoalTurn(call.owner, goalTurnOwner(goal))) return
+          const before = goal.progressRevision
+          for (const item of fingerprints) {
+            goal = markHostProgress(goal, {
+              fingerprint: item.fingerprint,
+              source: `tool:${event.tool}`,
+              summary: item.summary,
+            })
+          }
+          if (goal.progressRevision !== before) {
+            madeProgress = true
+            rememberToolProgress(call.messageID)
+            await save(goal)
+          }
+        })
+      } finally {
+        if (!madeProgress && cadenceMutationReservations.get(event.sessionID) === event.callID) {
+          cadenceMutationReservations.delete(event.sessionID)
         }
-        if (goal.progressRevision !== before) {
-          rememberToolProgress(call.messageID)
-          await save(goal)
-        }
-      })
+      }
     },
 
     "experimental.session.compacting": async (event: any, output: any) => {
@@ -388,11 +426,15 @@ export default async function OpenCodeGoalPlugin(input: any) {
           const goal = await load(sessionID)
           if (!goal || goal.status !== "active" || !sameGoalTurn(owner, goalTurnOwner(goal))) return
           const files = Array.isArray(part.files) ? part.files.map(String).filter(Boolean) : []
-          await save(markHostProgress(goal, {
+          const next = markHostProgress(goal, {
             fingerprint: `patch:${part.hash}`,
             source: "patch",
             summary: files.length ? `Workspace changed: ${files.join(", ")}` : `Workspace patch ${part.hash}`,
-          }))
+          })
+          if (next.progressRevision !== goal.progressRevision && requiresDistinctGoalTurnCadence(goal) && !cadenceMutationReservations.has(sessionID)) {
+            cadenceMutationReservations.set(sessionID, `patch:${part.messageID || part.hash}`)
+          }
+          await save(next)
         })
         return
       }

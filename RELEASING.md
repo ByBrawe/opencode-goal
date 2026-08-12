@@ -66,7 +66,7 @@ npm run package:smoke -- --json package-smoke-report.json
 The current one-shot stable guard is:
 
 ```text
-1.3.8
+1.3.9
 ```
 
 Before `npm publish`, the workflow:

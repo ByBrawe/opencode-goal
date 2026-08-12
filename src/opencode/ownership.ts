@@ -14,6 +14,11 @@ interface ActiveTurn {
   owner: GoalTurnOwner
 }
 
+interface PendingPromptOwner {
+  owner: GoalTurnOwner
+  expiresAt: number
+}
+
 export interface ToolCallOwner {
   messageID: string
   owner: GoalTurnOwner
@@ -29,6 +34,7 @@ export class TurnOwnership {
   #assistantOwners = new Map<string, GoalTurnOwner>()
   #assistantOrder: string[] = []
   #activeBySession = new Map<string, ActiveTurn>()
+  #pendingPromptOwnerBySession = new Map<string, PendingPromptOwner>()
   #toolOwners = new Map<string, ToolCallOwner>()
   #toolOrder: string[] = []
 
@@ -37,6 +43,7 @@ export class TurnOwnership {
     const existing = (this.#ownedPrompts.get(sessionID) ?? []).filter((item) => item.expiresAt > now)
     existing.push({ text, expiresAt: now + 60_000, ...(owner ? { owner } : {}) })
     this.#ownedPrompts.set(sessionID, existing.slice(-12))
+    if (owner) this.#pendingPromptOwnerBySession.set(sessionID, { owner, expiresAt: now + 60_000 })
   }
 
   consumePrompt(sessionID: string, text: string, userMessageID?: string): OwnedPrompt | null {
@@ -51,8 +58,31 @@ export class TurnOwnership {
     const [owned] = existing.splice(index, 1)
     if (existing.length) this.#ownedPrompts.set(sessionID, existing)
     else this.#ownedPrompts.delete(sessionID)
-    if (owned?.owner && userMessageID) this.#userOwners.set(userMessageID, owned.owner)
+    if (owned?.owner) {
+      this.#pendingPromptOwnerBySession.set(sessionID, { owner: owned.owner, expiresAt: now + 60_000 })
+      if (userMessageID) this.#userOwners.set(userMessageID, owned.owner)
+    }
     return owned ?? null
+  }
+
+  #rememberAssistant(messageID: string, owner: GoalTurnOwner) {
+    if (this.#assistantOwners.has(messageID)) return
+    this.#assistantOwners.set(messageID, owner)
+    this.#assistantOrder.push(messageID)
+    while (this.#assistantOrder.length > 256) {
+      const stale = this.#assistantOrder.shift()
+      if (stale) this.#assistantOwners.delete(stale)
+    }
+  }
+
+  #pendingOwner(sessionID: string): GoalTurnOwner | undefined {
+    const pending = this.#pendingPromptOwnerBySession.get(sessionID)
+    if (!pending) return undefined
+    if (pending.expiresAt <= Date.now()) {
+      this.#pendingPromptOwnerBySession.delete(sessionID)
+      return undefined
+    }
+    return pending.owner
   }
 
   observeAssistant(info: any): GoalTurnOwner | undefined {
@@ -62,14 +92,7 @@ export class TurnOwnership {
     const owner = this.#assistantOwners.get(messageID) ?? (parentID ? this.#userOwners.get(parentID) : undefined)
     if (!owner) return undefined
 
-    if (!this.#assistantOwners.has(messageID)) {
-      this.#assistantOwners.set(messageID, owner)
-      this.#assistantOrder.push(messageID)
-      while (this.#assistantOrder.length > 256) {
-        const stale = this.#assistantOrder.shift()
-        if (stale) this.#assistantOwners.delete(stale)
-      }
-    }
+    this.#rememberAssistant(messageID, owner)
 
     const sessionID = typeof info?.sessionID === "string" ? info.sessionID : ""
     if (sessionID) {
@@ -93,11 +116,25 @@ export class TurnOwnership {
     return this.#rememberTool(sessionID, callID, { messageID, owner })
   }
 
-  rememberActiveTool(sessionID: string, callID: string): ToolCallOwner | undefined {
+  rememberActiveTool(sessionID: string, callID: string, allowPending = true): ToolCallOwner | undefined {
     if (!callID) return undefined
+    const key = `${sessionID}\u0000${callID}`
+    const existing = this.#toolOwners.get(key)
+    if (existing) return existing
+
     const active = this.#activeBySession.get(sessionID)
-    if (!active) return undefined
-    return this.#rememberTool(sessionID, callID, { messageID: active.messageID, owner: active.owner })
+    if (active) return this.#rememberTool(sessionID, callID, { messageID: active.messageID, owner: active.owner })
+    if (!allowPending) return undefined
+
+    const owner = this.#pendingOwner(sessionID)
+    if (!owner) return undefined
+
+    // OpenCode tool hooks expose sessionID/callID but not messageID. Fast models can
+    // reach a file-mutation tool hook before assistant message.updated establishes
+    // activeBySession. The Goal-owned prompt is already known at dispatch time, so
+    // mutation hooks may opt into this revision-bound fallback. Advisory tools such
+    // as native Todo must not use it.
+    return this.#rememberTool(sessionID, callID, { messageID: "", owner })
   }
 
   #rememberTool(sessionID: string, callID: string, value: ToolCallOwner): ToolCallOwner {

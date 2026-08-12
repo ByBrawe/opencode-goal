@@ -8,6 +8,7 @@ import { installGoalSequence } from "./opencode/sequence.js"
 import { installTaskDeferral } from "./opencode/task-deferral.js"
 import { installRestrictedAgentSafety } from "./opencode/agent-boundary.js"
 import { installHostLimitHandling } from "./opencode/host-limits.js"
+import { preferSynchronousSessionPrompt } from "./opencode/client-compat.js"
 import { installGoalLifecycleUX } from "./opencode/lifecycle-ux.js"
 import { captureStartupGoals, scheduleStartupRecovery } from "./opencode/recovery.js"
 
@@ -19,7 +20,11 @@ export default async function OpenCodeGoalPlugin(
   // prevents startup recovery from racing with a brand-new /goal created by
   // the same host instance.
   const startupGoals = await captureStartupGoals(input.directory)
-  const hooks = await OpenCodeGoalCorePlugin(input, options)
+  const coreInput = {
+    ...input,
+    client: preferSynchronousSessionPrompt(input.client),
+  }
+  const hooks = await OpenCodeGoalCorePlugin(coreInput, options)
   enhanceGoalControls(input, hooks)
   installGoalAuditUX(input, hooks)
   installProjectGoalIndex(input, hooks)
@@ -63,4 +68,5 @@ export * from "./opencode/task-deferral.js"
 export * from "./opencode/project-index.js"
 export * from "./opencode/sequence.js"
 export * from "./opencode/todo-orchestration.js"
+export * from "./opencode/client-compat.js"
 export * from "./opencode/lifecycle-ux.js"

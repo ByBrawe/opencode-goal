@@ -158,3 +158,79 @@ test("runtime host evidence counts only current-revision turns and includes the 
   assert.match(promptText, /Host-observed Goal-owned assistant turns for the current revision, including the current completion turn when applicable: 3\./)
   assert.match(promptText, /Temporal\/process requirements such as doing an action across N distinct turns are not proven by a final file value alone/)
 })
+
+test("hung promptAsync dispatch is bounded instead of leaving completion QUEUED forever", async () => {
+  let aborted = 0
+  let deleted = 0
+  let promptCalls = 0
+  const client = {
+    session: {
+      async create() {
+        return { data: { id: "verifier-async-dispatch-hung" } }
+      },
+      async prompt() {
+        promptCalls += 1
+        throw new Error("sync fallback should not run when promptAsync exists")
+      },
+      async promptAsync() {
+        return await new Promise(() => {})
+      },
+      async abort() {
+        aborted += 1
+        return true
+      },
+      async delete() {
+        deleted += 1
+        return true
+      },
+    },
+  }
+
+  const runtime = createSemanticVerifierRuntime(client, process.cwd(), { timeoutMs: 25 })
+  const started = Date.now()
+  await assert.rejects(
+    runtime.verify("parent", semanticGoal()),
+    (error) => error instanceof SemanticVerifierUnavailableError && /semantic verifier timed out after 25ms/.test(error.message),
+  )
+  const elapsed = Date.now() - started
+
+  assert.ok(elapsed < 1_000, `hung async dispatch should release the parent promptly, got ${elapsed}ms`)
+  assert.equal(promptCalls, 0)
+  assert.equal(aborted, 1)
+  assert.equal(deleted, 1)
+})
+
+test("hung verifier session creation is bounded before a child id exists", async () => {
+  let aborted = 0
+  let deleted = 0
+  const client = {
+    session: {
+      async create() {
+        return await new Promise(() => {})
+      },
+      async promptAsync() {
+        throw new Error("promptAsync must not run when verifier session creation never completes")
+      },
+      async abort() {
+        aborted += 1
+        return true
+      },
+      async delete() {
+        deleted += 1
+        return true
+      },
+    },
+  }
+
+  const runtime = createSemanticVerifierRuntime(client, process.cwd(), { timeoutMs: 25 })
+  const started = Date.now()
+  await assert.rejects(
+    runtime.verify("parent", semanticGoal()),
+    (error) => error instanceof SemanticVerifierUnavailableError && /session creation failed: semantic verifier timed out after 25ms/.test(error.message),
+  )
+  const elapsed = Date.now() - started
+
+  assert.ok(elapsed < 1_000, `hung verifier session creation should release the parent promptly, got ${elapsed}ms`)
+  assert.equal(aborted, 0)
+  assert.equal(deleted, 0)
+})

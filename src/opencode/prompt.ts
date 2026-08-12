@@ -21,7 +21,7 @@ function revisionCompletedTurns(goal: GoalState): number {
 }
 
 function latestProgress(goal: GoalState): string {
-  const latest = goal.progressNotes.at(-1)
+  const latest = goal.progressNotes?.at(-1)
   if (!latest) return "none"
   return latest.next ? `${latest.summary} Next: ${latest.next}` : latest.summary
 }

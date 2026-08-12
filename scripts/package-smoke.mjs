@@ -104,7 +104,7 @@ async function main() {
   }
   if (!packageJSON.exports?.["./server"]?.import) throw new Error("package.json must expose the OpenCode ./server entrypoint")
   if (!packageJSON.exports?.["./tui"]?.import) throw new Error("package.json must expose the target-exclusive ./tui entrypoint")
-  if (packageJSON.bin?.["opencode-goal"] !== "./bin/opencode-goal.js") throw new Error("package.json must expose the committed opencode-goal installer bin shim")
+  if (packageJSON.bin?.["opencode-goal"] !== "bin/opencode-goal.js") throw new Error("package.json must expose the npm-canonical committed opencode-goal installer bin shim")
   if (!packageJSON.files?.includes("bin")) throw new Error("package.json files must include the committed installer bin directory")
   if (!(await exists(path.join(root, "bin", "opencode-goal.js")))) throw new Error("committed installer bin shim is missing before packaging")
   if (!packageJSON.repository?.url || !packageJSON.homepage || !packageJSON.bugs?.url) {
@@ -159,8 +159,8 @@ async function main() {
     const installedRoot = path.join(consumer, "node_modules", "@bybrawe", "opencode-goal")
     const installedPackageJSON = JSON.parse(await readFile(path.join(installedRoot, "package.json"), "utf8"))
     const installedBin = installedPackageJSON.bin?.["opencode-goal"]
-    if (installedBin !== "bin/opencode-goal.js" && installedBin !== "./bin/opencode-goal.js") {
-      throw new Error(`installed package lost the opencode-goal bin manifest: ${String(installedBin)}`)
+    if (installedBin !== "bin/opencode-goal.js") {
+      throw new Error(`installed package lost or rewrote the canonical opencode-goal bin manifest: ${String(installedBin)}`)
     }
 
     const installerPath = path.join(installedRoot, "bin", "opencode-goal.js")

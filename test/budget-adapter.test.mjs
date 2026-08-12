@@ -164,8 +164,14 @@ test("budget-limited goal cannot resume until its budget is raised", async () =>
     await completeOwnedAssistant(hooks)
 
     let goal = await readGoal(root)
+    assert.equal(goal.status, "active", "mid-prompt usage accounting must keep Goal safety hooks active")
+    assert.equal(goal.usage.turns, 1)
+
+    await hooks.event({ event: { type: "session.idle", properties: { sessionID: "s1" } } })
+    goal = await readGoal(root)
     assert.equal(goal.status, "budget_limited")
     assert.match(goal.stopReason, /turns 1 \/ 1/)
+    assert.equal(fake.prompts.length, 0, "reached budget must stop autonomous continuation at idle")
 
     const blockedResume = { parts: [{ type: "text", text: "resume" }] }
     await hooks["command.execute.before"]({ command: "goal", sessionID: "s1", arguments: "resume" }, blockedResume)

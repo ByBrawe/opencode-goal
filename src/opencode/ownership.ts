@@ -89,14 +89,12 @@ export class TurnOwnership {
     const messageID = typeof info?.id === "string" ? info.id : ""
     if (!messageID) return undefined
     const parentID = typeof info?.parentID === "string" ? info.parentID : ""
-    const sessionID = typeof info?.sessionID === "string" ? info.sessionID : ""
-    const owner = this.#assistantOwners.get(messageID)
-      ?? (parentID ? this.#userOwners.get(parentID) : undefined)
-      ?? (sessionID ? this.#pendingOwner(sessionID) : undefined)
+    const owner = this.#assistantOwners.get(messageID) ?? (parentID ? this.#userOwners.get(parentID) : undefined)
     if (!owner) return undefined
 
     this.#rememberAssistant(messageID, owner)
 
+    const sessionID = typeof info?.sessionID === "string" ? info.sessionID : ""
     if (sessionID) {
       if (info?.time?.completed) {
         const active = this.#activeBySession.get(sessionID)
@@ -113,14 +111,12 @@ export class TurnOwnership {
     const callID = typeof part?.callID === "string" ? part.callID : ""
     const messageID = typeof part?.messageID === "string" ? part.messageID : ""
     if (!callID || !messageID) return undefined
-    const owner = this.#assistantOwners.get(messageID) ?? this.#pendingOwner(sessionID)
+    const owner = this.#assistantOwners.get(messageID)
     if (!owner) return undefined
-    this.#rememberAssistant(messageID, owner)
-    this.#activeBySession.set(sessionID, { messageID, owner })
     return this.#rememberTool(sessionID, callID, { messageID, owner })
   }
 
-  rememberActiveTool(sessionID: string, callID: string): ToolCallOwner | undefined {
+  rememberActiveTool(sessionID: string, callID: string, allowPending = true): ToolCallOwner | undefined {
     if (!callID) return undefined
     const key = `${sessionID}\u0000${callID}`
     const existing = this.#toolOwners.get(key)
@@ -128,15 +124,16 @@ export class TurnOwnership {
 
     const active = this.#activeBySession.get(sessionID)
     if (active) return this.#rememberTool(sessionID, callID, { messageID: active.messageID, owner: active.owner })
+    if (!allowPending) return undefined
 
     const owner = this.#pendingOwner(sessionID)
     if (!owner) return undefined
 
     // OpenCode tool hooks expose sessionID/callID but not messageID. Fast models can
-    // reach tool.execute.before before the assistant message.updated event establishes
-    // activeBySession. The Goal-owned prompt is already known at dispatch time, so use
-    // that revision-bound owner as a temporary fallback instead of losing real host
-    // progress and tripping the three-turn no-progress guard.
+    // reach a file-mutation tool hook before assistant message.updated establishes
+    // activeBySession. The Goal-owned prompt is already known at dispatch time, so
+    // mutation hooks may opt into this revision-bound fallback. Advisory tools such
+    // as native Todo must not use it.
     return this.#rememberTool(sessionID, callID, { messageID: "", owner })
   }
 

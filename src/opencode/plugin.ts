@@ -6,6 +6,7 @@ import { accountAssistantUsage } from "../runtime/accounting.js"
 import { reportBlocker } from "../runtime/blocker.js"
 import { CADENCE_BOUNDARY_MESSAGE, requiresDistinctGoalTurnCadence } from "../runtime/cadence.js"
 import { runConfiguredChecks } from "../runtime/checks.js"
+import { formatModelContext, observeModelContextLimits, observeModelContextUsage } from "../runtime/model-context.js"
 import { collectMutationFingerprints } from "../runtime/mutation-progress.js"
 import { addProgressNote, closeObservedTurn, markHostProgress } from "../runtime/progress.js"
 import { normalizeNativeTodos, observeTodoPlan } from "../runtime/todo-plan.js"
@@ -21,6 +22,13 @@ const FILE_MUTATION_TOOLS = new Set(["write", "edit", "apply_patch"])
 const TODO_TOOL = "todowrite"
 const SHELL_TOOL = "bash"
 
+export interface OpenCodeGoalPluginOptions {
+  /** Dedicated semantic verifier model in provider/model format. */
+  verifierModel?: string
+  /** Hard semantic verifier deadline in milliseconds. */
+  verifierTimeoutMs?: number
+}
+
 function replaceParts(parts: any[], text: string) {
   parts.splice(0, parts.length, { type: "text", text })
 }
@@ -32,7 +40,7 @@ function textFromParts(parts: any[]): string {
 function formatStatus(goal: GoalState | null): string {
   if (!goal) return "No active goal."
   const req = goal.requirements.map((item, i) => `${i + 1}. [${item.status}] ${item.text}`).join("\n")
-  return `Goal: ${goal.objective}\nStatus: ${goal.status}\nRevision: ${goal.revision}\nUsage: ${goal.usage.turns} turns, ${goal.usage.tokens} tokens, cost ${goal.usage.cost.toFixed(4)}\nRequirements:\n${req}`
+  return `Goal: ${goal.objective}\nStatus: ${goal.status}\nRevision: ${goal.revision}\nGoal cumulative usage: ${goal.usage.turns} turns, ${goal.usage.tokens} tokens, cost ${goal.usage.cost.toFixed(4)}\nModel context: ${formatModelContext(goal)}\nRequirements:\n${req}`
 }
 
 async function sdkPrompt(client: any, sessionID: string, text: string, execution?: GoalExecutionContext) {
@@ -55,10 +63,24 @@ async function sdkAbort(client: any, sessionID: string): Promise<boolean> {
   }
 }
 
-export default async function OpenCodeGoalPlugin(input: any) {
+function optionText(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined
+  const trimmed = value.trim()
+  return trimmed || undefined
+}
+
+function optionNumber(value: unknown): number | undefined {
+  const number = Number(value)
+  return Number.isFinite(number) && number > 0 ? number : undefined
+}
+
+export default async function OpenCodeGoalPlugin(input: any, options: OpenCodeGoalPluginOptions = {}) {
   const { client, directory } = input
   const store = new GoalStore(directory)
-  const semanticVerifier = createSemanticVerifierRuntime(client, directory)
+  const semanticVerifier = createSemanticVerifierRuntime(client, directory, {
+    model: optionText(options.verifierModel) ?? optionText(process.env.OPENCODE_GOAL_VERIFIER_MODEL),
+    timeoutMs: optionNumber(options.verifierTimeoutMs) ?? optionNumber(process.env.OPENCODE_GOAL_VERIFIER_TIMEOUT_MS),
+  })
   const ownership = new TurnOwnership()
   const dispatching = new Map<string, number>()
   const deferredIdle = new Set<string>()
@@ -68,6 +90,8 @@ export default async function OpenCodeGoalPlugin(input: any) {
   const toolProgressMessages = new Set<string>()
   const toolProgressOrder: string[] = []
   const cadenceMutationReservations = new Map<string, string>()
+  let hostAutoCompaction = true
+  let hostCompactionReserved: number | undefined
 
   function serialize<T>(sessionID: string, fn: () => Promise<T>): Promise<T> {
     const previous = sessionLocks.get(sessionID) ?? Promise.resolve()
@@ -90,6 +114,15 @@ export default async function OpenCodeGoalPlugin(input: any) {
       requirements: evaluated.requirements,
       evidence: [...latest.evidence, ...evaluated.evidence.filter((item) => !latestEvidenceIDs.has(item.id))].slice(-500),
       progressRevision: Math.max(latest.progressRevision, evaluated.progressRevision),
+      updatedAt: Date.now(),
+    }
+  }
+
+  function settleCurrentProgress(goal: GoalState): GoalState {
+    return {
+      ...goal,
+      observedProgressRevision: goal.progressRevision,
+      stalledTurns: 0,
       updatedAt: Date.now(),
     }
   }
@@ -187,6 +220,8 @@ export default async function OpenCodeGoalPlugin(input: any) {
 
   return {
     config: async (config: any) => {
+      hostAutoCompaction = config.compaction?.auto !== false
+      hostCompactionReserved = optionNumber(config.compaction?.reserved)
       semanticVerifier.configure(config)
       config.command ||= {}
       config.command.goal ||= {
@@ -283,7 +318,14 @@ export default async function OpenCodeGoalPlugin(input: any) {
           await serialize(event.sessionID, async () => {
             const goal = await load(event.sessionID)
             if (goal && goal.status !== "completed" && sameGoalTurn(owned.owner, goalTurnOwner(goal))) {
-              await save({ ...goal, execution: context, updatedAt: Date.now() })
+              await save({
+                ...goal,
+                execution: {
+                  ...context,
+                  ...(goal.execution?.modelContext ? { modelContext: goal.execution.modelContext } : {}),
+                },
+                updatedAt: Date.now(),
+              })
             }
           })
         }
@@ -294,6 +336,19 @@ export default async function OpenCodeGoalPlugin(input: any) {
         if (goal?.status === "active") await save(pauseGoal(goal, "Paused because the user sent a new message."))
       })
       if (ownership.activeOwner(event.sessionID) || dispatching.has(event.sessionID)) await abortGoalTurn(event.sessionID, false)
+    },
+
+    "chat.params": async (event: any) => {
+      await serialize(event.sessionID, async () => {
+        const goal = await load(event.sessionID)
+        if (!goal || goal.status === "completed") return
+        const next = observeModelContextLimits(goal, {
+          model: event.model,
+          autoCompaction: hostAutoCompaction,
+          ...(hostCompactionReserved !== undefined ? { compactionReserved: hostCompactionReserved } : {}),
+        })
+        if (next !== goal) await save(next)
+      })
     },
 
     "tool.execute.before": async (event: any) => {
@@ -399,7 +454,7 @@ export default async function OpenCodeGoalPlugin(input: any) {
           await serialize(sessionID, async () => {
             const goal = await load(sessionID)
             if (!goal || owner.goalID !== goal.id) return
-            await save(accountAssistantUsage(goal, {
+            let next = accountAssistantUsage(goal, {
               messageID: info.id,
               inputTokens: info.tokens?.input,
               outputTokens: info.tokens?.output,
@@ -407,7 +462,9 @@ export default async function OpenCodeGoalPlugin(input: any) {
               cost: info.cost,
               createdAt: info.time?.created,
               completedAt: info.time?.completed,
-            }))
+            })
+            next = observeModelContextUsage(next, info.tokens)
+            await save(next)
           })
         }
         return
@@ -503,7 +560,7 @@ export default async function OpenCodeGoalPlugin(input: any) {
                 if (!latest || latest.id !== snapshot.id || latest.revision !== snapshot.revision || latest.status !== "active") {
                   return "Completion not verified: goal changed, paused, or stopped while semantic verification was unavailable."
                 }
-                const merged = mergeAuditEvaluation(latest, evaluated)
+                const merged = settleCurrentProgress(mergeAuditEvaluation(latest, evaluated))
                 const reason = `Independent semantic verification unavailable: ${error.message}`
                 await save(pauseGoal(merged, reason))
                 return `Completion not verified: ${error.message}. Goal paused to prevent repeated verifier retries. Use /goal resume to retry after the verifier/provider recovers.`
@@ -516,7 +573,7 @@ export default async function OpenCodeGoalPlugin(input: any) {
             if (!latest || latest.id !== snapshot.id || latest.revision !== snapshot.revision || latest.status !== "active") {
               return "Completion rejected: goal changed, paused, or stopped while verification was running."
             }
-            const merged = mergeAuditEvaluation(latest, evaluated)
+            const merged = settleCurrentProgress(mergeAuditEvaluation(latest, evaluated))
             const result = completeGoal(merged, args.summary)
             await save(result.goal)
             return result.audit.ok ? "Goal completed with host and verifier-backed evidence." : `Completion rejected:\n- ${result.audit.reasons.join("\n- ")}`

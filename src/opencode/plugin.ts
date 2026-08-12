@@ -307,7 +307,7 @@ export default async function OpenCodeGoalPlugin(input: any) {
         return
       }
       if (event.tool !== TODO_TOOL && !FILE_MUTATION_TOOLS.has(event.tool)) return
-      const call = ownership.rememberActiveTool(event.sessionID, event.callID)
+      const call = ownership.rememberActiveTool(event.sessionID, event.callID, event.tool !== TODO_TOOL)
       if (!call || event.tool === TODO_TOOL) return
       await serialize(event.sessionID, async () => {
         const goal = await load(event.sessionID)

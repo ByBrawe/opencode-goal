@@ -64,7 +64,7 @@ function parsePackResult(stdout) {
 function assertPackageFiles(pack) {
   const files = new Set(pack.files.map((item) => String(item.path).replaceAll("\\", "/")))
   const required = [
-    "package.json", "README.md", "CHANGELOG.md", "LICENSE",
+    "package.json", "README.md", "CHANGELOG.md", "LICENSE", "bin/opencode-goal.js",
     "dist/index.js", "dist/index.d.ts", "dist/server.js", "dist/server.d.ts",
     "dist/install.js", "dist/tui/index.js", "dist/tui/index.d.ts",
   ]
@@ -104,7 +104,9 @@ async function main() {
   }
   if (!packageJSON.exports?.["./server"]?.import) throw new Error("package.json must expose the OpenCode ./server entrypoint")
   if (!packageJSON.exports?.["./tui"]?.import) throw new Error("package.json must expose the target-exclusive ./tui entrypoint")
-  if (packageJSON.bin?.["opencode-goal"] !== "./dist/install.js") throw new Error("package.json must expose the opencode-goal installer bin")
+  if (packageJSON.bin?.["opencode-goal"] !== "./bin/opencode-goal.js") throw new Error("package.json must expose the committed opencode-goal installer bin shim")
+  if (!packageJSON.files?.includes("bin")) throw new Error("package.json files must include the committed installer bin directory")
+  if (!(await exists(path.join(root, "bin", "opencode-goal.js")))) throw new Error("committed installer bin shim is missing before packaging")
   if (!packageJSON.repository?.url || !packageJSON.homepage || !packageJSON.bugs?.url) {
     throw new Error("package.json release metadata is incomplete (repository/homepage/bugs)")
   }
@@ -155,7 +157,17 @@ async function main() {
     const consumerResult = run(process.execPath, ["--input-type=module", "--eval", probe], { cwd: consumer })
 
     const installedRoot = path.join(consumer, "node_modules", "@bybrawe", "opencode-goal")
-    const installerPath = path.join(installedRoot, "dist", "install.js")
+    const installedPackageJSON = JSON.parse(await readFile(path.join(installedRoot, "package.json"), "utf8"))
+    const installedBin = installedPackageJSON.bin?.["opencode-goal"]
+    if (installedBin !== "bin/opencode-goal.js" && installedBin !== "./bin/opencode-goal.js") {
+      throw new Error(`installed package lost the opencode-goal bin manifest: ${String(installedBin)}`)
+    }
+
+    const installerPath = path.join(installedRoot, "bin", "opencode-goal.js")
+    if (!(await exists(installerPath))) throw new Error("installed package is missing the committed installer bin shim")
+    const linkedBin = path.join(consumer, "node_modules", ".bin", process.platform === "win32" ? "opencode-goal.cmd" : "opencode-goal")
+    if (!(await exists(linkedBin))) throw new Error("npm did not create the opencode-goal executable link from the package bin manifest")
+
     const installerConfig = path.join(temp, "installer-config")
     const installerEnv = { ...process.env, OPENCODE_CONFIG_DIR: installerConfig }
     const installerVersion = run(process.execPath, [installerPath, "--version"], { cwd: consumer, env: installerEnv })
@@ -198,6 +210,7 @@ async function main() {
       consumerImport: /consumer import ok/.test(String(consumerResult.stdout ?? "")),
       serverEntrypoint: true,
       installer: true,
+      installerBinLinked: true,
       commandDiscovery: true,
       uninstaller: true,
       gate: true,
@@ -207,7 +220,7 @@ async function main() {
     console.log(`minimum OpenCode ${report.minimumOpenCode}`)
     console.log(`runtime dependency ${report.runtimeDependency}`)
     console.log(`tarball ${report.filename} files=${report.fileCount} packed=${report.packageSize} unpacked=${report.unpackedSize}`)
-    console.log("clean production-only consumer public API + server + TUI import + installer + /goal command + uninstaller PASS")
+    console.log("clean production-only consumer public API + server + TUI import + npm-linked installer + /goal command + uninstaller PASS")
 
     if (options.jsonPath) {
       const target = path.resolve(root, options.jsonPath)

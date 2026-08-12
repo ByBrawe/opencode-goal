@@ -85,11 +85,14 @@ jobs:
             exit 1
           fi
 
+          VERIFY_DIR="$(mktemp -d)"
+          trap 'rm -rf "$VERIFY_DIR"' EXIT
+          pushd "$VERIFY_DIR" >/dev/null
           INSTALLED_VERSION=""
           for attempt in 1 2 3 4 5 6; do
             if INSTALLED_VERSION="$(npm exec --yes --package="@bybrawe/opencode-goal@$EXPECTED" -- opencode-goal --version 2>installer-error.log)"; then
               if [ "$INSTALLED_VERSION" = "$EXPECTED" ]; then
-                echo "Published installer verified on attempt $attempt: $INSTALLED_VERSION"
+                echo "Published installer verified from clean consumer directory on attempt $attempt: $INSTALLED_VERSION"
                 break
               fi
             fi
@@ -97,6 +100,7 @@ jobs:
             cat installer-error.log || true
             sleep 5
           done
+          popd >/dev/null
           if [ "$INSTALLED_VERSION" != "$EXPECTED" ]; then
             echo "Published installer reported $INSTALLED_VERSION instead of $EXPECTED"
             exit 1

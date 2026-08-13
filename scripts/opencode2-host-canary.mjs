@@ -74,14 +74,15 @@ async function main() {
   const config = path.join(home, ".config")
   const data = path.join(home, ".local", "share")
   const state = path.join(home, ".local", "state")
-  const plugins = path.join(project, "plugins")
+  const pluginDirectory = path.join(project, ".opencode", "plugins")
   const pluginFile = path.join(root, "dist", "opencode2", "experimental.js")
-  const adapterBridge = path.join(plugins, "opencode-goals-v2.js")
-  const sentinelFile = path.join(plugins, "sentinel.js")
+  const adapterBridge = path.join(pluginDirectory, "opencode-goals-v2-canary.js")
+  const sentinelFile = path.join(pluginDirectory, "opencode-goals-v2-sentinel.js")
+  const sentinelURL = pathToFileURL(sentinelFile).href
+  const adapterURL = pathToFileURL(adapterBridge).href
 
   await Promise.all([
-    mkdir(project, { recursive: true }),
-    mkdir(plugins, { recursive: true }),
+    mkdir(pluginDirectory, { recursive: true }),
     mkdir(config, { recursive: true }),
     mkdir(data, { recursive: true }),
     mkdir(state, { recursive: true }),
@@ -98,7 +99,10 @@ async function main() {
   await writeFile(path.join(project, "README.md"), "# OpenCode 2 host canary\n")
   await writeFile(path.join(project, "opencode.json"), `${JSON.stringify({
     $schema: "https://opencode.ai/config.json",
-    plugins: ["./plugins/sentinel.js", "./plugins/opencode-goals-v2.js"],
+    plugins: [
+      "./.opencode/plugins/opencode-goals-v2-sentinel.js",
+      "./.opencode/plugins/opencode-goals-v2-canary.js",
+    ],
   }, null, 2)}\n`)
 
   const env = {
@@ -110,6 +114,9 @@ async function main() {
     XDG_STATE_HOME: state,
     OPENCODE_DB: path.join(data, "opencode", "opencode-v2-canary.db"),
     OPENCODE_LOG_LEVEL: "DEBUG",
+    OPENCODE_CONFIG_CONTENT: JSON.stringify({
+      plugins: [sentinelURL, adapterURL],
+    }),
     CI: "true",
   }
 
@@ -128,12 +135,23 @@ async function main() {
     const health = output(run("opencode2", ["api", "get", "/api/health"], { cwd: project, env }))
     if (!health) throw new Error("OpenCode 2 health API returned no output")
 
-    const pluginResult = run("opencode2", ["api", "get", "/api/plugin"], { cwd: project, env })
-    const response = parseJSONOutput(pluginResult, "GET /api/plugin")
-    const ids = [...new Set(collectPluginIDs(response))]
+    const pluginPath = `/api/plugin?location%5Bdirectory%5D=${encodeURIComponent(project)}`
+    const pluginResult = run("opencode2", ["api", "get", pluginPath], { cwd: project, env })
+    const response = parseJSONOutput(pluginResult, "GET /api/plugin at project Location")
 
+    if (response?._tag) {
+      throw new Error(`project-scoped /api/plugin rejected the Location: ${JSON.stringify(response)}`)
+    }
+    if (response?.location?.directory !== project) {
+      throw new Error(`OpenCode 2 resolved the wrong Location: expected ${project}, got ${String(response?.location?.directory)}`)
+    }
+    if (response?.location?.project?.id === "global") {
+      throw new Error(`OpenCode 2 classified the committed git canary workspace as global: ${JSON.stringify(response.location)}`)
+    }
+
+    const ids = [...new Set(collectPluginIDs(response))]
     if (!ids.includes(sentinelID)) {
-      throw new Error(`OpenCode 2 did not activate the minimal sentinel. Active IDs: ${JSON.stringify(ids)}\nRaw response: ${String(pluginResult.stdout ?? "")}`)
+      throw new Error(`OpenCode 2 did not activate the minimal sentinel at the exact project Location. Active IDs: ${JSON.stringify(ids)}\nRaw response: ${String(pluginResult.stdout ?? "")}`)
     }
     if (!ids.includes(pluginID)) {
       throw new Error(`OpenCode 2 activated the sentinel but not ${pluginID}; the Goals adapter module/setup is incompatible with this beta host. Active IDs: ${JSON.stringify(ids)}\nRaw response: ${String(pluginResult.stdout ?? "")}`)
@@ -145,6 +163,8 @@ async function main() {
       node: process.version,
       opencode2Version: version,
       health,
+      projectDirectory: response.location.directory,
+      projectID: response.location.project.id,
       sentinelID,
       pluginID,
       activePluginIDs: ids,

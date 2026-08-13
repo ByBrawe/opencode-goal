@@ -177,11 +177,11 @@ function experimentalContext(goal: GoalState): string {
 
 function appendSystemContext(event: any, text: string): void {
   if (Array.isArray(event?.system)) {
-    event.system.push(text)
+    if (!event.system.includes(text)) event.system.push(text)
     return
   }
   if (typeof event?.system === "string") {
-    event.system = event.system ? `${event.system}\n\n${text}` : text
+    if (!event.system.includes(text)) event.system = event.system ? `${event.system}\n\n${text}` : text
     return
   }
   if (event && event.system === undefined) event.system = text
@@ -367,7 +367,7 @@ export const OpenCode2GoalsExperimental = {
       }, { codemode: false })
     })
 
-    await ctx.session.hook("context", async (event: any) => {
+    const handleContext = async (event: any) => {
       const sessionID = sessionIDFromEvent(event)
       if (!sessionID) {
         removeControlTool(event)
@@ -404,7 +404,15 @@ export const OpenCode2GoalsExperimental = {
         await store.save(goal)
       }
       appendSystemContext(event, experimentalContext(goal))
-    })
+    }
+
+    await ctx.session.hook("context", handleContext)
+    try {
+      await ctx.session.hook("request", handleContext)
+    } catch {
+      // Older experimental V2 hosts used `request`; current V2 uses `context`.
+      // Keep the legacy registration best-effort so old fake-host regressions stay valid.
+    }
 
     return () => pendingControls.clear()
   },

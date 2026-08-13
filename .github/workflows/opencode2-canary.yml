@@ -1,0 +1,27 @@
+name: Experimental OpenCode 2 Host
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "src/opencode2/**"
+      - "scripts/opencode2-host-canary.mjs"
+      - "scripts/run-opencode2-host-ci.mjs"
+      - ".github/workflows/opencode2-canary.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  plugin-host:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+      - run: node scripts/run-opencode2-host-ci.mjs

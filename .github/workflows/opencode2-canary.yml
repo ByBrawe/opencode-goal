@@ -1,0 +1,45 @@
+name: Experimental OpenCode 2 Host
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "41 5 * * *"
+  push:
+    branches:
+      - main
+    paths:
+      - "src/opencode2/**"
+      - "test/opencode2-experimental.test.mjs"
+      - "scripts/opencode2-host-canary.mjs"
+
+permissions:
+  contents: read
+
+jobs:
+  plugin-host:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build stable core and experimental adapter
+        run: npm run build
+
+      - name: Install current OpenCode 2 beta CLI
+        run: npm install -g @opencode-ai/cli@next
+
+      - name: Show OpenCode 2 version
+        run: opencode2 --version
+
+      - name: Verify real V2 plugin activation
+        run: node scripts/opencode2-host-canary.mjs

@@ -367,7 +367,7 @@ export const OpenCode2GoalsExperimental = {
       }, { codemode: false })
     })
 
-    const handleContext = async (event: any) => {
+    const handleRequest = async (event: any) => {
       const sessionID = sessionIDFromEvent(event)
       if (!sessionID) {
         removeControlTool(event)
@@ -406,12 +406,12 @@ export const OpenCode2GoalsExperimental = {
       appendSystemContext(event, experimentalContext(goal))
     }
 
-    await ctx.session.hook("context", handleContext)
+    await ctx.session.hook("request", handleRequest)
     try {
-      await ctx.session.hook("request", handleContext)
+      await ctx.session.hook("context", handleRequest)
     } catch {
-      // Older experimental V2 hosts used `request`; current V2 uses `context`.
-      // Keep the legacy registration best-effort so old fake-host regressions stay valid.
+      // Some earlier V2 prototypes exposed this hook name. Keep it best-effort
+      // without making it part of the current-host activation requirement.
     }
 
     return () => pendingControls.clear()

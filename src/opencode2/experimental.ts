@@ -367,7 +367,7 @@ export const OpenCode2GoalsExperimental = {
       }, { codemode: false })
     })
 
-    await ctx.session.hook("request", async (event: any) => {
+    await ctx.session.hook("context", async (event: any) => {
       const sessionID = sessionIDFromEvent(event)
       if (!sessionID) {
         removeControlTool(event)

@@ -11,6 +11,7 @@ import { installHostLimitHandling } from "./opencode/host-limits.js"
 import { preferSynchronousSessionPrompt } from "./opencode/client-compat.js"
 import { installGoalLifecycleUX } from "./opencode/lifecycle-ux.js"
 import { captureStartupGoals, scheduleStartupRecovery } from "./opencode/recovery.js"
+import { applySemanticVerifierTimeoutDefault } from "./opencode/verifier-defaults.js"
 
 export default async function OpenCodeGoalPlugin(
   input: Parameters<typeof OpenCodeGoalCorePlugin>[0],
@@ -24,7 +25,7 @@ export default async function OpenCodeGoalPlugin(
     ...input,
     client: preferSynchronousSessionPrompt(input.client),
   }
-  const hooks = await OpenCodeGoalCorePlugin(coreInput, options)
+  const hooks = await OpenCodeGoalCorePlugin(coreInput, applySemanticVerifierTimeoutDefault(options))
   enhanceGoalControls(input, hooks)
   installGoalAuditUX(input, hooks)
   installProjectGoalIndex(input, hooks)
@@ -70,3 +71,4 @@ export * from "./opencode/sequence.js"
 export * from "./opencode/todo-orchestration.js"
 export * from "./opencode/client-compat.js"
 export * from "./opencode/lifecycle-ux.js"
+export * from "./opencode/verifier-defaults.js"

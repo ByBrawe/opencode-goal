@@ -123,8 +123,8 @@ test("command-owned chat message does not pause its own goal", async () => {
   }
 })
 
-test("human message pauses active goal and aborts an in-flight continuation", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-interrupt-"))
+test("human message steers active goal, preempts a queued continuation, and keeps goal ownership", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-steering-"))
   try {
     const fake = fakeClient()
     const hooks = await OpenCodeGoalPlugin({ client: fake.client, directory: root })
@@ -135,13 +135,63 @@ test("human message pauses active goal and aborts an in-flight continuation", as
     await tick()
     assert.equal(fake.promptCount, 1)
 
-    await hooks["chat.message"]({ sessionID: "session-1", messageID: "human-2", agent: "build" }, { message: { id: "human-2" }, parts: [{ type: "text", text: "stop and do something else" }] })
+    const before = await readOnlyGoal(root)
+    await hooks["chat.message"](
+      { sessionID: "session-1", messageID: "human-2", agent: "build" },
+      { message: { id: "human-2" }, parts: [{ type: "text", text: "also prioritize the login edge case" }] },
+    )
     await tick()
-    const goal = await readOnlyGoal(root)
-    assert.equal(goal.status, "paused")
-    assert.match(goal.stopReason, /user sent a new message/i)
-    assert.equal(fake.abortCount, 1)
-    fake.pending[0].resolve({})
+
+    let goal = await readOnlyGoal(root)
+    assert.equal(goal.status, "active", "normal user steering must not pause the Goal")
+    assert.equal(goal.objective, before.objective, "steering must not silently rewrite the Goal contract")
+    assert.equal(goal.revision, before.revision, "steering stays inside the current Goal revision")
+    assert.equal(fake.abortCount, 1, "the in-flight Goal turn is preempted so the queued user message can run")
+
+    await hooks.event({ event: { type: "session.idle", properties: { sessionID: "session-1" } } })
+    await tick()
+    assert.equal(fake.promptCount, 1, "abort-generated idle must not jump ahead of the queued steering message")
+
+    await hooks.event({
+      event: {
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "assistant-steering",
+            sessionID: "session-1",
+            parentID: "human-2",
+            role: "assistant",
+            time: { created: Date.now() },
+            tokens: { input: 0, output: 0, reasoning: 0 },
+            cost: 0,
+          },
+        },
+      },
+    })
+    await emitPatch(hooks, { assistantMessageID: "assistant-steering", hash: "steering-patch", files: ["src/login.ts"] })
+    goal = await readOnlyGoal(root)
+    assert.equal(goal.progressRevision, before.progressRevision + 1, "steering turn mutations remain Goal-owned progress")
+
+    await hooks.event({
+      event: {
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "assistant-steering",
+            sessionID: "session-1",
+            parentID: "human-2",
+            role: "assistant",
+            time: { created: 1, completed: 2 },
+            tokens: { input: 2, output: 3, reasoning: 1 },
+            cost: 0.001,
+          },
+        },
+      },
+    })
+    await hooks.event({ event: { type: "session.idle", properties: { sessionID: "session-1" } } })
+    await tick()
+    assert.equal(fake.promptCount, 2, "Goal auto-continue resumes after the steering turn finishes")
+    fake.pending[1].resolve({})
     await tick()
   } finally {
     await rm(root, { recursive: true, force: true })

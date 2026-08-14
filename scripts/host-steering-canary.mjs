@@ -11,6 +11,7 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const isWindows = process.platform === "win32"
 const OLD_OBJECTIVE = "old active steering objective"
+const USER_STEERING = "queued user steering instruction"
 const NEW_OBJECTIVE = "new steered objective"
 
 function resolveOpenCodeBinary() {
@@ -169,6 +170,7 @@ function startProvider() {
     chatRequests: 0,
     oldStarted: 0,
     oldClosed: 0,
+    userSteeringStarted: 0,
     newStarted: 0,
     paths: [],
   }
@@ -195,6 +197,12 @@ function startProvider() {
     const id = `chatcmpl-steer-${stats.chatRequests}`
     const created = Math.floor(Date.now() / 1000)
     const text = lastUserText(body)
+
+    if (text.includes(USER_STEERING)) {
+      stats.userSteeringStarted += 1
+      streamText(res, { id, created, content: "USER_STEERING_ACK" })
+      return
+    }
 
     if (text.includes(OLD_OBJECTIVE) && !text.includes(NEW_OBJECTIVE)) {
       stats.oldStarted += 1
@@ -361,6 +369,28 @@ async function main() {
     )
     await new Promise((resolve) => setTimeout(resolve, 150))
 
+    await api(`/session/${encodeURIComponent(sessionID)}/prompt_async`, {
+      method: "POST",
+      body: JSON.stringify({
+        agent: "build",
+        model: { providerID: "canary", modelID: "canary" },
+        parts: [{ type: "text", text: USER_STEERING }],
+      }),
+      signal: AbortSignal.timeout(20_000),
+    })
+
+    await waitFor(() => provider.stats.oldClosed >= 1, "old provider stream to be cancelled for queued user steering", diagnostics)
+    await waitFor(() => provider.stats.userSteeringStarted === 1, "queued user steering message to reach the provider", diagnostics)
+    await waitFor(
+      async () => {
+        lastState = await readGoal(workspace)
+        return lastState?.revision === 1 && lastState?.objective === OLD_OBJECTIVE && lastState?.status === "active"
+      },
+      "Goal to remain active and unchanged during user steering",
+      diagnostics,
+    )
+    await waitFor(() => provider.stats.oldStarted >= 2, "Goal continuation to resume after queued user steering", diagnostics)
+
     const editCommand = api(`/session/${encodeURIComponent(sessionID)}/command`, {
       method: "POST",
       body: JSON.stringify({ agent: "build", model: "canary/canary", command: "goal", arguments: `edit ${NEW_OBJECTIVE}` }),
@@ -375,7 +405,7 @@ async function main() {
       "edited goal revision 2 to persist",
       diagnostics,
     )
-    await waitFor(() => provider.stats.oldClosed >= 1, "old provider stream to be cancelled by session.abort", diagnostics)
+    await waitFor(() => provider.stats.oldClosed >= 2, "resumed old provider stream to be cancelled by goal edit", diagnostics)
     await waitFor(() => provider.stats.newStarted >= 1, "new revision prompt to reach the provider", diagnostics)
 
     await editCommand
@@ -390,8 +420,9 @@ async function main() {
       diagnostics,
     )
 
-    assert.equal(provider.stats.oldStarted, 1, "old revision should start exactly one model stream")
-    assert.equal(provider.stats.oldClosed, 1, "old revision model stream should be cancelled exactly once")
+    assert.equal(provider.stats.oldStarted, 2, "old revision should start once before and once after the queued steering turn")
+    assert.equal(provider.stats.oldClosed, 2, "both old revision streams should be cancelled exactly once")
+    assert.equal(provider.stats.userSteeringStarted, 1, "queued steering should execute exactly one foreground model turn")
     assert.ok(provider.stats.newStarted >= 2, "edited goal should run its command turn and then continue on idle")
     assert.equal(lastState.revision, 2)
     assert.equal(lastState.objective, NEW_OBJECTIVE)
@@ -403,6 +434,7 @@ async function main() {
       sessionID,
       oldStarted: provider.stats.oldStarted,
       oldClosed: provider.stats.oldClosed,
+      userSteeringStarted: provider.stats.userSteeringStarted,
       newStarted: provider.stats.newStarted,
       revision: lastState.revision,
       objective: lastState.objective,

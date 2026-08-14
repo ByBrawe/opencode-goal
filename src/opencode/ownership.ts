@@ -58,11 +58,14 @@ export class TurnOwnership {
     const [owned] = existing.splice(index, 1)
     if (existing.length) this.#ownedPrompts.set(sessionID, existing)
     else this.#ownedPrompts.delete(sessionID)
-    if (owned?.owner) {
-      this.#pendingPromptOwnerBySession.set(sessionID, { owner: owned.owner, expiresAt: now + 60_000 })
-      if (userMessageID) this.#userOwners.set(userMessageID, owned.owner)
-    }
+    if (owned?.owner) this.rememberUserMessage(sessionID, userMessageID, owned.owner)
     return owned ?? null
+  }
+
+  rememberUserMessage(sessionID: string, userMessageID: string | undefined, owner: GoalTurnOwner) {
+    const now = Date.now()
+    this.#pendingPromptOwnerBySession.set(sessionID, { owner, expiresAt: now + 60_000 })
+    if (userMessageID) this.#userOwners.set(userMessageID, owner)
   }
 
   #rememberAssistant(messageID: string, owner: GoalTurnOwner) {

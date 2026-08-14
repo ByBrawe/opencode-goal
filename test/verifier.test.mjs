@@ -199,7 +199,7 @@ test("verifier result is session-bound and cannot be forged from the parent sess
   }
 })
 
-test("user pause wins if it arrives while independent verification is running", async () => {
+test("explicit user pause wins if it arrives while independent verification is running", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-verify-race-"))
   try {
     await writeFile(path.join(root, "README.md"), "Verified Goal Mode\n", "utf8")
@@ -218,7 +218,8 @@ test("user pause wins if it arrives while independent verification is running", 
     const completion = hooks.tool.opencode_goal_complete.execute({ summary: "done" }, { sessionID: "parent", messageID: "executor-message", agent: "build" })
     while (!promptBody) await new Promise((resolve) => setTimeout(resolve, 5))
 
-    await hooks["chat.message"]({ sessionID: "parent", agent: "build" }, { parts: [{ type: "text", text: "change direction" }] })
+    const pauseOutput = { parts: [{ type: "text", text: "pause" }] }
+    await hooks["command.execute.before"]({ command: "goal", sessionID: "parent", arguments: "pause" }, pauseOutput)
     assert.equal((await stateFor(root)).status, "paused")
 
     const request = verificationRequest(promptBody.parts[0].text)
@@ -236,6 +237,51 @@ test("user pause wins if it arrives while independent verification is running", 
     releasePrompt({})
     assert.match(await completion, /goal changed, paused, or stopped/)
     assert.equal((await stateFor(root)).status, "paused")
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("normal user steering invalidates in-flight verification without pausing the Goal", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-verify-steering-"))
+  try {
+    await writeFile(path.join(root, "README.md"), "Verified Goal Mode\n", "utf8")
+    let releasePrompt
+    let promptBody
+    let childID
+    const fake = makeClient()
+    fake.setPromptHandler(({ body, childID: id }) => {
+      promptBody = body
+      childID = id
+      return new Promise((resolve) => { releasePrompt = resolve })
+    })
+    const hooks = await OpenCodeGoalPlugin({ client: fake.client, directory: root })
+    fake.setHooks(hooks)
+    await createGoal(hooks, "ship docs")
+    const completion = hooks.tool.opencode_goal_complete.execute({ summary: "done" }, { sessionID: "parent", messageID: "executor-message", agent: "build" })
+    while (!promptBody) await new Promise((resolve) => setTimeout(resolve, 5))
+
+    await hooks["chat.message"](
+      { sessionID: "parent", messageID: "steering-user", agent: "build" },
+      { message: { id: "steering-user" }, parts: [{ type: "text", text: "also check the login edge case before finishing" }] },
+    )
+    assert.equal((await stateFor(root)).status, "active", "normal steering keeps persisted Goal state active")
+
+    const request = verificationRequest(promptBody.parts[0].text)
+    const accepted = await hooks.tool.opencode_goal_verifier_result.execute({
+      auditToken: request.auditToken,
+      results: request.requirements.map((requirement) => ({
+        requirementID: requirement.id,
+        verdict: "proven",
+        reason: "README proves it.",
+        evidence: [{ path: "README.md", quote: "Verified Goal Mode" }],
+        hostEvidenceIDs: [],
+      })),
+    }, { sessionID: childID, messageID: "verifier-message", agent: DEFAULT_VERIFIER_AGENT })
+    assert.equal(accepted, "Semantic verifier result accepted.")
+    releasePrompt({})
+    assert.match(await completion, /user steering arrived/i)
+    assert.equal((await stateFor(root)).status, "active", "stale completion must not complete or pause after steering")
   } finally {
     await rm(root, { recursive: true, force: true })
   }

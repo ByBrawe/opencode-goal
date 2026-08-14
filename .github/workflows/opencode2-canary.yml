@@ -1,22 +1,18 @@
-name: Experimental OpenCode 2 Host
+name: Experimental OpenCode 2 Loader Probe
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "43 5 * * *"
   push:
-    branches: [main]
+    branches: [fix-v2-local-plugin-discovery]
     paths:
-      - "src/opencode2/**"
-      - "scripts/opencode2-host-canary.mjs"
-      - "scripts/run-opencode2-host-ci.mjs"
+      - "scripts/opencode2-loader-canary.mjs"
       - ".github/workflows/opencode2-canary.yml"
 
 permissions:
   contents: read
 
 jobs:
-  plugin-host:
+  plugin-loader:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -26,4 +22,6 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: "24"
-      - run: node scripts/run-opencode2-host-ci.mjs
+      - run: npm install -g @opencode-ai/cli@next
+      - run: opencode2 --version
+      - run: node scripts/opencode2-loader-canary.mjs

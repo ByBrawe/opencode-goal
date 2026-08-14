@@ -86,6 +86,7 @@ export default async function OpenCodeGoalPlugin(input: any, options: OpenCodeGo
   const deferredIdle = new Set<string>()
   const steeringIdleSuppressions = new Map<string, number>()
   const queuedSteeringMessages = new Map<string, string>()
+  const steeringEpochs = new Map<string, number>()
   const sessionLocks = new Map<string, Promise<unknown>>()
   const sessionContexts = new Map<string, GoalExecutionContext>()
   const toolProgressMessages = new Set<string>()
@@ -106,6 +107,14 @@ export default async function OpenCodeGoalPlugin(input: any, options: OpenCodeGo
 
   function resetCadenceTurn(sessionID: string) {
     cadenceMutationReservations.delete(sessionID)
+  }
+
+  function currentSteeringEpoch(sessionID: string): number {
+    return steeringEpochs.get(sessionID) ?? 0
+  }
+
+  function markUserSteering(sessionID: string): void {
+    steeringEpochs.set(sessionID, currentSteeringEpoch(sessionID) + 1)
   }
 
   function mergeAuditEvaluation(latest: GoalState, evaluated: GoalState): GoalState {
@@ -260,6 +269,8 @@ export default async function OpenCodeGoalPlugin(input: any, options: OpenCodeGo
           resetCadenceTurn(event.sessionID)
           if (ownership.activeOwner(event.sessionID) || dispatching.has(event.sessionID)) abortControl = "pause"
           await store.clear(event.sessionID)
+          steeringEpochs.delete(event.sessionID)
+          queuedSteeringMessages.delete(event.sessionID)
           ;(output as any).noReply = true
           markCommandOutputOwned(event.sessionID, output, "Goal cleared. Respond only with OK.")
           return
@@ -338,6 +349,7 @@ export default async function OpenCodeGoalPlugin(input: any, options: OpenCodeGo
         const goal = await load(event.sessionID)
         if (goal?.status !== "active") return
         resetCadenceTurn(event.sessionID)
+        markUserSteering(event.sessionID)
         ownership.rememberUserMessage(event.sessionID, userMessageID, goalTurnOwner(goal))
         steeringInFlight = Boolean(ownership.activeOwner(event.sessionID) || dispatching.has(event.sessionID))
         if (steeringInFlight && userMessageID) queuedSteeringMessages.set(event.sessionID, userMessageID)
@@ -564,6 +576,7 @@ export default async function OpenCodeGoalPlugin(input: any, options: OpenCodeGo
         description: "Attempt verified completion. Host contracts run independently and semantic requirements are audited by a read-only verifier. Completion fails closed. If verifier infrastructure is unavailable, the Goal is paused instead of retry-looping.",
         args: { summary: tool.schema.string() },
         execute: async (args: any, context: any) => {
+          const startingSteeringEpoch = currentSteeringEpoch(context.sessionID)
           const snapshot = await serialize(context.sessionID, async () => await load(context.sessionID))
           if (!snapshot) return "No active goal."
           const stale = staleToolReason(context, snapshot)
@@ -571,13 +584,22 @@ export default async function OpenCodeGoalPlugin(input: any, options: OpenCodeGo
           if (snapshot.status !== "active") return `Completion rejected: goal status is ${snapshot.status}.`
           let evaluated = await runConfiguredChecks(snapshot, directory)
           evaluated = await verifyDeclaredFiles(evaluated, directory)
+          if (currentSteeringEpoch(context.sessionID) !== startingSteeringEpoch) {
+            return "Completion rejected: user steering arrived while host verification was running. Goal remains active."
+          }
           try {
             evaluated = await semanticVerifier.verify(context.sessionID, evaluated, {
               ...(typeof context.messageID === "string" ? { currentMessageID: context.messageID } : {}),
             })
           } catch (error) {
+            if (currentSteeringEpoch(context.sessionID) !== startingSteeringEpoch) {
+              return "Completion not verified: user steering arrived while semantic verification was running. Goal remains active."
+            }
             if (error instanceof SemanticVerifierUnavailableError) {
               return await serialize(context.sessionID, async () => {
+                if (currentSteeringEpoch(context.sessionID) !== startingSteeringEpoch) {
+                  return "Completion not verified: user steering arrived while semantic verification was running. Goal remains active."
+                }
                 const latest = await load(context.sessionID)
                 if (!latest || latest.id !== snapshot.id || latest.revision !== snapshot.revision || latest.status !== "active") {
                   return "Completion not verified: goal changed, paused, or stopped while semantic verification was unavailable."
@@ -591,6 +613,9 @@ export default async function OpenCodeGoalPlugin(input: any, options: OpenCodeGo
             return `Completion rejected: independent semantic verification failed closed (${String(error)}).`
           }
           return await serialize(context.sessionID, async () => {
+            if (currentSteeringEpoch(context.sessionID) !== startingSteeringEpoch) {
+              return "Completion rejected: user steering arrived while verification was running. Goal remains active."
+            }
             const latest = await load(context.sessionID)
             if (!latest || latest.id !== snapshot.id || latest.revision !== snapshot.revision || latest.status !== "active") {
               return "Completion rejected: goal changed, paused, or stopped while verification was running."

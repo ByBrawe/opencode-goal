@@ -2,7 +2,16 @@ import { spawn } from "node:child_process"
 import type { GoalState } from "../domain/types.js"
 import { proveRequirementsFromEvidence, recordCommandEvidence } from "../verification/evidence.js"
 
-function run(command: string, cwd: string, timeoutMs = 120_000): Promise<{ code: number; output: string }> {
+export const DEFAULT_CONFIGURED_CHECK_TIMEOUT_MS = 60 * 60_000
+
+function configuredCheckTimeoutMs(explicit?: number): number {
+  if (Number.isFinite(explicit) && Number(explicit) > 0) return Number(explicit)
+  const env = Number(process.env.OPENCODE_GOAL_CHECK_TIMEOUT_MS)
+  if (Number.isFinite(env) && env > 0) return env
+  return DEFAULT_CONFIGURED_CHECK_TIMEOUT_MS
+}
+
+function run(command: string, cwd: string, timeoutMs: number): Promise<{ code: number; output: string }> {
   return new Promise((resolve) => {
     const child = spawn(command, { cwd, shell: true, env: process.env })
     let output = ""
@@ -21,10 +30,11 @@ function run(command: string, cwd: string, timeoutMs = 120_000): Promise<{ code:
   })
 }
 
-export async function runConfiguredChecks(goal: GoalState, cwd: string): Promise<GoalState> {
+export async function runConfiguredChecks(goal: GoalState, cwd: string, options: { timeoutMs?: number } = {}): Promise<GoalState> {
+  const timeoutMs = configuredCheckTimeoutMs(options.timeoutMs)
   let next = goal
   for (const requirement of next.requirements.filter((item) => item.verification === "command" && item.command)) {
-    const result = await run(requirement.command!, cwd)
+    const result = await run(requirement.command!, cwd, timeoutMs)
     next = recordCommandEvidence(next, {
       command: requirement.command!,
       exitCode: result.code,

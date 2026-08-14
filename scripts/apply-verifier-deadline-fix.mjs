@@ -57,16 +57,39 @@ await patch("src/opencode/verifier.ts", [
   ],
 ])
 
-await patch("src/opencode/plugin.ts", [
+await patch("src/runtime/checks.ts", [
   [
-    "plugin dispatch timeout option",
-    '  /** Hard semantic verifier deadline in milliseconds. */\n  verifierTimeoutMs?: number\n}',
-    '  /** Semantic verifier result deadline in milliseconds. */\n  verifierTimeoutMs?: number\n  /** Verifier session-create/promptAsync transport deadline in milliseconds. */\n  verifierDispatchTimeoutMs?: number\n}',
+    "configured check default",
+    'function run(command: string, cwd: string, timeoutMs = 120_000): Promise<{ code: number; output: string }> {',
+    'export const DEFAULT_CONFIGURED_CHECK_TIMEOUT_MS = 60 * 60_000\n\nfunction run(command: string, cwd: string, timeoutMs = DEFAULT_CONFIGURED_CHECK_TIMEOUT_MS): Promise<{ code: number; output: string }> {',
   ],
   [
-    "plugin dispatch timeout env",
-    '    timeoutMs: optionNumber(options.verifierTimeoutMs) ?? optionNumber(process.env.OPENCODE_GOAL_VERIFIER_TIMEOUT_MS),\n  })',
-    '    timeoutMs: optionNumber(options.verifierTimeoutMs) ?? optionNumber(process.env.OPENCODE_GOAL_VERIFIER_TIMEOUT_MS),\n    dispatchTimeoutMs: optionNumber(options.verifierDispatchTimeoutMs) ?? optionNumber(process.env.OPENCODE_GOAL_VERIFIER_DISPATCH_TIMEOUT_MS),\n  })',
+    "configured check option",
+    'export async function runConfiguredChecks(goal: GoalState, cwd: string): Promise<GoalState> {\n  let next = goal',
+    'export async function runConfiguredChecks(goal: GoalState, cwd: string, options: { timeoutMs?: number } = {}): Promise<GoalState> {\n  const timeoutMs = Number.isFinite(options.timeoutMs) && Number(options.timeoutMs) > 0\n    ? Number(options.timeoutMs)\n    : DEFAULT_CONFIGURED_CHECK_TIMEOUT_MS\n  let next = goal',
+  ],
+  [
+    "configured check run timeout",
+    '    const result = await run(requirement.command!, cwd)',
+    '    const result = await run(requirement.command!, cwd, timeoutMs)',
+  ],
+])
+
+await patch("src/opencode/plugin.ts", [
+  [
+    "plugin timeout options",
+    '  /** Hard semantic verifier deadline in milliseconds. */\n  verifierTimeoutMs?: number\n}',
+    '  /** Semantic verifier result deadline in milliseconds. */\n  verifierTimeoutMs?: number\n  /** Verifier session-create/promptAsync transport deadline in milliseconds. */\n  verifierDispatchTimeoutMs?: number\n  /** Timeout for host-run completion checks such as Gradle/Xcode builds. */\n  checkTimeoutMs?: number\n}',
+  ],
+  [
+    "plugin timeout envs",
+    '    timeoutMs: optionNumber(options.verifierTimeoutMs) ?? optionNumber(process.env.OPENCODE_GOAL_VERIFIER_TIMEOUT_MS),\n  })\n  const ownership = new TurnOwnership()',
+    '    timeoutMs: optionNumber(options.verifierTimeoutMs) ?? optionNumber(process.env.OPENCODE_GOAL_VERIFIER_TIMEOUT_MS),\n    dispatchTimeoutMs: optionNumber(options.verifierDispatchTimeoutMs) ?? optionNumber(process.env.OPENCODE_GOAL_VERIFIER_DISPATCH_TIMEOUT_MS),\n  })\n  const configuredCheckTimeoutMs = optionNumber(options.checkTimeoutMs) ?? optionNumber(process.env.OPENCODE_GOAL_CHECK_TIMEOUT_MS)\n  const ownership = new TurnOwnership()',
+  ],
+  [
+    "configured checks deadline",
+    '          let evaluated = await runConfiguredChecks(snapshot, directory)',
+    '          let evaluated = await runConfiguredChecks(snapshot, directory, { timeoutMs: configuredCheckTimeoutMs })',
   ],
 ])
 
@@ -98,4 +121,6 @@ await patch("test/verifier-timeout.test.mjs", [
   ],
 ])
 
-console.log("applied verifier deadline and workspace-hint fix")
+await writeFile("test/check-timeout.test.mjs", `import test from "node:test"\nimport assert from "node:assert/strict"\nimport { DEFAULT_CONFIGURED_CHECK_TIMEOUT_MS, runConfiguredChecks } from "../dist/runtime/checks.js"\n\nfunction commandGoal(command) {\n  const now = Date.now()\n  return {\n    schemaVersion: 1,\n    id: "goal-check-timeout",\n    sessionID: "parent",\n    objective: "verify slow build support",\n    revision: 1,\n    status: "active",\n    requirements: [{\n      id: "req-check",\n      text: \`Verification command passes: \${command}\`,\n      required: true,\n      status: "pending",\n      evidenceIDs: [],\n      verification: "command",\n      source: "check",\n      command,\n      updatedAt: now,\n    }],\n    evidence: [],\n    checks: [command],\n    usage: { turns: 0, tokens: 0, cost: 0, runtimeMs: 0, seenMessageIDs: [] },\n    budget: { maxTurns: 30, maxTokens: 400000, maxCost: 0, maxRuntimeMs: 3600000 },\n    progressRevision: 0,\n    observedProgressRevision: 0,\n    progressFingerprints: [],\n    stalledTurns: 0,\n    progressNotes: [],\n    createdAt: now,\n    updatedAt: now,\n  }\n}\n\ntest("configured completion checks allow hour-scale builds by default", () => {\n  assert.equal(DEFAULT_CONFIGURED_CHECK_TIMEOUT_MS, 60 * 60_000)\n})\n\ntest("configured completion check timeout remains explicitly overridable", async () => {\n  const command = \`\"\${process.execPath}\" -e \"setTimeout(() => {}, 500)\"\`\n  const started = Date.now()\n  const result = await runConfiguredChecks(commandGoal(command), process.cwd(), { timeoutMs: 25 })\n  const elapsed = Date.now() - started\n  assert.ok(elapsed < 2_000, \`overridden check timeout should stop a hung check promptly, got \${elapsed}ms\`)\n  assert.equal(result.requirements[0].status, "failed")\n  assert.equal(result.evidence.at(-1)?.passed, false)\n})\n`, "utf8")
+
+console.log("applied verifier deadlines, workspace hints, and slow build timeout support")

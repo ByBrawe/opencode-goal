@@ -30,8 +30,8 @@ jobs:
             const { execFileSync } = require('node:child_process')
             execFileSync('git', ['config', 'user.name', 'github-actions[bot]'])
             execFileSync('git', ['config', 'user.email', '41898282+github-actions[bot]@users.noreply.github.com'])
-            execFileSync('git', ['add', 'src/opencode/verifier.ts', 'src/opencode/plugin.ts', 'test/verifier-timeout.test.mjs'])
+            execFileSync('git', ['add', 'src/opencode/verifier.ts', 'src/opencode/plugin.ts', 'src/runtime/checks.ts', 'test/verifier-timeout.test.mjs', 'test/check-timeout.test.mjs'])
             const status = execFileSync('git', ['status', '--porcelain'], { encoding: 'utf8' })
             if (!status.trim()) return
-            execFileSync('git', ['commit', '-m', 'fix: give semantic verifier enough time'])
+            execFileSync('git', ['commit', '-m', 'fix: support slow verification workloads'])
             execFileSync('git', ['push', 'origin', 'HEAD:fix-verifier-deadlines-20260814'])

@@ -250,7 +250,7 @@ export async function acquireGoalStoreProcessLock(input: GoalStoreProcessLockInp
       if (Date.now() - startedAt >= input.timeoutMs) {
         throw new GoalStoreConcurrencyError(
           "lock_timeout",
-          `timed out after ${input.timeoutMs}ms waiting for the session storage lease held by pid ${current.pid}`,
+          `timed out after ${input.timeoutMs}ms; another process (pid ${current.pid}) still owns this Goal session's storage lease. Separate OpenCode sessions in the same project directory use independent leases.`,
           input.lockFile,
         )
       }

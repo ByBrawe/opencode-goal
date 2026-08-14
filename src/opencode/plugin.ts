@@ -85,6 +85,7 @@ export default async function OpenCodeGoalPlugin(input: any, options: OpenCodeGo
   const dispatching = new Map<string, number>()
   const deferredIdle = new Set<string>()
   const steeringIdleSuppressions = new Map<string, number>()
+  const queuedSteeringMessages = new Map<string, string>()
   const sessionLocks = new Map<string, Promise<unknown>>()
   const sessionContexts = new Map<string, GoalExecutionContext>()
   const toolProgressMessages = new Set<string>()
@@ -331,11 +332,27 @@ export default async function OpenCodeGoalPlugin(input: any, options: OpenCodeGo
         }
         return
       }
+
+      let steeringInFlight = false
       await serialize(event.sessionID, async () => {
         const goal = await load(event.sessionID)
-        if (goal?.status === "active") await save(pauseGoal(goal, "Paused because the user sent a new message."))
+        if (goal?.status !== "active") return
+        resetCadenceTurn(event.sessionID)
+        ownership.rememberUserMessage(event.sessionID, userMessageID, goalTurnOwner(goal))
+        steeringInFlight = Boolean(ownership.activeOwner(event.sessionID) || dispatching.has(event.sessionID))
+        if (steeringInFlight && userMessageID) queuedSteeringMessages.set(event.sessionID, userMessageID)
+        if (Object.keys(context).length) {
+          await save({
+            ...goal,
+            execution: {
+              ...context,
+              ...(goal.execution?.modelContext ? { modelContext: goal.execution.modelContext } : {}),
+            },
+            updatedAt: Date.now(),
+          })
+        }
       })
-      if (ownership.activeOwner(event.sessionID) || dispatching.has(event.sessionID)) await abortGoalTurn(event.sessionID, false)
+      if (steeringInFlight) await abortGoalTurn(event.sessionID, true)
     },
 
     "chat.params": async (event: any) => {
@@ -449,6 +466,11 @@ export default async function OpenCodeGoalPlugin(input: any, options: OpenCodeGo
       if (type === "message.updated") {
         const info = properties.info
         if (info?.role !== "assistant") return
+        const queuedSteeringMessageID = queuedSteeringMessages.get(sessionID)
+        if (queuedSteeringMessageID && info?.parentID === queuedSteeringMessageID) {
+          queuedSteeringMessages.delete(sessionID)
+          steeringIdleSuppressions.delete(sessionID)
+        }
         const owner = ownership.observeAssistant(info)
         if (info?.time?.completed && owner) {
           await serialize(sessionID, async () => {

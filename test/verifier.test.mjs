@@ -199,7 +199,7 @@ test("verifier result is session-bound and cannot be forged from the parent sess
   }
 })
 
-test("user pause wins if it arrives while independent verification is running", async () => {
+test("explicit user pause wins if it arrives while independent verification is running", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-verify-race-"))
   try {
     await writeFile(path.join(root, "README.md"), "Verified Goal Mode\n", "utf8")
@@ -218,7 +218,8 @@ test("user pause wins if it arrives while independent verification is running", 
     const completion = hooks.tool.opencode_goal_complete.execute({ summary: "done" }, { sessionID: "parent", messageID: "executor-message", agent: "build" })
     while (!promptBody) await new Promise((resolve) => setTimeout(resolve, 5))
 
-    await hooks["chat.message"]({ sessionID: "parent", agent: "build" }, { parts: [{ type: "text", text: "change direction" }] })
+    const pauseOutput = { parts: [{ type: "text", text: "pause" }] }
+    await hooks["command.execute.before"]({ command: "goal", sessionID: "parent", arguments: "pause" }, pauseOutput)
     assert.equal((await stateFor(root)).status, "paused")
 
     const request = verificationRequest(promptBody.parts[0].text)

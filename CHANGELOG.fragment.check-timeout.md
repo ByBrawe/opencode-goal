@@ -1,0 +1,1 @@
+- Completion `--check` commands now allow up to 60 minutes by default instead of 2 minutes, so long Gradle/Xcode/build verification can finish. Override with `OPENCODE_GOAL_CHECK_TIMEOUT_MS` when needed.

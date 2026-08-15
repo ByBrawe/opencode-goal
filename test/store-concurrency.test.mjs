@@ -73,7 +73,10 @@ test("live cross-process lease blocks a second writer until timeout", async () =
     const attempted = { ...snapshot, stopReason: "must not write while another process owns the lease", updatedAt: Date.now() }
     await assert.rejects(
       () => contender.save(attempted),
-      (error) => error instanceof GoalStoreConcurrencyError && error.kind === "lock_timeout",
+      (error) => error instanceof GoalStoreConcurrencyError
+        && error.kind === "lock_timeout"
+        && error.message.includes("this Goal session's storage lease")
+        && error.message.includes("Separate OpenCode sessions in the same project directory use independent leases."),
     )
     assert.equal((await store.load(sessionID)).stopReason, undefined)
 
@@ -85,6 +88,44 @@ test("live cross-process lease blocks a second writer until timeout", async () =
     assert.equal(snapshot.storageGeneration, 2)
     assert.equal((await store.load(sessionID)).stopReason, "written after release")
   } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("separate sessions in the same project directory use independent process leases", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-session-isolation-"))
+  let holder
+  let release
+  try {
+    const heldSessionID = "parallel-session-a"
+    const independentSessionID = "parallel-session-b"
+    const store = new GoalStore(root)
+
+    const heldGoal = createGoal({ sessionID: heldSessionID, objective: "hold session A" })
+    const independentGoal = createGoal({ sessionID: independentSessionID, objective: "write session B" })
+    await store.save(heldGoal)
+    await store.save(independentGoal)
+
+    const ready = path.join(root, "holder-ready")
+    release = path.join(root, "holder-release")
+    holder = launch(["hold-lock", root, heldSessionID, ready, release, "unused"])
+    await waitFor(ready)
+
+    const independentSnapshot = await store.load(independentSessionID)
+    assert.ok(independentSnapshot)
+    independentSnapshot.stopReason = "session B wrote while session A lease was held"
+    independentSnapshot.updatedAt = Date.now()
+    await store.save(independentSnapshot)
+
+    const persisted = await store.load(independentSessionID)
+    assert.ok(persisted)
+    assert.equal(persisted.stopReason, "session B wrote while session A lease was held")
+    assert.equal(persisted.storageGeneration, 2)
+  } finally {
+    if (holder && release) {
+      await writeFile(release, "release\n", "utf8").catch(() => undefined)
+      await holder.done.catch(() => undefined)
+    }
     await rm(root, { recursive: true, force: true })
   }
 })

@@ -8,10 +8,10 @@ import {
 } from "./sequence-store.js"
 import { assertGoalStoragePathSafe, GoalStore, GoalStoreIntegrityError, type GoalStoreIntegrityKind } from "./store.js"
 
-export type GoalStorageDiagnosticKind = GoalStoreIntegrityKind | GoalSequenceIntegrityKind
+export type GoalStorageDiagnosticKind = GoalStoreIntegrityKind | GoalSequenceIntegrityKind | "lock_held" | "lock_corrupt"
 
 export interface GoalStorageDiagnosticIssue {
-  scope: "live" | "archive" | "queue"
+  scope: "live" | "archive" | "queue" | "lease"
   kind: GoalStorageDiagnosticKind
   file: string
   detail: string
@@ -25,7 +25,19 @@ export interface GoalStorageDiagnosticReport {
     | { state: "missing" }
     | { state: "valid"; count: number; generation: number }
     | { state: "invalid"; issue: GoalStorageDiagnosticIssue }
+  lease:
+    | { state: "free" }
+    | { state: "held"; pid: number; acquiredAt: number; issue: GoalStorageDiagnosticIssue }
+    | { state: "invalid"; issue: GoalStorageDiagnosticIssue }
   issues: GoalStorageDiagnosticIssue[]
+}
+
+interface StoredLeaseOwner {
+  schemaVersion: 1
+  pid: number
+  token: string
+  acquiredAt: number
+  candidateName: string
 }
 
 function relativeFile(directory: string, file: string): string {
@@ -49,6 +61,21 @@ function diagnosticIssue(
   }
 }
 
+function validLeaseOwner(value: unknown): value is StoredLeaseOwner {
+  if (!value || typeof value !== "object") return false
+  const owner = value as Partial<StoredLeaseOwner>
+  return owner.schemaVersion === 1
+    && Number.isInteger(owner.pid)
+    && Number(owner.pid) > 0
+    && typeof owner.token === "string"
+    && owner.token.length > 0
+    && typeof owner.acquiredAt === "number"
+    && Number.isFinite(owner.acquiredAt)
+    && typeof owner.candidateName === "string"
+    && /^\.[a-z-]+-\d+-[0-9a-f-]+\.json$/i.test(owner.candidateName)
+    && path.basename(owner.candidateName) === owner.candidateName
+}
+
 async function fileExistsSafe(directory: string, file: string): Promise<boolean> {
   await assertGoalStoragePathSafe(directory, file)
   try {
@@ -58,6 +85,64 @@ async function fileExistsSafe(directory: string, file: string): Promise<boolean>
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return false
     throw error
   }
+}
+
+async function diagnoseSessionLease(
+  directory: string,
+  store: GoalStore,
+  sessionID: string,
+): Promise<GoalStorageDiagnosticReport["lease"]> {
+  const file = store.lockFileFor(sessionID)
+  await assertGoalStoragePathSafe(directory, path.dirname(file))
+
+  let stat
+  try {
+    stat = await fs.lstat(file)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { state: "free" }
+    throw error
+  }
+
+  if (stat.isSymbolicLink()) await assertGoalStoragePathSafe(directory, file)
+
+  let raw: string
+  try {
+    raw = await fs.readFile(file, "utf8")
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { state: "free" }
+    throw error
+  }
+
+  let owner: unknown
+  try {
+    owner = JSON.parse(raw)
+  } catch {
+    const issue: GoalStorageDiagnosticIssue = {
+      scope: "lease",
+      kind: "lock_corrupt",
+      file: relativeFile(directory, file),
+      detail: "lock owner metadata is not valid JSON",
+    }
+    return { state: "invalid", issue }
+  }
+
+  if (!validLeaseOwner(owner)) {
+    const issue: GoalStorageDiagnosticIssue = {
+      scope: "lease",
+      kind: "lock_corrupt",
+      file: relativeFile(directory, file),
+      detail: "lock owner metadata is invalid",
+    }
+    return { state: "invalid", issue }
+  }
+
+  const issue: GoalStorageDiagnosticIssue = {
+    scope: "lease",
+    kind: "lock_held",
+    file: relativeFile(directory, file),
+    detail: `this Goal session lease is held by pid ${owner.pid} since ${new Date(owner.acquiredAt).toISOString()}; separate OpenCode sessions in the same project directory use independent leases`,
+  }
+  return { state: "held", pid: owner.pid, acquiredAt: owner.acquiredAt, issue }
 }
 
 export async function diagnoseGoalStorage(directory: string, sessionID: string): Promise<GoalStorageDiagnosticReport> {
@@ -103,7 +188,18 @@ export async function diagnoseGoalStorage(directory: string, sessionID: string):
     queue = { state: "invalid", issue }
   }
 
-  return { sessionID, live, archives, queue, issues }
+  let lease: GoalStorageDiagnosticReport["lease"]
+  try {
+    lease = await diagnoseSessionLease(directory, store, sessionID)
+  } catch (error) {
+    if (!(error instanceof GoalStoreIntegrityError)) throw error
+    const issue = diagnosticIssue(directory, "lease", error)
+    issues.push(issue)
+    lease = { state: "invalid", issue }
+  }
+  if (lease.state === "held" || (lease.state === "invalid" && !issues.includes(lease.issue))) issues.push(lease.issue)
+
+  return { sessionID, live, archives, queue, lease, issues }
 }
 
 export async function scanRecoverableGoalStates(directory: string): Promise<GoalState[]> {

@@ -167,6 +167,32 @@ test("goal doctor reports a held session lease without touching it", async () =>
   }
 })
 
+test("goal doctor reports corrupt session lease metadata without rewriting it", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-doctor-corrupt-lease-"))
+  try {
+    const sessionID = "doctor-corrupt-lease"
+    const store = new GoalStore(root)
+    const lockFile = store.lockFileFor(sessionID)
+    const corrupt = "{ broken lease\n"
+    await mkdir(path.dirname(lockFile), { recursive: true })
+    await writeFile(lockFile, corrupt, "utf8")
+
+    const hooks = await OpenCodeGoalPlugin({ client: fakeClient(), directory: root })
+    const output = await runGoalCommand(hooks, sessionID, "doctor")
+    assert.equal(output.noReply, true)
+    assert.match(output.parts[0].text, /Goal storage doctor: ISSUES FOUND/)
+    assert.match(output.parts[0].text, /lease: lock_corrupt/)
+    assert.match(output.parts[0].text, /lock owner metadata is not valid JSON/)
+    assert.match(output.parts[0].text, /No files were modified/)
+    assert.equal(await readFile(lockFile, "utf8"), corrupt)
+
+    await bindCommandMessage(hooks, sessionID, "doctor-corrupt-lease-command", output)
+    assert.equal(await readFile(lockFile, "utf8"), corrupt, "doctor response binding must not rewrite corrupt lease metadata")
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test("startup recovery scan isolates corrupt shards and keeps healthy active goals", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-doctor-startup-"))
   try {

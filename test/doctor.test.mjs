@@ -124,6 +124,49 @@ test("goal doctor reports corrupt queue storage without rewriting it", async () 
   }
 })
 
+test("goal doctor reports a held session lease without touching it", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-doctor-lease-"))
+  try {
+    const sessionID = "doctor-held-lease"
+    const store = new GoalStore(root)
+    const live = createGoal({ sessionID, objective: "diagnose the current lease", now: 100 })
+    await store.save(live)
+
+    const lockFile = store.lockFileFor(sessionID)
+    const acquiredAt = Date.UTC(2026, 7, 15, 5, 0, 0)
+    const owner = {
+      schemaVersion: 1,
+      pid: 424242,
+      token: "11111111-1111-1111-1111-111111111111",
+      acquiredAt,
+      candidateName: ".lock-owner-424242-11111111-1111-1111-1111-111111111111.json",
+    }
+    const raw = `${JSON.stringify(owner)}\n`
+    await mkdir(path.dirname(lockFile), { recursive: true })
+    await writeFile(lockFile, raw, "utf8")
+
+    const hooks = await OpenCodeGoalPlugin({ client: fakeClient(), directory: root })
+    const output = await runGoalCommand(hooks, sessionID, "doctor")
+    assert.equal(output.noReply, true)
+    assert.match(output.parts[0].text, /Goal storage doctor: ISSUES FOUND/)
+    assert.match(output.parts[0].text, /lease: lock_held/)
+    assert.match(output.parts[0].text, /held by pid 424242/)
+    assert.match(output.parts[0].text, /2026-08-15T05:00:00\.000Z/)
+    assert.match(output.parts[0].text, /separate OpenCode sessions in the same project directory use independent leases/)
+    assert.equal(await readFile(lockFile, "utf8"), raw)
+
+    await bindCommandMessage(hooks, sessionID, "doctor-lease-command", output)
+    assert.equal(await readFile(lockFile, "utf8"), raw, "doctor response binding must not mutate lease metadata")
+
+    await rm(lockFile, { force: true })
+    const clearOutput = await runGoalCommand(hooks, sessionID, "doctor")
+    assert.match(clearOutput.parts[0].text, /Goal storage doctor: OK/)
+    assert.doesNotMatch(clearOutput.parts[0].text, /lease:/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test("startup recovery scan isolates corrupt shards and keeps healthy active goals", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-doctor-startup-"))
   try {

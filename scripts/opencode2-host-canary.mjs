@@ -51,6 +51,15 @@ function collectPluginIDs(value) {
   return [...direct, ...nested]
 }
 
+async function fileTextIfPresent(file) {
+  try {
+    return await readFile(file, "utf8")
+  } catch (error) {
+    if (error?.code === "ENOENT") return null
+    throw error
+  }
+}
+
 async function failureLog(env) {
   const candidates = [
     path.join(env.XDG_DATA_HOME, "opencode", "log", "opencode.log"),
@@ -76,10 +85,10 @@ async function main() {
   const state = path.join(home, ".local", "state")
   const pluginDirectory = path.join(project, ".opencode", "plugins")
   const pluginFile = path.join(root, "dist", "opencode2", "experimental.js")
+  const compatMarkerFile = path.join(temp, "v1-compat-sentinel-loaded")
+  const compatSentinelFile = path.join(pluginDirectory, "00-opencode-goals-v1-compat-sentinel.js")
   const adapterBridge = path.join(pluginDirectory, "opencode-goals-v2-canary.js")
   const sentinelFile = path.join(pluginDirectory, "opencode-goals-v2-sentinel.js")
-  const sentinelURL = pathToFileURL(sentinelFile).href
-  const adapterURL = pathToFileURL(adapterBridge).href
 
   await Promise.all([
     mkdir(pluginDirectory, { recursive: true }),
@@ -88,6 +97,17 @@ async function main() {
     mkdir(state, { recursive: true }),
   ])
 
+  await writeFile(
+    compatSentinelFile,
+    [
+      'import { writeFile } from "node:fs/promises"',
+      "export const OpenCodeGoalsV1CompatSentinel = async () => {",
+      `  await writeFile(${JSON.stringify(compatMarkerFile)}, "loaded\\n", "utf8")`,
+      "  return {}",
+      "}",
+      "",
+    ].join("\n"),
+  )
   await writeFile(
     sentinelFile,
     `export default { id: ${JSON.stringify(sentinelID)}, setup: async () => {} }\n`,
@@ -99,10 +119,6 @@ async function main() {
   await writeFile(path.join(project, "README.md"), "# OpenCode 2 host canary\n")
   await writeFile(path.join(project, "opencode.json"), `${JSON.stringify({
     $schema: "https://opencode.ai/config.json",
-    plugins: [
-      "./.opencode/plugins/opencode-goals-v2-sentinel.js",
-      "./.opencode/plugins/opencode-goals-v2-canary.js",
-    ],
   }, null, 2)}\n`)
 
   const env = {
@@ -114,9 +130,6 @@ async function main() {
     XDG_STATE_HOME: state,
     OPENCODE_DB: path.join(data, "opencode", "opencode-v2-canary.db"),
     OPENCODE_LOG_LEVEL: "DEBUG",
-    OPENCODE_CONFIG_CONTENT: JSON.stringify({
-      plugins: [sentinelURL, adapterURL],
-    }),
     CI: "true",
   }
 
@@ -149,12 +162,26 @@ async function main() {
       throw new Error(`OpenCode 2 classified the committed git canary workspace as global: ${JSON.stringify(response.location)}`)
     }
 
+    const compatMarker = await fileTextIfPresent(compatMarkerFile)
+    if (compatMarker !== "loaded\n") {
+      throw new Error([
+        "OpenCode 2 did not execute the V1-compatible project-local sentinel.",
+        "The .opencode/plugins discovery layer itself is not proven for this exact project Location, so V2 activation cannot be interpreted yet.",
+        `Raw /api/plugin response: ${String(pluginResult.stdout ?? "")}`,
+      ].join("\n"))
+    }
+
     const ids = [...new Set(collectPluginIDs(response))]
     if (!ids.includes(sentinelID)) {
-      throw new Error(`OpenCode 2 did not activate the minimal sentinel at the exact project Location. Active IDs: ${JSON.stringify(ids)}\nRaw response: ${String(pluginResult.stdout ?? "")}`)
+      throw new Error([
+        "OpenCode 2 executed the V1-compatible project-local sentinel, but did not activate the minimal V2 { id, setup } sentinel.",
+        "This isolates the blocker to V2 plugin activation/discovery rather than the project Location or .opencode/plugins directory.",
+        `Active V2 IDs: ${JSON.stringify(ids)}`,
+        `Raw response: ${String(pluginResult.stdout ?? "")}`,
+      ].join("\n"))
     }
     if (!ids.includes(pluginID)) {
-      throw new Error(`OpenCode 2 activated the sentinel but not ${pluginID}; the Goals adapter module/setup is incompatible with this beta host. Active IDs: ${JSON.stringify(ids)}\nRaw response: ${String(pluginResult.stdout ?? "")}`)
+      throw new Error(`OpenCode 2 activated the V2 sentinel but not ${pluginID}; the Goals adapter module/setup is incompatible with this beta host. Active IDs: ${JSON.stringify(ids)}\nRaw response: ${String(pluginResult.stdout ?? "")}`)
     }
 
     console.log(JSON.stringify({
@@ -165,6 +192,7 @@ async function main() {
       health,
       projectDirectory: response.location.directory,
       projectID: response.location.project.id,
+      v1CompatSentinelLoaded: true,
       sentinelID,
       pluginID,
       activePluginIDs: ids,

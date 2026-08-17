@@ -60,6 +60,17 @@ async function fileTextIfPresent(file) {
   }
 }
 
+function v1MarkerPlugin(markerFile, exportName) {
+  return [
+    'import { writeFile } from "node:fs/promises"',
+    `export const ${exportName} = async () => {`,
+    `  await writeFile(${JSON.stringify(markerFile)}, "loaded\\n", "utf8")`,
+    "  return {}",
+    "}",
+    "",
+  ].join("\n")
+}
+
 async function failureLog(env) {
   const candidates = [
     path.join(env.XDG_DATA_HOME, "opencode", "log", "opencode.log"),
@@ -83,10 +94,13 @@ async function main() {
   const config = path.join(home, ".config")
   const data = path.join(home, ".local", "share")
   const state = path.join(home, ".local", "state")
-  const pluginDirectory = path.join(project, ".opencode", "plugins")
+  const opencodeDirectory = path.join(project, ".opencode")
+  const pluginDirectory = path.join(opencodeDirectory, "plugins")
   const pluginFile = path.join(root, "dist", "opencode2", "experimental.js")
-  const compatMarkerFile = path.join(temp, "v1-compat-sentinel-loaded")
-  const compatSentinelFile = path.join(pluginDirectory, "00-opencode-goals-v1-compat-sentinel.js")
+  const configuredMarkerFile = path.join(temp, "v1-configured-sentinel-loaded")
+  const discoveredMarkerFile = path.join(temp, "v1-discovered-sentinel-loaded")
+  const configuredSentinelFile = path.join(opencodeDirectory, "configured-v1-sentinel.js")
+  const discoveredSentinelFile = path.join(pluginDirectory, "00-opencode-goals-v1-discovery-sentinel.js")
   const adapterBridge = path.join(pluginDirectory, "opencode-goals-v2-canary.js")
   const sentinelFile = path.join(pluginDirectory, "opencode-goals-v2-sentinel.js")
 
@@ -98,15 +112,12 @@ async function main() {
   ])
 
   await writeFile(
-    compatSentinelFile,
-    [
-      'import { writeFile } from "node:fs/promises"',
-      "export const OpenCodeGoalsV1CompatSentinel = async () => {",
-      `  await writeFile(${JSON.stringify(compatMarkerFile)}, "loaded\\n", "utf8")`,
-      "  return {}",
-      "}",
-      "",
-    ].join("\n"),
+    configuredSentinelFile,
+    v1MarkerPlugin(configuredMarkerFile, "OpenCodeGoalsV1ConfiguredSentinel"),
+  )
+  await writeFile(
+    discoveredSentinelFile,
+    v1MarkerPlugin(discoveredMarkerFile, "OpenCodeGoalsV1DiscoverySentinel"),
   )
   await writeFile(
     sentinelFile,
@@ -119,6 +130,7 @@ async function main() {
   await writeFile(path.join(project, "README.md"), "# OpenCode 2 host canary\n")
   await writeFile(path.join(project, "opencode.json"), `${JSON.stringify({
     $schema: "https://opencode.ai/config.json",
+    plugin: ["./.opencode/configured-v1-sentinel.js"],
   }, null, 2)}\n`)
 
   const env = {
@@ -162,11 +174,20 @@ async function main() {
       throw new Error(`OpenCode 2 classified the committed git canary workspace as global: ${JSON.stringify(response.location)}`)
     }
 
-    const compatMarker = await fileTextIfPresent(compatMarkerFile)
-    if (compatMarker !== "loaded\n") {
+    const configuredMarker = await fileTextIfPresent(configuredMarkerFile)
+    const discoveredMarker = await fileTextIfPresent(discoveredMarkerFile)
+    if (configuredMarker !== "loaded\n") {
       throw new Error([
-        "OpenCode 2 did not execute the V1-compatible project-local sentinel.",
-        "The .opencode/plugins discovery layer itself is not proven for this exact project Location, so V2 activation cannot be interpreted yet.",
+        "OpenCode 2 did not execute the explicitly configured V1 file-plugin sentinel.",
+        "External server-plugin loading is not proven for this exact project Location, so directory auto-discovery and V2 activation cannot be interpreted yet.",
+        `Auto-discovered V1 sentinel loaded: ${discoveredMarker === "loaded\n"}`,
+        `Raw /api/plugin response: ${String(pluginResult.stdout ?? "")}`,
+      ].join("\n"))
+    }
+    if (discoveredMarker !== "loaded\n") {
+      throw new Error([
+        "OpenCode 2 executed the explicitly configured V1 file plugin, but did not execute the V1 sentinel auto-discovered from .opencode/plugins/.",
+        "This isolates the current blocker to project-local plugin-directory auto-discovery rather than all external server-plugin loading.",
         `Raw /api/plugin response: ${String(pluginResult.stdout ?? "")}`,
       ].join("\n"))
     }
@@ -174,8 +195,8 @@ async function main() {
     const ids = [...new Set(collectPluginIDs(response))]
     if (!ids.includes(sentinelID)) {
       throw new Error([
-        "OpenCode 2 executed the V1-compatible project-local sentinel, but did not activate the minimal V2 { id, setup } sentinel.",
-        "This isolates the blocker to V2 plugin activation/discovery rather than the project Location or .opencode/plugins directory.",
+        "OpenCode 2 executed both V1 loading probes, but did not activate the minimal V2 { id, setup } sentinel.",
+        "This isolates the blocker to V2 plugin activation rather than the project Location or V1 plugin loading/discovery path.",
         `Active V2 IDs: ${JSON.stringify(ids)}`,
         `Raw response: ${String(pluginResult.stdout ?? "")}`,
       ].join("\n"))
@@ -192,7 +213,8 @@ async function main() {
       health,
       projectDirectory: response.location.directory,
       projectID: response.location.project.id,
-      v1CompatSentinelLoaded: true,
+      configuredV1PluginLoaded: true,
+      discoveredV1PluginLoaded: true,
       sentinelID,
       pluginID,
       activePluginIDs: ids,

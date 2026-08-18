@@ -37,6 +37,33 @@ test("workspace watcher fingerprints final file state instead of raw write activ
   }
 })
 
+test("large-file sampling deduplicates identical rewrites and observes sampled middle changes", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-workspace-large-"))
+  try {
+    const file = path.join(root, "capture.png")
+    const original = Buffer.alloc(96 * 1024, 0x61)
+
+    const first = await watchMutation(root, async () => {
+      await writeFile(file, original)
+    })
+    assert.match(first.fingerprint, /^workspace:[a-f0-9]{64}$/)
+
+    const same = await watchMutation(root, async () => {
+      await writeFile(file, original)
+    })
+    assert.equal(same.fingerprint, first.fingerprint, "mtime-only churn must not manufacture large-file progress")
+
+    const changedBytes = Buffer.from(original)
+    changedBytes.fill(0x62, 48 * 1024, 52 * 1024)
+    const changed = await watchMutation(root, async () => {
+      await writeFile(file, changedBytes)
+    })
+    assert.notEqual(changed.fingerprint, first.fingerprint, "middle sample changes should produce new workspace state")
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test("workspace watcher ignores Goal persistence internals", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-workspace-ignore-"))
   try {

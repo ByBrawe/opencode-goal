@@ -406,12 +406,12 @@ export const OpenCode2GoalsExperimental = {
       appendSystemContext(event, experimentalContext(goal))
     }
 
-    await ctx.session.hook("request", handleRequest)
+    await ctx.session.hook("context", handleRequest)
     try {
-      await ctx.session.hook("context", handleRequest)
+      await ctx.session.hook("request", handleRequest)
     } catch {
-      // Some earlier V2 prototypes exposed this hook name. Keep it best-effort
-      // without making it part of the current-host activation requirement.
+      // Earlier V2 betas exposed this hook name. Keep it as a best-effort
+      // compatibility fallback without making it part of current activation.
     }
 
     return () => pendingControls.clear()

@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const pluginID = "bybrawe.open-code-goals.v2-experimental"
 const sentinelID = "bybrawe.open-code-goals.v2-canary-sentinel"
+const PLUGIN_READINESS_RETRY_MS = 500
 
 function run(command, args, { cwd, env, allowFailure = false, timeout = 60_000 } = {}) {
   const result = spawnSync(command, args, {
@@ -74,6 +75,18 @@ async function failureLog(env) {
     }
   }
   return ""
+}
+
+function assertProjectLocation(response, project) {
+  if (response?._tag) {
+    throw new Error(`project-scoped /api/plugin rejected the Location: ${JSON.stringify(response)}`)
+  }
+  if (response?.location?.directory !== project) {
+    throw new Error(`OpenCode 2 resolved the wrong Location: expected ${project}, got ${String(response?.location?.directory)}`)
+  }
+  if (response?.location?.project?.id === "global") {
+    throw new Error(`OpenCode 2 classified the committed git canary workspace as global: ${JSON.stringify(response.location)}`)
+  }
 }
 
 async function main() {
@@ -144,21 +157,30 @@ async function main() {
     if (!health) throw new Error("OpenCode 2 health API returned no output")
 
     const pluginPath = `/api/plugin?location%5Bdirectory%5D=${encodeURIComponent(project)}`
-    const pluginResult = run("opencode2", ["api", "get", pluginPath], { cwd: project, env })
-    const response = parseJSONOutput(pluginResult, "GET /api/plugin at project Location")
+    let pluginResult = run("opencode2", ["api", "get", pluginPath], { cwd: project, env })
+    let response = parseJSONOutput(pluginResult, "GET /api/plugin at project Location")
+    assertProjectLocation(response, project)
 
-    if (response?._tag) {
-      throw new Error(`project-scoped /api/plugin rejected the Location: ${JSON.stringify(response)}`)
-    }
-    if (response?.location?.directory !== project) {
-      throw new Error(`OpenCode 2 resolved the wrong Location: expected ${project}, got ${String(response?.location?.directory)}`)
-    }
-    if (response?.location?.project?.id === "global") {
-      throw new Error(`OpenCode 2 classified the committed git canary workspace as global: ${JSON.stringify(response.location)}`)
+    let ids = [...new Set(collectPluginIDs(response))]
+    let sentinelMarker = await fileTextIfPresent(sentinelMarkerFile)
+    const activationReady = () => ids.includes(sentinelID)
+      && sentinelMarker === "loaded\n"
+      && ids.includes(pluginID)
+
+    if (!activationReady()) {
+      console.error([
+        `OpenCode 2 project plugin registry is not ready on the first scoped request; retrying once after ${PLUGIN_READINESS_RETRY_MS}ms.`,
+        `V2 sentinel setup marker written: ${sentinelMarker === "loaded\n"}`,
+        `Active V2 IDs: ${JSON.stringify(ids)}`,
+      ].join("\n"))
+      await new Promise((resolve) => setTimeout(resolve, PLUGIN_READINESS_RETRY_MS))
+      pluginResult = run("opencode2", ["api", "get", pluginPath], { cwd: project, env })
+      response = parseJSONOutput(pluginResult, "GET /api/plugin at project Location (readiness retry)")
+      assertProjectLocation(response, project)
+      ids = [...new Set(collectPluginIDs(response))]
+      sentinelMarker = await fileTextIfPresent(sentinelMarkerFile)
     }
 
-    const ids = [...new Set(collectPluginIDs(response))]
-    const sentinelMarker = await fileTextIfPresent(sentinelMarkerFile)
     if (!ids.includes(sentinelID)) {
       throw new Error([
         "OpenCode 2 resolved the project Location, but did not activate the minimal V2 { id, setup } plugin from .opencode/plugins/.",

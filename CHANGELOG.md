@@ -2,6 +2,98 @@
 
 All notable changes to **OpenCode Goals** are documented here.
 
+## 1.3.17 — 2026-08-18
+
+Shell-heavy Goal progress and session-lease diagnostics patch release.
+
+- Goal-owned `bash` work now participates in the no-progress guard instead of allowing real shell-heavy work to be misclassified as three stalled continuation turns.
+- Shell progress is revision-bound to the active Goal and persisted only as a SHA-256 command fingerprint plus a generic progress note; raw command text is not stored in Goal state.
+- Repeating the exact same shell command does not manufacture new progress, and a shell call that finishes after `/goal edit` cannot write progress into the newer Goal revision.
+- Completion semantics remain unchanged: shell activity only affects stall/progress accounting and does not become completion evidence by itself.
+- Improved same-project session-lock contention messages and added read-only `/goal doctor` diagnostics for active/corrupt Goal session leases.
+- Added same-project parallel-session isolation and lease-diagnostic regressions.
+- Published `@bybrawe/opencode-goal@1.3.17` and independently verified the public registry manifest, installer bin, full test suite, and packed `dist/opencode/shell-progress.js` artifact.
+
+## 1.3.16 — 2026-08-14
+
+Long-running verification and queued user-steering reliability patch release.
+
+- Increased the default timeout for configured Goal `--check` commands from two minutes to 60 minutes so long Gradle/Xcode/Docker/build checks are not killed prematurely; `OPENCODE_GOAL_CHECK_TIMEOUT_MS` remains available as an override.
+- Increased the effective default independent semantic-verifier deadline from 60 seconds to five minutes while preserving explicit plugin/environment overrides and fail-closed completion behavior.
+- Ordinary user chat during an active Goal is now treated as steering instead of implicitly pausing the Goal.
+- When a Goal model turn is already in flight, only that turn is aborted so the queued user message can run first; the Goal stays active on the same contract revision and autonomous continuation resumes afterward.
+- The user-steering assistant turn remains Goal-owned for progress/usage accounting.
+- Steering that arrives while checks or semantic verification are running invalidates the stale completion attempt so it cannot complete or pause the Goal behind the user's newer instruction.
+- Explicit `/goal pause`, `/goal clear`, `/goal edit`, restricted Plan-agent safety, task-result anti-spoofing, restart recovery, and fail-closed verification remain intact.
+
+## 1.3.15 — 2026-08-12
+
+Lifecycle visibility and verifier transport reliability patch release.
+
+- Added visible Goal lifecycle conflict/warning guidance so create/resume/pause conflicts are surfaced to the user instead of remaining implicit runtime state.
+- Added regression coverage for visible lifecycle guidance while preserving command ownership and Goal safety boundaries.
+- Preferred the host's bounded synchronous session-prompt path for semantic verification when available, avoiding unreliable async routing on affected OpenCode hosts while retaining bounded failure behavior.
+- Added compatibility coverage proving the synchronous prompt path is selected only when supported.
+- Improved npm discoverability metadata and README guidance for finding, installing, and operating Goal workflows.
+
+## 1.3.14 — 2026-08-12
+
+Explicit multi-turn process-proof and budget-boundary hardening release.
+
+- Added host-backed process evidence for objectives that explicitly require work across distinct Goal turns, preventing narrative claims such as “10 separate turns” from satisfying a temporal requirement when the work was actually batched.
+- Used revision-owned mutation cadence as distinct-turn proof for explicit per-turn objectives instead of treating raw mutation count alone as sufficient.
+- Applied the same host process guard to semantic-verifier results so the verifier cannot approve an explicit multi-turn requirement without matching host observations.
+- Added real OpenCode 10-turn completion and same-turn batch-rejection canaries.
+- Settled reached local Goal budgets at turn/idle boundaries and enforced exhausted budgets before another autonomous continuation can dispatch.
+- Hardened native Todo canary session bootstrap without changing Todo's advisory/non-evidence role.
+
+## 1.3.13 — 2026-08-12
+
+Published-installer path and registry-verification hardening release.
+
+- Standardized the npm installer executable on the canonical `bin/opencode-goal.js` path and made package tests require that exact public bin contract.
+- Added retry-bounded public-registry verification after Trusted Publishing so transient npm propagation does not produce a false release failure.
+- Verified the published installer through explicit `npm exec` from a clean consumer directory.
+- Hardened scoped real-host session bootstrap on Windows while keeping release checks fail-closed.
+
+## 1.3.12 — 2026-08-12
+
+Installer packaging hotfix.
+
+- Routed the npm `opencode-goal` executable through a committed bin shim so the declared package executable is valid before TypeScript build output exists.
+- Added packed-package verification for the installer bin link and public manifest.
+- Added publish-workflow verification that the released npm artifact exposes the expected installer executable.
+
+## 1.3.11 — 2026-08-12
+
+Verifier setup/dispatch deadline hotfix.
+
+- Bounded semantic-verifier child-session setup and asynchronous dispatch so infrastructure that hangs before producing a verifier response cannot wedge the parent Goal indefinitely.
+- Preserved fail-closed completion behavior while ensuring verifier infrastructure stalls eventually return control to the Goal runtime.
+- Added regressions for hung verifier setup and asynchronous dispatch.
+
+## 1.3.10 — 2026-08-12
+
+Verifier-model isolation and model-context telemetry release.
+
+- Decoupled the semantic verifier from the executor/session-selected model; verifier resolution now follows its own explicit override / OpenCode small-model / default-model / host-fallback path.
+- Increased the then-default verifier deadline from 30 to 60 seconds while keeping abort and fail-closed pause behavior. This default was later increased again in 1.3.16.
+- Persisted model context-window telemetry separately from cumulative Goal token/cost/runtime budgets.
+- Captured host model context/input/output limits and OpenCode auto-compaction state, and exposed model-window state separately in `/goal status` and `/goal audit`.
+- Preserved current host-progress revision, mutation count, checkpoint, and model-context telemetry through compaction.
+- Reconciled the final observed progress revision during completion/timeout settlement and kept compaction compatible with older schema-v1 snapshots.
+
+## 1.3.9 — 2026-08-12
+
+Fast-provider ownership and explicit per-turn cadence hotfix.
+
+- Fixed a race where a fast provider could reach `write`/`edit`/`apply_patch` hooks before assistant `message.updated` established active ownership, causing a successful edit to be lost from host progress and later trigger the no-progress guard.
+- Retained the Goal-generated prompt owner as a short-lived, revision-bound fallback only for mutation hooks; native Todo telemetry remains outside that fallback.
+- Bound early tool parts back to pending Goal ownership where possible and rejected old-revision mutation completion after `/goal edit`.
+- Detected explicit per-Goal-turn cadence in Turkish and English objectives.
+- Enforced at most one successful workspace-mutation unit per explicit cadence turn and blocked further same-turn shell work after that unit so a strong model cannot silently batch a requested multi-turn process into one assistant turn.
+- Strengthened continuation/compaction guidance and added ownership, host-progress, cadence-parser, and cadence-boundary regressions.
+
 ## 1.3.8 — 2026-08-12
 
 Semantic verifier retry-loop and across-turn verification hotfix.

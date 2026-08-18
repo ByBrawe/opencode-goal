@@ -36,13 +36,15 @@ function verificationRequest(promptText) {
   return JSON.parse(match[1])
 }
 
-test("hung semantic verifier aborts quickly instead of wedging the parent Goal turn", async () => {
+test("hung semantic verifier stays bounded across one fresh timeout retry", async () => {
+  let createCalls = 0
   let aborted = 0
   let deleted = 0
   const client = {
     session: {
       async create() {
-        return { data: { id: "verifier-hung" } }
+        createCalls += 1
+        return { data: { id: `verifier-hung-${createCalls}` } }
       },
       async prompt() {
         return await new Promise(() => {})
@@ -66,9 +68,10 @@ test("hung semantic verifier aborts quickly instead of wedging the parent Goal t
   )
   const elapsed = Date.now() - started
 
-  assert.ok(elapsed < 1_000, `verifier timeout should release the parent promptly, got ${elapsed}ms`)
-  assert.equal(aborted, 1)
-  assert.equal(deleted, 1)
+  assert.ok(elapsed < 1_000, `verifier timeout plus its single bounded retry should release the parent promptly, got ${elapsed}ms`)
+  assert.equal(createCalls, 2, "timeout recovery must use exactly one fresh verifier session")
+  assert.equal(aborted, 2, "each timed-out verifier child must be aborted")
+  assert.equal(deleted, 2, "each verifier child must be cleaned up")
 })
 
 test("promptAsync dispatch waits for verifier tool submission without blocking on session.prompt", async () => {
@@ -159,20 +162,24 @@ test("runtime host evidence counts only current-revision turns and includes the 
   assert.match(promptText, /Temporal\/process requirements such as doing an action across N distinct turns are not proven by a final file value alone/)
 })
 
-test("hung promptAsync dispatch is bounded instead of leaving completion QUEUED forever", async () => {
+test("hung promptAsync dispatch stays bounded across one fresh timeout retry", async () => {
+  let createCalls = 0
   let aborted = 0
   let deleted = 0
   let promptCalls = 0
+  let promptAsyncCalls = 0
   const client = {
     session: {
       async create() {
-        return { data: { id: "verifier-async-dispatch-hung" } }
+        createCalls += 1
+        return { data: { id: `verifier-async-dispatch-hung-${createCalls}` } }
       },
       async prompt() {
         promptCalls += 1
         throw new Error("sync fallback should not run when promptAsync exists")
       },
       async promptAsync() {
+        promptAsyncCalls += 1
         return await new Promise(() => {})
       },
       async abort() {
@@ -194,18 +201,22 @@ test("hung promptAsync dispatch is bounded instead of leaving completion QUEUED 
   )
   const elapsed = Date.now() - started
 
-  assert.ok(elapsed < 1_000, `hung async dispatch should release the parent promptly, got ${elapsed}ms`)
+  assert.ok(elapsed < 1_000, `hung async dispatch plus its single bounded retry should release the parent promptly, got ${elapsed}ms`)
   assert.equal(promptCalls, 0)
-  assert.equal(aborted, 1)
-  assert.equal(deleted, 1)
+  assert.equal(createCalls, 2, "hung async dispatch must use exactly one fresh verifier session")
+  assert.equal(promptAsyncCalls, 2, "there must be no third automatic async dispatch")
+  assert.equal(aborted, 2, "each timed-out async verifier child must be aborted")
+  assert.equal(deleted, 2, "each timed-out async verifier child must be cleaned up")
 })
 
-test("hung verifier session creation is bounded before a child id exists", async () => {
+test("hung verifier session creation is bounded across one retry before a child id exists", async () => {
+  let createCalls = 0
   let aborted = 0
   let deleted = 0
   const client = {
     session: {
       async create() {
+        createCalls += 1
         return await new Promise(() => {})
       },
       async promptAsync() {
@@ -230,7 +241,8 @@ test("hung verifier session creation is bounded before a child id exists", async
   )
   const elapsed = Date.now() - started
 
-  assert.ok(elapsed < 1_000, `hung verifier session creation should release the parent promptly, got ${elapsed}ms`)
+  assert.ok(elapsed < 1_000, `hung verifier session creation plus its single retry should release the parent promptly, got ${elapsed}ms`)
+  assert.equal(createCalls, 2, "session creation timeout must get one retry and never a third attempt")
   assert.equal(aborted, 0)
   assert.equal(deleted, 0)
 })

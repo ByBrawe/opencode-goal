@@ -72,102 +72,17 @@ function messageText(body) {
     const content = message?.content
     if (typeof content === "string") return content
     if (!Array.isArray(content)) return ""
-    return content.map((part) => {
-      if (typeof part === "string") return part
-      return part?.text ?? part?.content ?? part?.output ?? ""
-    }).join("\n")
+    return content.map((part) => typeof part === "string" ? part : part?.text ?? part?.content ?? part?.output ?? "").join("\n")
   }).join("\n")
 }
 
 function toolNames(body) {
-  if (Array.isArray(body?.tools)) {
-    return body.tools.map((item) => item?.function?.name ?? item?.name).filter((item) => typeof item === "string")
-  }
+  if (Array.isArray(body?.tools)) return body.tools.map((item) => item?.function?.name ?? item?.name).filter((item) => typeof item === "string")
   return body?.tools && typeof body.tools === "object" ? Object.keys(body.tools) : []
 }
 
-function beginStream(res) {
-  res.writeHead(200, {
-    "content-type": "text/event-stream; charset=utf-8",
-    "cache-control": "no-cache",
-    connection: "keep-alive",
-  })
-}
-
-function send(res, value) {
-  res.write(`data: ${JSON.stringify(value)}\n\n`)
-}
-
-function streamToolCall(res, id, created) {
-  beginStream(res)
-  send(res, {
-    id,
-    object: "chat.completion.chunk",
-    created,
-    model: "canary",
-    choices: [{
-      index: 0,
-      delta: {
-        role: "assistant",
-        content: null,
-        tool_calls: [{ index: 0, id: "call-v2-goal-control", type: "function", function: { name: CONTROL_TOOL, arguments: "" } }],
-      },
-      finish_reason: null,
-    }],
-  })
-  send(res, {
-    id,
-    object: "chat.completion.chunk",
-    created,
-    model: "canary",
-    choices: [{
-      index: 0,
-      delta: { tool_calls: [{ index: 0, function: { arguments: JSON.stringify({ arguments: EXACT_ARGUMENTS }) } }] },
-      finish_reason: null,
-    }],
-  })
-  send(res, {
-    id,
-    object: "chat.completion.chunk",
-    created,
-    model: "canary",
-    choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
-    usage: { prompt_tokens: 48, completion_tokens: 12, total_tokens: 60 },
-  })
-  res.end("data: [DONE]\n\n")
-}
-
-function streamText(res, id, created) {
-  beginStream(res)
-  send(res, {
-    id,
-    object: "chat.completion.chunk",
-    created,
-    model: "canary",
-    choices: [{ index: 0, delta: { role: "assistant", content: "V2_GOAL_CONTROL_DONE" }, finish_reason: null }],
-  })
-  send(res, {
-    id,
-    object: "chat.completion.chunk",
-    created,
-    model: "canary",
-    choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
-    usage: { prompt_tokens: 40, completion_tokens: 5, total_tokens: 45 },
-  })
-  res.end("data: [DONE]\n\n")
-}
-
 function startProvider() {
-  const stats = {
-    chatRequests: 0,
-    firstControlExposed: false,
-    firstGetExposed: false,
-    transformedWrapperSeen: false,
-    exactArgumentsSeen: false,
-    postToolControlExposed: false,
-    paths: [],
-    observations: [],
-  }
+  const stats = { chatRequests: 0, paths: [], observations: [] }
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1")
     stats.paths.push(`${req.method} ${url.pathname}`)
@@ -188,25 +103,71 @@ function startProvider() {
     const names = toolNames(body)
     const text = messageText(body)
     const request = ++stats.chatRequests
-    const hasControl = names.includes(CONTROL_TOOL)
-    const hasGet = names.includes(GET_TOOL)
-    const sawWrapper = text.includes(COMMAND_WRAPPER_TEXT)
-    const sawExactArguments = text.includes(EXACT_ARGUMENTS)
-    stats.observations.push({ request, tools: names, hasControl, hasGet, sawWrapper, sawExactArguments })
+    stats.observations.push({
+      request,
+      tools: names,
+      hasControl: names.includes(CONTROL_TOOL),
+      hasGet: names.includes(GET_TOOL),
+      sawWrapper: text.includes(COMMAND_WRAPPER_TEXT),
+      sawExactArguments: text.includes(EXACT_ARGUMENTS),
+    })
 
     const id = `chatcmpl-v2-goal-${request}`
     const created = Math.floor(Date.now() / 1000)
+    res.writeHead(200, { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache", connection: "keep-alive" })
+    const send = (value) => res.write(`data: ${JSON.stringify(value)}\n\n`)
+
     if (request === 1) {
-      stats.firstControlExposed = hasControl
-      stats.firstGetExposed = hasGet
-      stats.transformedWrapperSeen = sawWrapper
-      stats.exactArgumentsSeen = sawExactArguments
-      streamToolCall(res, id, created)
-      return
+      send({
+        id,
+        object: "chat.completion.chunk",
+        created,
+        model: "canary",
+        choices: [{
+          index: 0,
+          delta: {
+            role: "assistant",
+            content: null,
+            tool_calls: [{ index: 0, id: "call-v2-goal-control", type: "function", function: { name: CONTROL_TOOL, arguments: "" } }],
+          },
+          finish_reason: null,
+        }],
+      })
+      send({
+        id,
+        object: "chat.completion.chunk",
+        created,
+        model: "canary",
+        choices: [{ index: 0, delta: { tool_calls: [{ index: 0, function: { arguments: JSON.stringify({ arguments: EXACT_ARGUMENTS }) } }] }, finish_reason: null }],
+      })
+      send({
+        id,
+        object: "chat.completion.chunk",
+        created,
+        model: "canary",
+        choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
+        usage: { prompt_tokens: 48, completion_tokens: 12, total_tokens: 60 },
+      })
+    } else {
+      send({
+        id,
+        object: "chat.completion.chunk",
+        created,
+        model: "canary",
+        choices: [{ index: 0, delta: { role: "assistant", content: "V2_GOAL_CONTROL_DONE" }, finish_reason: null }],
+      })
+      send({
+        id,
+        object: "chat.completion.chunk",
+        created,
+        model: "canary",
+        choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+        usage: { prompt_tokens: 40, completion_tokens: 5, total_tokens: 45 },
+      })
     }
-    stats.postToolControlExposed ||= hasControl
-    streamText(res, id, created)
+    res.end("data: [DONE]\n\n")
   })
+
   return {
     stats,
     async listen() {
@@ -229,20 +190,19 @@ function diagnosticBridgeSource(pluginHref, traceFile) {
     'import { appendFileSync } from "node:fs"',
     `import target from ${JSON.stringify(pluginHref)}`,
     `const traceFile = ${JSON.stringify(traceFile)}`,
-    'function trace(event) { appendFileSync(traceFile, `${JSON.stringify({ at: Date.now(), ...event })}\\n`, "utf8") }',
-    'function err(error) { return { name: error?.name ?? typeof error, message: error?.message ?? String(error) } }',
-    'function keys(value) { return value && (typeof value === "object" || typeof value === "function") ? Reflect.ownKeys(value).map(String).slice(0, 40) : [] }',
-    'function template(value) { return typeof value?.template === "string" ? value.template.slice(0, 240) : undefined }',
-    'function eventShape(value) {',
+    'const trace = (event) => appendFileSync(traceFile, `${JSON.stringify({ at: Date.now(), ...event })}\\n`, "utf8")',
+    'const errorInfo = (error) => ({ name: error?.name ?? typeof error, message: error?.message ?? String(error) })',
+    'const keys = (value) => value && (typeof value === "object" || typeof value === "function") ? Reflect.ownKeys(value).map(String).slice(0, 40) : []',
+    'const eventShape = (value) => {',
     '  const request = value?.request && typeof value.request === "object" ? value.request : undefined',
     '  return {',
     '    keys: keys(value),',
     '    requestKeys: keys(request),',
     '    sessionID: value?.sessionID ?? request?.sessionID ?? request?.session?.id,',
     '    agent: value?.agent ?? value?.agentID ?? request?.agent ?? request?.agent?.id,',
-    '    messagesType: Array.isArray(value?.messages) ? `array:${value.messages.length}` : typeof value?.messages,',
-    '    toolsType: value?.tools && typeof value.tools === "object" ? `object:${Object.keys(value.tools).slice(0, 30).join(",")}` : typeof value?.tools,',
-    '    systemType: Array.isArray(value?.system) ? `array:${value.system.length}` : typeof value?.system,',
+    '    messages: Array.isArray(value?.messages) ? value.messages.length : typeof value?.messages,',
+    '    tools: value?.tools && typeof value.tools === "object" ? Object.keys(value.tools).slice(0, 30) : typeof value?.tools,',
+    '    system: Array.isArray(value?.system) ? value.system.length : typeof value?.system,',
     '  }',
     '}',
     'function wrapCommandDraft(draft) {',
@@ -251,22 +211,16 @@ function diagnosticBridgeSource(pluginHref, traceFile) {
     '    get(targetDraft, prop, receiver) {',
     '      const original = Reflect.get(targetDraft, prop, receiver)',
     '      if (prop !== "update" || typeof original !== "function") return original',
-    '      return function (...args) {',
-    '        trace({ phase: "command.update.before", name: args[0], updateLength: original.length, updateSource: Function.prototype.toString.call(original).slice(0, 500) })',
-    '        const mutate = args[1]',
-    '        const callArgs = typeof mutate === "function" ? [args[0], function (command, ...rest) {',
-    '          trace({ phase: "command.mutate.enter", commandKeys: keys(command), template: template(command), description: command?.description, agent: command?.agent, subtask: command?.subtask })',
-    '          try {',
-    '            const result = Reflect.apply(mutate, this, [command, ...rest])',
-    '            trace({ phase: "command.mutate.after", commandKeys: keys(command), template: template(command), description: command?.description, agent: command?.agent, subtask: command?.subtask, returnType: typeof result })',
-    '            return result',
-    '          } catch (error) { trace({ phase: "command.mutate.error", error: err(error) }); throw error }',
-    '        }, ...args.slice(2)] : args',
-    '        try {',
-    '          const result = Reflect.apply(original, targetDraft, callArgs)',
-    '          trace({ phase: "command.update.after", name: args[0], returnType: typeof result })',
+    '      return function (name, mutate, ...rest) {',
+    '        trace({ phase: "command.update.before", name, updateLength: original.length, updateSource: Function.prototype.toString.call(original).slice(0, 500) })',
+    '        const wrappedMutate = typeof mutate === "function" ? function (command, ...mutateRest) {',
+    '          trace({ phase: "command.mutate.enter", name, commandKeys: keys(command), template: typeof command?.template === "string" ? command.template.slice(0, 240) : undefined })',
+    '          const result = Reflect.apply(mutate, this, [command, ...mutateRest])',
+    '          trace({ phase: "command.mutate.after", name, commandKeys: keys(command), template: typeof command?.template === "string" ? command.template.slice(0, 240) : undefined, description: command?.description, subtask: command?.subtask })',
     '          return result',
-    '        } catch (error) { trace({ phase: "command.update.error", name: args[0], error: err(error) }); throw error }',
+    '        } : mutate',
+    '        try { const result = Reflect.apply(original, targetDraft, [name, wrappedMutate, ...rest]); trace({ phase: "command.update.after", name, returnType: typeof result }); return result }',
+    '        catch (error) { trace({ phase: "command.update.error", name, error: errorInfo(error) }); throw error }',
     '      }',
     '    },',
     '  })',
@@ -277,30 +231,32 @@ function diagnosticBridgeSource(pluginHref, traceFile) {
     '    get(targetDraft, prop, receiver) {',
     '      const original = Reflect.get(targetDraft, prop, receiver)',
     '      if (prop !== "add" || typeof original !== "function") return original',
-    '      return function (...args) {',
+    '      const wrappedAdd = function (...args) {',
     '        const first = args[0]',
-    '        trace({ phase: "tool.add.before", addLength: original.length, argCount: args.length, firstType: typeof first, firstName: first?.name ?? (typeof first === "string" ? first : undefined), firstKeys: keys(first), codemode: first?.codemode })',
+    '        trace({ phase: "tool.add.before", observedLength: original.length, wrapperLength: wrappedAdd.length, argCount: args.length, firstType: typeof first, firstName: first?.name ?? (typeof first === "string" ? first : undefined), firstKeys: keys(first), codemode: first?.codemode })',
     '        try { const result = Reflect.apply(original, targetDraft, args); trace({ phase: "tool.add.after", firstName: first?.name ?? first, returnType: typeof result }); return result }',
-    '        catch (error) { trace({ phase: "tool.add.error", error: err(error) }); throw error }',
+    '        catch (error) { trace({ phase: "tool.add.error", error: errorInfo(error) }); throw error }',
     '      }',
+    '      Object.defineProperty(wrappedAdd, "length", { value: original.length })',
+    '      return wrappedAdd',
     '    },',
     '  })',
     '}',
     'function wrapTransform(domainName, domain, original) {',
     '  return async function (callback, ...rest) {',
-    '    trace({ phase: `${domainName}.transform.register.before`, callbackType: typeof callback })',
-    '    const wrapped = function (draft, ...callbackRest) {',
+    '    trace({ phase: `${domainName}.transform.register.before` })',
+    '    const wrappedCallback = function (draft, ...callbackRest) {',
     '      trace({ phase: `${domainName}.transform.callback.enter`, draftKeys: keys(draft) })',
     '      const wrappedDraft = domainName === "command" ? wrapCommandDraft(draft) : wrapToolDraft(draft)',
     '      try {',
     '        const result = Reflect.apply(callback, this, [wrappedDraft, ...callbackRest])',
-    '        if (result && typeof result.then === "function") return result.then((value) => { trace({ phase: `${domainName}.transform.callback.after`, async: true }); return value }, (error) => { trace({ phase: `${domainName}.transform.callback.error`, error: err(error) }); throw error })',
+    '        if (result && typeof result.then === "function") return result.then((value) => { trace({ phase: `${domainName}.transform.callback.after`, async: true }); return value }, (error) => { trace({ phase: `${domainName}.transform.callback.error`, error: errorInfo(error) }); throw error })',
     '        trace({ phase: `${domainName}.transform.callback.after`, async: false })',
     '        return result',
-    '      } catch (error) { trace({ phase: `${domainName}.transform.callback.error`, error: err(error) }); throw error }',
+    '      } catch (error) { trace({ phase: `${domainName}.transform.callback.error`, error: errorInfo(error) }); throw error }',
     '    }',
-    '    try { const result = await Reflect.apply(original, domain, [wrapped, ...rest]); trace({ phase: `${domainName}.transform.register.after` }); return result }',
-    '    catch (error) { trace({ phase: `${domainName}.transform.register.error`, error: err(error) }); throw error }',
+    '    try { const result = await Reflect.apply(original, domain, [wrappedCallback, ...rest]); trace({ phase: `${domainName}.transform.register.after` }); return result }',
+    '    catch (error) { trace({ phase: `${domainName}.transform.register.error`, error: errorInfo(error) }); throw error }',
     '  }',
     '}',
     'function wrapSession(domain) {',
@@ -309,18 +265,18 @@ function diagnosticBridgeSource(pluginHref, traceFile) {
     '      const original = Reflect.get(targetDomain, prop, receiver)',
     '      if (prop !== "hook" || typeof original !== "function") return original',
     '      return async function (name, callback, ...rest) {',
-    '        trace({ phase: "session.hook.register.before", hook: name, callbackType: typeof callback })',
-    '        const wrapped = function (event, ...callbackRest) {',
+    '        trace({ phase: "session.hook.register.before", hook: name })',
+    '        const wrappedCallback = function (event, ...callbackRest) {',
     '          trace({ phase: "session.hook.callback.enter", hook: name, event: eventShape(event) })',
     '          try {',
     '            const result = Reflect.apply(callback, this, [event, ...callbackRest])',
-    '            if (result && typeof result.then === "function") return result.then((value) => { trace({ phase: "session.hook.callback.after", hook: name, event: eventShape(event), async: true }); return value }, (error) => { trace({ phase: "session.hook.callback.error", hook: name, error: err(error) }); throw error })',
+    '            if (result && typeof result.then === "function") return result.then((value) => { trace({ phase: "session.hook.callback.after", hook: name, event: eventShape(event), async: true }); return value }, (error) => { trace({ phase: "session.hook.callback.error", hook: name, error: errorInfo(error) }); throw error })',
     '            trace({ phase: "session.hook.callback.after", hook: name, event: eventShape(event), async: false })',
     '            return result',
-    '          } catch (error) { trace({ phase: "session.hook.callback.error", hook: name, error: err(error) }); throw error }',
+    '          } catch (error) { trace({ phase: "session.hook.callback.error", hook: name, error: errorInfo(error) }); throw error }',
     '        }',
-    '        try { const result = await Reflect.apply(original, targetDomain, [name, wrapped, ...rest]); trace({ phase: "session.hook.register.after", hook: name }); return result }',
-    '        catch (error) { trace({ phase: "session.hook.register.error", hook: name, error: err(error) }); throw error }',
+    '        try { const result = await Reflect.apply(original, targetDomain, [name, wrappedCallback, ...rest]); trace({ phase: "session.hook.register.after", hook: name }); return result }',
+    '        catch (error) { trace({ phase: "session.hook.register.error", hook: name, error: errorInfo(error) }); throw error }',
     '      }',
     '    },',
     '  })',
@@ -328,7 +284,7 @@ function diagnosticBridgeSource(pluginHref, traceFile) {
     'const diagnostic = {',
     '  id: target.id,',
     '  async setup(ctx) {',
-    '    trace({ phase: "setup.enter", ctxKeys: keys(ctx), domains: { command: keys(ctx?.command), tool: keys(ctx?.tool), session: keys(ctx?.session) } })',
+    '    trace({ phase: "setup.enter", ctxKeys: keys(ctx), commandKeys: keys(ctx?.command), toolKeys: keys(ctx?.tool), sessionKeys: keys(ctx?.session) })',
     '    const wrappedCtx = new Proxy(ctx, {',
     '      get(targetCtx, prop, receiver) {',
     '        const value = Reflect.get(targetCtx, prop, receiver)',
@@ -340,7 +296,7 @@ function diagnosticBridgeSource(pluginHref, traceFile) {
     '      },',
     '    })',
     '    try { const cleanup = await target.setup(wrappedCtx); trace({ phase: "setup.after" }); return cleanup }',
-    '    catch (error) { trace({ phase: "setup.error", error: err(error) }); throw error }',
+    '    catch (error) { trace({ phase: "setup.error", error: errorInfo(error) }); throw error }',
     '  },',
     '}',
     'export default diagnostic',
@@ -349,10 +305,7 @@ function diagnosticBridgeSource(pluginHref, traceFile) {
 }
 
 async function readFailureLog(env) {
-  for (const file of [
-    path.join(env.XDG_DATA_HOME, "opencode", "log", "opencode.log"),
-    path.join(env.XDG_STATE_HOME, "opencode", "log", "opencode.log"),
-  ]) {
+  for (const file of [path.join(env.XDG_DATA_HOME, "opencode", "log", "opencode.log"), path.join(env.XDG_STATE_HOME, "opencode", "log", "opencode.log")]) {
     try { return (await readFile(file, "utf8")).slice(-50_000) } catch {}
   }
   return ""
@@ -381,16 +334,8 @@ async function main() {
   const provider = startProvider()
   const providerPort = await provider.listen()
 
-  await Promise.all([
-    mkdir(pluginDirectory, { recursive: true }),
-    mkdir(config, { recursive: true }),
-    mkdir(data, { recursive: true }),
-    mkdir(state, { recursive: true }),
-  ])
-  await writeFile(
-    path.join(pluginDirectory, "opencode-goals-v2-behavior.js"),
-    diagnosticBridgeSource(pathToFileURL(pluginFile).href, traceFile),
-  )
+  await Promise.all([mkdir(pluginDirectory, { recursive: true }), mkdir(config, { recursive: true }), mkdir(data, { recursive: true }), mkdir(state, { recursive: true })])
+  await writeFile(path.join(pluginDirectory, "opencode-goals-v2-behavior.js"), diagnosticBridgeSource(pathToFileURL(pluginFile).href, traceFile))
   await writeFile(path.join(project, "README.md"), "# OpenCode 2 Goal behavior canary\n")
   await writeFile(path.join(project, "opencode.json"), `${JSON.stringify({
     $schema: "https://opencode.ai/config.json",
@@ -404,12 +349,7 @@ async function main() {
       },
     },
     command: {
-      goal: {
-        template: DECLARED_COMMAND_TEMPLATE,
-        description: "Declared Goal command for the OpenCode 2 behavior canary",
-        agent: "build",
-        subtask: false,
-      },
+      goal: { template: DECLARED_COMMAND_TEMPLATE, description: "Declared Goal command for the OpenCode 2 behavior canary", agent: "build", subtask: false },
     },
   }, null, 2)}\n`)
 
@@ -424,6 +364,7 @@ async function main() {
     OPENCODE_LOG_LEVEL: "DEBUG",
     CI: "true",
   }
+
   await run("git", ["init", "-q"], { cwd: project, env })
   await run("git", ["config", "user.name", "OpenCode Goals Canary"], { cwd: project, env })
   await run("git", ["config", "user.email", "opencode-goals-canary@example.invalid"], { cwd: project, env })
@@ -442,14 +383,14 @@ async function main() {
   try {
     await run("opencode2", ["service", "stop"], { cwd: project, env, allowFailure: true, timeout: 20_000 })
     const version = String((await run("opencode2", ["--version"], { cwd: project, env, timeout: 30_000 })).stdout ?? "").trim()
-    assert.ok(version, "opencode2 --version returned no output")
-    assert.ok(await api("get", "/api/health"), "OpenCode 2 health API returned no payload")
+    assert.ok(version)
+    assert.ok(await api("get", "/api/health"))
 
     const commandCatalog = await waitFor(async () => {
       const response = await api("get", "/api/command")
       const items = response?.data ?? response
       return Array.isArray(items) ? items.find((item) => item?.name === "goal" || item?.id === "goal") ?? null : null
-    }, "declared goal command to enter the beta command catalog")
+    }, "declared goal command")
 
     const createdPayload = await api("post", "/api/session", {
       title: "OpenCode Goals V2 current-beta behavior",
@@ -459,9 +400,8 @@ async function main() {
     })
     const session = createdPayload?.data ?? createdPayload
     const sessionID = String(session?.id ?? "")
-    assert.ok(sessionID, `OpenCode 2 did not create a session: ${JSON.stringify(createdPayload)}`)
-    const sessionDirectory = session?.location?.directory ?? session?.directory
-    assert.equal(path.resolve(sessionDirectory), path.resolve(project), `OpenCode 2 created the behavior session outside the project Location: ${JSON.stringify(createdPayload)}`)
+    assert.ok(sessionID)
+    assert.equal(path.resolve(session?.location?.directory ?? session?.directory), path.resolve(project))
 
     const commandPromise = api("post", `/api/session/${encodeURIComponent(sessionID)}/command`, {
       command: "goal",
@@ -470,34 +410,33 @@ async function main() {
       model: { id: "canary", providerID: "canary" },
     })
 
-    await waitFor(() => provider.stats.chatRequests >= 2 ? true : null, "post-tool provider request", 20_000)
+    await waitFor(() => provider.stats.chatRequests >= 2 ? true : null, "two provider requests", 20_000)
     await commandPromise
 
     const goal = await new GoalStore(project).load(sessionID)
     const runtimeTrace = await textIfPresent(traceFile)
-
-    assert.equal(provider.stats.firstControlExposed, true, `authorized real /goal request did not expose the request-scoped control tool; trace:\n${runtimeTrace ?? "<none>"}`)
-    assert.equal(provider.stats.firstGetExposed, true, `registered V2 read tool was absent from the real provider request; trace:\n${runtimeTrace ?? "<none>"}`)
-    assert.equal(provider.stats.transformedWrapperSeen, true, `real command.transform path did not deliver the V2 command wrapper; trace:\n${runtimeTrace ?? "<none>"}`)
-    assert.equal(provider.stats.exactArgumentsSeen, true, "real command transport did not preserve the exact raw /goal arguments")
-    assert.equal(goal?.objective, "real v2 goal behavior", `exact V2 control did not persist the Goal; trace:\n${runtimeTrace ?? "<none>"}`)
-    assert.deepEqual(goal?.constraints, ["no unrelated mutation"])
-    assert.equal(provider.stats.postToolControlExposed, false, `consumed V2 control capability was re-exposed after the tool call: ${JSON.stringify(provider.stats.observations)}`)
+    const first = provider.stats.observations[0] ?? {}
+    const second = provider.stats.observations[1] ?? {}
 
     console.log(JSON.stringify({
-      ok: true,
+      ok: Boolean(first.hasControl && first.hasGet && first.sawWrapper && goal?.objective === "real v2 goal behavior" && !second.hasControl),
       platform: process.platform,
       node: process.version,
       opencode2Version: version,
       sessionID,
       goalID: goal?.id ?? null,
-      commandCatalog: {
-        name: commandCatalog?.name ?? commandCatalog?.id ?? "goal",
-        catalogShowsDeclaredTemplate: commandCatalog?.template === DECLARED_COMMAND_TEMPLATE,
-      },
+      commandCatalog: { name: commandCatalog?.name ?? commandCatalog?.id ?? "goal", catalogShowsDeclaredTemplate: commandCatalog?.template === DECLARED_COMMAND_TEMPLATE },
       provider: provider.stats,
       runtimeTrace,
     }, null, 2))
+
+    assert.equal(first.hasControl, true, "authorized /goal request did not expose control tool")
+    assert.equal(first.hasGet, true, "V2 get tool was absent")
+    assert.equal(first.sawWrapper, true, "command wrapper was absent")
+    assert.equal(first.sawExactArguments, true, "exact arguments were absent")
+    assert.equal(goal?.objective, "real v2 goal behavior", "Goal was not persisted")
+    assert.deepEqual(goal?.constraints, ["no unrelated mutation"])
+    assert.equal(second.hasControl, false, "consumed control capability replayed")
   } catch (error) {
     const runtimeTrace = await textIfPresent(traceFile)
     if (runtimeTrace) console.error(`OpenCode 2 runtime callback trace:\n${runtimeTrace}`)

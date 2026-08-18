@@ -2,6 +2,15 @@
 
 All notable changes to **OpenCode Goals** are documented here.
 
+## 1.3.20 — 2026-08-18
+
+Natural paused-Goal continuation UX release.
+
+- Treat a narrow allowlist of short, explicit continuation messages such as `devam et`, `continue`, `kaldığın yerden devam et`, and `resume` as resume intent when the persisted Goal is paused.
+- Route natural-language resume through the existing `/goal resume` command/ownership chain instead of mutating persistence directly, preserving budget, restricted-agent, revision, and lifecycle guards.
+- Keep arbitrary foreground chat non-mutating while paused, exclude command-owned/synthetic host messages from natural resume, and retain one-shot actionable paused guidance for ordinary chat.
+- Add Turkish/English natural-resume regressions plus ordinary-paused-chat coverage, including `stalledTurns` reset and continuation prompt ownership.
+
 ## 1.3.19 — 2026-08-18
 
 Shell completion and Windows Goal storage reliability hotfix.
@@ -237,7 +246,6 @@ Compatible feature release adding ordered multi-Goal workflows and a read-only T
 - Promoted Goals start at a fresh revision with fresh evidence, usage, progress, and blocker accounting; proof from the preceding Goal never carries forward.
 - Added crash-recoverable activation markers and reused the existing per-session process lease so competing processes cannot consume more than one queue head.
 - Added a one-shot activation continuation marker that skips only the pre-turn activation idle; once a real turn exists, normal no-progress accounting resumes.
-
 ### TUI sidebar and diagnostics
 
 - Added target-exclusive `@bybrawe/opencode-goal/tui` package export using the official OpenCode `sidebar_content` slot.
@@ -324,5 +332,7 @@ First stable release.
 - Post-1.0 breaking public-interface changes require a new major version.
 
 ## 0.1.0-beta.1 / 0.1.0-beta.2
+
+Public prerelease line used to harden verification, persistence, restart recovery, storage integrity/concurrency, Goal Contracts, Plan safety, delegated-task coordination, and release gates before 1.0.0-beta.1 / 0.1.0-beta.2
 
 Public prerelease line used to harden verification, persistence, restart recovery, storage integrity/concurrency, Goal Contracts, Plan safety, delegated-task coordination, and release gates before 1.0.0.

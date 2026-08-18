@@ -32,6 +32,13 @@ function fakeClient() {
   }
 }
 
+function pausedChatGuidance(fake) {
+  return fake.toasts.filter((item) =>
+    item?.body?.variant === "warning"
+      && /This chat turn does not resume autonomous Goal work/.test(item?.body?.message ?? ""),
+  )
+}
+
 async function command(hooks, argumentsText, sessionID = "session-ux") {
   const output = { parts: [{ type: "text", text: argumentsText }] }
   await hooks["command.execute.before"]({ command: "goal", sessionID, arguments: argumentsText }, output)
@@ -128,17 +135,17 @@ test("foreground chat on an automatically paused Goal warns once without silentl
     assert.equal(persisted.status, "paused")
     assert.equal(persisted.stopReason, reason)
 
-    let warnings = fake.toasts.filter((item) => item?.body?.variant === "warning" && /Goal remains paused/.test(item?.body?.message ?? ""))
+    let warnings = pausedChatGuidance(fake)
     assert.equal(warnings.length, 1)
     assert.match(warnings[0].body.message, /\/goal resume/)
 
     await foregroundChat(hooks, "continue", "human-2")
-    warnings = fake.toasts.filter((item) => item?.body?.variant === "warning" && /Goal remains paused/.test(item?.body?.message ?? ""))
+    warnings = pausedChatGuidance(fake)
     assert.equal(warnings.length, 1, "the same paused snapshot should not spam repeated foreground-chat warnings")
 
     const status = await command(hooks, "status")
     await bindCommandChat(hooks, status, "status-owned")
-    warnings = fake.toasts.filter((item) => item?.body?.variant === "warning" && /Goal remains paused/.test(item?.body?.message ?? ""))
+    warnings = pausedChatGuidance(fake)
     assert.equal(warnings.length, 1, "read-only Goal commands must not be mistaken for foreground chat")
 
     const resume = await command(hooks, "resume")
@@ -150,7 +157,7 @@ test("foreground chat on an automatically paused Goal warns once without silentl
     assert.ok(resumed)
     await store.save(pauseGoal(resumed, reason))
     await foregroundChat(hooks, "devam et yine", "human-3")
-    warnings = fake.toasts.filter((item) => item?.body?.variant === "warning" && /Goal remains paused/.test(item?.body?.message ?? ""))
+    warnings = pausedChatGuidance(fake)
     assert.equal(warnings.length, 2, "a new pause after explicit resume should be allowed to warn again")
   } finally {
     await rm(root, { recursive: true, force: true })

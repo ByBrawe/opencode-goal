@@ -10,6 +10,7 @@ on:
       - "src/opencode2/**"
       - "scripts/opencode2-host-canary.mjs"
       - "scripts/opencode2-goal-behavior-canary.mjs"
+      - "scripts/opencode2-goal-readonly-canary.mjs"
       - "scripts/run-opencode2-host-ci.mjs"
       - ".github/workflows/opencode2-canary.yml"
   pull_request:
@@ -17,6 +18,7 @@ on:
       - "src/opencode2/**"
       - "scripts/opencode2-host-canary.mjs"
       - "scripts/opencode2-goal-behavior-canary.mjs"
+      - "scripts/opencode2-goal-readonly-canary.mjs"
       - "scripts/run-opencode2-host-ci.mjs"
       - ".github/workflows/opencode2-canary.yml"
 

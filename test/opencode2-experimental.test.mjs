@@ -10,7 +10,15 @@ import OpenCode2GoalsExperimental, {
 import { GoalStore } from "../dist/persistence/store.js"
 
 function fakeV2Context(directory) {
-  const commands = new Map()
+  const commands = new Map([
+    ["goal", {
+      name: "goal",
+      description: "project command placeholder",
+      template: "$ARGUMENTS",
+      subtask: true,
+      hints: ["$ARGUMENTS"],
+    }],
+  ])
   const tools = new Map()
   const hooks = new Map()
   return {
@@ -19,10 +27,19 @@ function fakeV2Context(directory) {
       command: {
         async transform(callback) {
           await callback({
+            list() {
+              return [...commands.values()]
+            },
+            get(name) {
+              return commands.get(name)
+            },
             update(name, mutate) {
-              const draft = commands.get(name) ?? {}
+              const draft = commands.get(name)
+              if (!draft) throw new Error(`cannot update missing command: ${name}`)
               mutate(draft)
-              commands.set(name, draft)
+            },
+            remove(name) {
+              commands.delete(name)
             },
           })
         },
@@ -32,6 +49,7 @@ function fakeV2Context(directory) {
           return { id: sessionID, location: { directory } }
         },
         async hook(name, callback) {
+          if (name !== "context") throw new Error(`unsupported V2 session hook: ${name}`)
           hooks.set(name, callback)
         },
       },
@@ -78,7 +96,9 @@ async function runRequest(host, {
     tools: requestTools(),
     messages: [{ role: "user", content: text }],
   }
-  await host.hooks.get("request")(event)
+  const contextHook = host.hooks.get("context")
+  assert.equal(typeof contextHook, "function")
+  await contextHook(event)
   return event
 }
 
@@ -98,7 +118,7 @@ async function runGoalCommand(host, rawArguments, {
   )
 }
 
-test("experimental V2 plugin registers an isolated command, direct tools, and request hook", async () => {
+test("experimental V2 plugin registers an isolated command, direct tools, and documented context hook", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-"))
   try {
     const host = fakeV2Context(root)
@@ -115,7 +135,8 @@ test("experimental V2 plugin registers an isolated command, direct tools, and re
 
     assert.equal(host.tools.get("opencode_goals_v2_control")?.options?.codemode, false)
     assert.equal(host.tools.get("opencode_goals_v2_get")?.options?.codemode, false)
-    assert.equal(typeof host.hooks.get("request"), "function")
+    assert.equal(typeof host.hooks.get("context"), "function")
+    assert.equal(host.hooks.get("request"), undefined)
     assert.equal(typeof cleanup, "function")
     cleanup()
   } finally {
@@ -237,11 +258,11 @@ test("unsupported V2 parity-sensitive controls are explicit and never mutate liv
   }
 })
 
-test("V2 request hook injects persisted state and pauses an active Goal selected through Plan", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-request-"))
+test("V2 context hook injects persisted state and pauses an active Goal selected through Plan", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-context-"))
   try {
     const host = fakeV2Context(root)
-    const sessionID = "v2-request-session"
+    const sessionID = "v2-context-session"
     await executeOpenCode2GoalControl(host.ctx, "ship context --constraint safe", { sessionID, agent: "build" })
     await OpenCode2GoalsExperimental.setup(host.ctx)
 

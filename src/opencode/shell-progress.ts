@@ -42,31 +42,14 @@ export function shellProcessExited(output: any): boolean {
   return typeof exit === "number" && Number.isFinite(exit)
 }
 
-function shellOutput(output: any): string {
-  if (typeof output?.metadata?.output === "string") return output.metadata.output
-  return typeof output?.output === "string" ? output.output : ""
-}
-
-export function shellObservationFingerprint(args: any, output: any): string | undefined {
+function shellResultFingerprint(args: any, output: any, workspaceFingerprint?: string): string | undefined {
   if (!shellProcessExited(output)) return undefined
   const activity = shellActivityFingerprint(args)
   if (!activity) return undefined
-  const outputDigest = createHash("sha256").update(shellOutput(output)).digest("hex")
-  const exit = output.metadata.exit
-  return `shell-observation:${createHash("sha256")
+  return `shell-result:${createHash("sha256")
     .update(activity)
     .update("\0")
-    .update(String(exit))
-    .update("\0")
-    .update(outputDigest)
-    .digest("hex")}`
-}
-
-export function shellResultFingerprint(args: any, output: any, workspaceFingerprint?: string): string | undefined {
-  const observation = shellObservationFingerprint(args, output)
-  if (!observation) return undefined
-  return `shell-result:${createHash("sha256")
-    .update(observation)
+    .update(String(output.metadata.exit))
     .update("\0")
     .update(workspaceFingerprint ?? "")
     .digest("hex")}`
@@ -77,9 +60,11 @@ export function shellResultFingerprint(args: any, output: any, workspaceFingerpr
  *
  * The core plugin still owns shell safety/cadence and completion evidence. This
  * wrapper only feeds the no-progress guard. It combines a secret-safe hash of
- * command/exit/output with a bounded project-local filesystem watcher so the
- * same command can count again only when its host-observed result or workspace
- * effect actually changes. Raw command/output/path values are never persisted.
+ * command + numeric exit with a bounded project-local filesystem watcher. The
+ * same command/exit therefore counts again only when its final workspace state
+ * changes. Volatile stdout/stderr is deliberately excluded so timestamp/log
+ * noise cannot manufacture progress. Raw command/output/path values are never
+ * persisted.
  *
  * OpenCode 1.4.0+ reports a numeric metadata.exit when the shell process really
  * exits and null when the tool is aborted or times out. Incomplete executions
@@ -143,7 +128,6 @@ export function installShellProgress(input: PluginInput, hooks: PluginHooks): vo
       dispose(owned)
     }
 
-    if (!shellProcessExited(output)) return
     const fingerprint = shellResultFingerprint(event.args, output, workspaceFingerprint)
     if (!fingerprint) return
 

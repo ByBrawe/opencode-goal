@@ -29,14 +29,14 @@ function isSyntheticHostMessage(parts: any[]): boolean {
  * Localize only the user-visible Goal command surface. Before the later
  * chat.message hook reaches the existing ownership/lifecycle wrappers, feed
  * those wrappers a clone containing the exact English command-owned text they
- * originally produced. The host-owned output object keeps the localized text,
+ * originally produced. The host-owned command output keeps the localized text,
  * so localization never becomes lifecycle state or model-visible authorization.
  *
  * Short resume intent is recognized across all supported languages. When the
- * Goal is actually paused, feed only that one foreground message to the inner
- * lifecycle chain as the already-supported English "continue" intent. The
- * original host-owned user message remains untouched and persistence is never
- * mutated here.
+ * Goal is actually paused, normalize that foreground message in place to the
+ * already-supported English "continue" intent so the existing lifecycle wrapper
+ * can replace it with the normal Goal-owned continuation prompt. Persistence is
+ * never mutated directly here.
  */
 export function installGoalI18nUX(input: PluginInput, hooks: PluginHooks): void {
   const commandHook = hooks["command.execute.before"]
@@ -77,9 +77,9 @@ export function installGoalI18nUX(input: PluginInput, hooks: PluginHooks): void 
         if (goal?.status === "paused") {
           // The existing lifecycle wrapper already treats "continue" as a
           // narrow explicit resume intent and routes it through /goal resume.
-          // Normalize multilingual intent into that path rather than creating a
-          // second persistence mutation path here.
-          await chatHook(event, withText(output, "continue"))
+          // Keep its in-place prompt replacement behavior intact.
+          replaceParts(output.parts, "continue")
+          await chatHook(event, output)
           return
         }
       } catch (error) {

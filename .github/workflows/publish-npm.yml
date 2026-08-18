@@ -8,6 +8,12 @@ on:
       - .github/workflows/publish-npm.yml
       - package.json
 
+# Stable publishes are serialized. Newer pending pushes may replace older pending
+# work, but an in-flight publish is never cancelled midway through registry IO.
+concurrency:
+  group: npm-stable-publish
+  cancel-in-progress: false
+
 permissions:
   contents: read
   id-token: write
@@ -46,12 +52,40 @@ jobs:
             echo "verify=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+
           echo "verify=true" >> "$GITHUB_OUTPUT"
           if npm view "@bybrawe/opencode-goal@$EXPECTED" version --registry=https://registry.npmjs.org >/dev/null 2>&1; then
             echo "@bybrawe/opencode-goal@$EXPECTED is already published; publish will be skipped but registry verification will still run."
             echo "publish=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+
+          LATEST="$(npm view "@bybrawe/opencode-goal@latest" version --registry=https://registry.npmjs.org 2>/dev/null || true)"
+          if [ -n "$LATEST" ]; then
+            ORDER="$(EXPECTED="$EXPECTED" LATEST="$LATEST" node <<'NODE'
+          function stableVersion(label, value) {
+            const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(value)
+            if (!match) throw new Error(`${label} is not a stable x.y.z version: ${value}`)
+            return match.slice(1).map((part) => BigInt(part))
+          }
+          const expected = stableVersion("EXPECTED", process.env.EXPECTED)
+          const latest = stableVersion("LATEST", process.env.LATEST)
+          let comparison = 0
+          for (let index = 0; index < expected.length; index += 1) {
+            if (latest[index] > expected[index]) { comparison = 1; break }
+            if (latest[index] < expected[index]) { comparison = -1; break }
+          }
+          process.stdout.write(comparison > 0 ? "newer" : comparison < 0 ? "older" : "same")
+          NODE
+            )"
+            if [ "$ORDER" = "newer" ]; then
+              echo "Registry latest $LATEST is newer than stale release $EXPECTED; refusing to publish and downgrade latest."
+              echo "publish=false" >> "$GITHUB_OUTPUT"
+              echo "verify=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+
           echo "publish=true" >> "$GITHUB_OUTPUT"
       - name: Install release dependencies
         if: steps.release.outputs.publish == 'true'

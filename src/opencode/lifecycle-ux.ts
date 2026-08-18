@@ -1,6 +1,6 @@
 import type CorePlugin from "./plugin.js"
 import type { GoalState } from "../domain/types.js"
-import { GoalStore } from "../persistence/store.js"
+import { GoalStore, GoalStoreIntegrityError } from "../persistence/store.js"
 import { parseGoalCommand } from "./command.js"
 import { showGoalToast } from "./toast.js"
 
@@ -46,6 +46,14 @@ function pausedMessage(goal: GoalState): string {
   ].join("\n")
 }
 
+function pausedNoticeKey(goal: GoalState): string {
+  return `${goal.id}:${goal.revision}:${goal.stopReason ?? ""}`
+}
+
+function isSyntheticHostMessage(parts: any[]): boolean {
+  return parts.some((part) => part?.synthetic === true)
+}
+
 export function installGoalLifecycleUX(input: PluginInput, hooks: PluginHooks): void {
   const commandHook = hooks["command.execute.before"]
   const chatHook = hooks["chat.message"]
@@ -53,6 +61,8 @@ export function installGoalLifecycleUX(input: PluginInput, hooks: PluginHooks): 
 
   const store = new GoalStore(input.directory)
   const translations = new Map<string, PromptTranslation>()
+  const commandOutputs = new Map<string, string>()
+  const pausedChatNotices = new Map<string, string>()
 
   hooks["command.execute.before"] = async (event: any, output: any) => {
     if (event.command !== "goal") {
@@ -87,6 +97,7 @@ export function installGoalLifecycleUX(input: PluginInput, hooks: PluginHooks): 
     }
 
     if (parsed.action === "pause") {
+      pausedChatNotices.delete(event.sessionID)
       await commandHook(event, output)
       const goal = await store.load(event.sessionID)
       if (!goal || goal.status !== "paused") return
@@ -100,20 +111,67 @@ export function installGoalLifecycleUX(input: PluginInput, hooks: PluginHooks): 
     }
 
     await commandHook(event, output)
+    if (["create", "edit", "resume", "clear"].includes(parsed.action)) pausedChatNotices.delete(event.sessionID)
+
+    // `noReply` is command-hook metadata and is not guaranteed to survive into
+    // the later chat.message payload. Remember the concrete command response so
+    // doctor/status/contract/history and lifecycle command messages are never
+    // misclassified as ordinary foreground steering by this outer UX wrapper.
+    const commandOutput = textFromParts(output?.parts ?? [])
+    if (commandOutput) commandOutputs.set(event.sessionID, commandOutput)
   }
 
   hooks["chat.message"] = async (event: any, output: any) => {
     const shown = textFromParts(output?.parts ?? [])
     const translation = translations.get(event.sessionID)
-    if (!translation || shown !== translation.shown) {
-      await chatHook(event, output)
+    if (translation && shown === translation.shown) {
+      translations.delete(event.sessionID)
+      await chatHook(event, {
+        ...output,
+        parts: [{ type: "text", text: translation.owned }],
+      })
       return
     }
 
-    translations.delete(event.sessionID)
-    await chatHook(event, {
-      ...output,
-      parts: [{ type: "text", text: translation.owned }],
-    })
+    const commandOutput = commandOutputs.get(event.sessionID)
+    if (commandOutput) {
+      commandOutputs.delete(event.sessionID)
+      if (shown === commandOutput) {
+        await chatHook(event, output)
+        return
+      }
+    }
+
+    await chatHook(event, output)
+
+    // Host-generated synthetic task notifications are not foreground user
+    // steering. `noReply` is kept as a best-effort extra signal, but command
+    // ownership above does not rely on it crossing the host hook boundary.
+    if ((output as any)?.noReply === true || isSyntheticHostMessage(output?.parts ?? [])) return
+
+    let goal: GoalState | null
+    try {
+      goal = await store.load(event.sessionID)
+    } catch (error) {
+      // Paused-chat guidance is advisory. Unsupported/corrupt Goal storage must
+      // remain inspectable through /goal doctor instead of being converted into
+      // a foreground-chat failure by this UX wrapper. Other persistence failures
+      // still surface normally rather than being hidden by notification logic.
+      if (error instanceof GoalStoreIntegrityError) return
+      throw error
+    }
+    if (!goal || goal.status !== "paused") {
+      pausedChatNotices.delete(event.sessionID)
+      return
+    }
+
+    const key = pausedNoticeKey(goal)
+    if (pausedChatNotices.get(event.sessionID) === key) return
+    pausedChatNotices.set(event.sessionID, key)
+    await showGoalToast(
+      input.client,
+      "Goal remains paused. This chat turn does not resume autonomous Goal work. Use /goal resume to continue the persisted Goal.",
+      "warning",
+    )
   }
 }

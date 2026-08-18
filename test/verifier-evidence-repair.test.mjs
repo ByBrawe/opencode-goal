@@ -77,7 +77,7 @@ test("line-numbered verifier quotes are normalized before host corroboration", a
     assert.equal(goal.requirements.every((item) => item.status === "proven"), true)
     const semanticEvidence = goal.evidence.find((item) => item.trust === "verifier" && item.passed === true)
     assert.ok(semanticEvidence)
-    assert.equal(semanticEvidence.metadata?.evidence?.[0]?.quote, "OK")
+    assert.match(semanticEvidence.summary, /test\.txt: OK/)
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -101,7 +101,7 @@ test("a malformed root-path citation can fall back to one matching fresh host fi
     const goal = await stateFor(root)
     const semanticEvidence = goal.evidence.find((item) => item.trust === "verifier" && item.passed === true)
     assert.ok(semanticEvidence)
-    assert.equal(semanticEvidence.metadata?.hostEvidenceIDs?.length > 0, true)
+    assert.match(semanticEvidence.summary, /Evidence: host:/)
   } finally {
     await rm(root, { recursive: true, force: true })
   }

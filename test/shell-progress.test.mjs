@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import OpenCodeGoalPlugin, { shellActivityFingerprint } from "../dist/index.js"
+import OpenCodeGoalPlugin, { shellActivityFingerprint, shellProcessExited } from "../dist/index.js"
 
 function fakeClient() {
   return {
@@ -35,12 +35,12 @@ async function createGoal(hooks, sessionID = "session-1") {
   assert.match(output.parts[0].text, /Continue working toward the active OpenCode goal/)
 }
 
-async function runShell(hooks, { sessionID = "session-1", callID, command }) {
+async function runShell(hooks, { sessionID = "session-1", callID, command, exit = 0 }) {
   const beforeOutput = { args: { command } }
   await hooks["tool.execute.before"]({ tool: "bash", sessionID, callID }, beforeOutput)
   await hooks["tool.execute.after"](
     { tool: "bash", sessionID, callID, args: { command } },
-    { title: "bash", output: "completed", metadata: {} },
+    { title: "bash", output: "completed", metadata: { exit } },
   )
 }
 
@@ -56,6 +56,14 @@ test("shell activity fingerprint normalizes CRLF and never exposes command text"
   assert.match(one, /^shell:[a-f0-9]{64}$/)
   assert.doesNotMatch(one, /npm run quality/)
   assert.equal(shellActivityFingerprint({ command: "   " }), undefined)
+})
+
+test("shell process outcome counts only real process exits", () => {
+  assert.equal(shellProcessExited({ metadata: { exit: 0 } }), true)
+  assert.equal(shellProcessExited({ metadata: { exit: 17 } }), true, "nonzero process exit is still a completed diagnostic action")
+  assert.equal(shellProcessExited({ metadata: { exit: null } }), false, "OpenCode uses null for timeout/abort")
+  assert.equal(shellProcessExited({ metadata: {} }), false)
+  assert.equal(shellProcessExited(undefined), false)
 })
 
 test("distinct Goal-owned shell actions count as host progress while identical repeats deduplicate", async () => {
@@ -77,9 +85,9 @@ test("distinct Goal-owned shell actions count as host progress while identical r
     goal = await readOnlyGoal(root)
     assert.equal(goal.progressRevision, before.progressRevision + 1, "the same shell action must not manufacture repeated progress")
 
-    await runShell(hooks, { callID: "shell-3", command: "npm run typecheck" })
+    await runShell(hooks, { callID: "shell-3", command: "npm run typecheck", exit: 2 })
     goal = await readOnlyGoal(root)
-    assert.equal(goal.progressRevision, before.progressRevision + 2, "a distinct completed shell action counts once")
+    assert.equal(goal.progressRevision, before.progressRevision + 2, "a distinct exited shell action counts once even when it reports a diagnostic failure")
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -132,6 +140,37 @@ test("three shell-only continuation turns do not false-pause, while repeated no-
   }
 })
 
+test("three distinct timed-out shell turns cannot evade the stall guard", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-shell-timeout-"))
+  try {
+    const hooks = await OpenCodeGoalPlugin({ client: fakeClient(), directory: root })
+    await createGoal(hooks)
+    await closeTurn(hooks)
+
+    const baseline = (await readOnlyGoal(root)).progressRevision
+    for (let index = 0; index < 3; index += 1) {
+      await runShell(hooks, {
+        callID: `timeout-${index + 1}`,
+        command: `node tooling/hang-${index + 1}.mjs`,
+        exit: null,
+      })
+      await closeTurn(hooks)
+      const goal = await readOnlyGoal(root)
+      assert.equal(goal.progressRevision, baseline, "timeout/abort metadata must not create shell progress")
+      if (index < 2) {
+        assert.equal(goal.status, "active")
+        assert.equal(goal.stalledTurns, index + 1)
+      } else {
+        assert.equal(goal.status, "paused")
+        assert.equal(goal.stalledTurns, 3)
+        assert.match(goal.stopReason, /3 continuation turns without host-observed progress/)
+      }
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test("shell completion from an older Goal revision cannot mark the edited Goal", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-shell-stale-"))
   try {
@@ -153,7 +192,7 @@ test("shell completion from an older Goal revision cannot mark the edited Goal",
 
     await hooks["tool.execute.after"](
       { tool: "bash", sessionID: "session-1", callID: "old-shell", args: { command: "npm run long-generator" } },
-      { title: "bash", output: "completed late", metadata: {} },
+      { title: "bash", output: "completed late", metadata: { exit: 0 } },
     )
 
     const after = await readOnlyGoal(root)

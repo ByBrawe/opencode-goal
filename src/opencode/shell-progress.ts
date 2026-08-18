@@ -32,6 +32,11 @@ export function shellActivityFingerprint(args: any): string | undefined {
   return `shell:${createHash("sha256").update(normalized).digest("hex")}`
 }
 
+export function shellProcessExited(output: any): boolean {
+  const exit = output?.metadata?.exit
+  return typeof exit === "number" && Number.isFinite(exit)
+}
+
 /**
  * Count completed, Goal-revision-bound shell actions as host-observed progress.
  *
@@ -40,6 +45,10 @@ export function shellActivityFingerprint(args: any): string | undefined {
  * stalled turn. Raw command text is never persisted; only a SHA-256 fingerprint
  * and a generic progress note are stored. Repeating the exact same command is
  * therefore a no-op for progress accounting.
+ *
+ * OpenCode 1.4.0+ reports a numeric metadata.exit when the shell process really
+ * exits and null when the tool is aborted or times out. Incomplete executions
+ * must not manufacture progress merely because tool.execute.after still fires.
  */
 export function installShellProgress(input: PluginInput, hooks: PluginHooks): void {
   const beforeHook = hooks["tool.execute.before"]
@@ -78,7 +87,7 @@ export function installShellProgress(input: PluginInput, hooks: PluginHooks): vo
     if (!key) return
     const owned = pending.get(key)
     pending.delete(key)
-    if (!owned) return
+    if (!owned || !shellProcessExited(output)) return
 
     const fingerprint = shellActivityFingerprint(event.args)
     if (!fingerprint) return

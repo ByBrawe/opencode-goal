@@ -2,6 +2,15 @@
 
 All notable changes to **OpenCode Goals** are documented here.
 
+## 1.3.18 — 2026-08-18
+
+Paused-state guidance and progress-guard validation release.
+
+- When ordinary foreground chat reaches a persisted paused Goal, keep the Goal paused and show one actionable warning directing the user to `/goal resume`; never auto-resume or rewrite the user's message.
+- Keep read-only Goal command responses and host-generated synthetic task notifications out of paused-chat guidance, reset warning suppression across lifecycle changes, and keep advisory guidance fail-safe for Goal storage integrity diagnostics.
+- Extend real-host shell progress coverage on Ubuntu and Windows to prove both sides of the guard: distinct shell-only Goal turns do not false-pause, while repeated identical successful shell commands deduplicate and still reach the normal three-turn stall pause.
+- Keep experimental OpenCode 2 activation/readiness evidence isolated from the stable V1 support contract.
+
 ## 1.3.17 — 2026-08-18
 
 Shell-heavy Goal progress and diagnostics release.

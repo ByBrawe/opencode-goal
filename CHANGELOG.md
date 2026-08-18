@@ -2,6 +2,15 @@
 
 All notable changes to **OpenCode Goals** are documented here.
 
+## 1.3.21 — 2026-08-18
+
+Semantic verifier timeout recovery release.
+
+- When an independent semantic verifier hits a timeout-class infrastructure failure, clean up the timed-out child and retry exactly once in a fresh verifier session before opening the existing fail-closed circuit breaker.
+- Bound that automatic retry to at most 60 seconds, or the configured verifier timeout when lower, so a 300-second primary deadline cannot turn into another full five-minute wait and no third automatic attempt is possible.
+- Keep non-timeout provider/transport failures single-attempt and fail-closed; if the bounded retry also fails, preserve current audit evidence, pause the Goal, and retain explicit `/goal resume` plus short natural continuation recovery.
+- Add cross-platform regressions for synchronous, asynchronous-dispatch, and session-creation timeout bounds, no-third-attempt cleanup, non-timeout no-retry behavior, and successful completion through a fresh retry session.
+
 ## 1.3.20 — 2026-08-18
 
 Natural paused-Goal continuation UX release.

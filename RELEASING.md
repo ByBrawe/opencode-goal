@@ -66,7 +66,7 @@ npm run package:smoke -- --json package-smoke-report.json
 The current one-shot stable guard is:
 
 ```text
-1.3.20
+1.3.21
 ```
 
 Before `npm publish`, the workflow:
@@ -75,7 +75,7 @@ Before `npm publish`, the workflow:
 2. verifies the trusted-publishing npm runtime;
 3. checks that `package.json` equals the expected one-shot version;
 4. checks the npm registry and skips publication if the exact version already exists while still running registry/installer verification;
-5. when publication is still needed, requires the predecessor release (`1.3.19`) to exist and remain authoritative as npm `latest` with the expected installer bin before allowing `1.3.20` to publish.
+5. when publication is still needed, requires the predecessor release (`1.3.20`) to exist and remain authoritative as npm `latest` with the expected installer bin before allowing `1.3.21` to publish.
 
 Publication uses npm Trusted Publishing/OIDC under the `latest` tag; no long-lived npm token is stored in the workflow.
 
@@ -83,10 +83,10 @@ Publication uses npm Trusted Publishing/OIDC under the `latest` tag; no long-liv
 
 The workflow itself must verify all of these before the release is considered published:
 
-- the exact `1.3.20` package version is visible in the npm registry;
-- npm `latest` resolves to `1.3.20`;
+- the exact `1.3.21` package version is visible in the npm registry;
+- npm `latest` resolves to `1.3.21`;
 - `bin.opencode-goal` resolves to the expected `bin/opencode-goal.js` path;
-- a clean consumer can run `npm exec --yes --package=@bybrawe/opencode-goal@1.3.20 -- opencode-goal --version` and receives `1.3.20`.
+- a clean consumer can run `npm exec --yes --package=@bybrawe/opencode-goal@1.3.21 -- opencode-goal --version` and receives `1.3.21`.
 
 Then, from a clean config directory, run the public installer and verify:
 

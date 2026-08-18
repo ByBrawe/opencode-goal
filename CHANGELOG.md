@@ -2,6 +2,15 @@
 
 All notable changes to **OpenCode Goals** are documented here.
 
+## 1.3.19 — 2026-08-18
+
+Shell-progress and Windows process-lock reliability hotfix release.
+
+- Count Goal-owned `bash` activity as host progress only when OpenCode reports a real numeric process exit; timeout, abort, and missing-exit results remain no-progress, while ordinary nonzero diagnostic exits may still count once without becoming completion evidence.
+- Retry only transient Windows process-lock access/share denials (`EPERM`, `EACCES`, `EBUSY`) within a small bounded window for both owner-file reads and canonical hard-link `lstat()` inspection, while preserving `ENOENT`, symlink/junction safety, POSIX behavior, and persistent-denial fail-closed semantics.
+- Add regressions proving three distinct timed-out shell turns still reach the normal three-turn stall pause, and that transient Windows lock read/`lstat()` denials recover to normal lease classification while persistent denials still escape unchanged.
+- Harden npm release ordering: when 1.3.19 still needs publishing, require 1.3.18 to be visible and authoritative as npm `latest` first; after publication require 1.3.19 itself to be `latest`, then verify the exact clean-consumer installer version.
+
 ## 1.3.18 — 2026-08-18
 
 Paused-state guidance and progress-guard validation release.

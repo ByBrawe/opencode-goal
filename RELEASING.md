@@ -66,7 +66,7 @@ npm run package:smoke -- --json package-smoke-report.json
 The current one-shot stable guard is:
 
 ```text
-1.3.9
+1.3.19
 ```
 
 Before `npm publish`, the workflow:
@@ -74,13 +74,21 @@ Before `npm publish`, the workflow:
 1. runs the Actions security policy;
 2. verifies the trusted-publishing npm runtime;
 3. checks that `package.json` equals the expected one-shot version;
-4. checks the npm registry and skips if the exact version already exists.
+4. checks the npm registry and skips publication if the exact version already exists while still running registry/installer verification;
+5. when publication is still needed, requires the predecessor release (`1.3.18`) to exist and remain authoritative as npm `latest` with the expected installer bin before allowing `1.3.19` to publish.
 
 Publication uses npm Trusted Publishing/OIDC under the `latest` tag; no long-lived npm token is stored in the workflow.
 
 ## After publishing
 
-Verify the registry shows the exact version. From a clean config directory, run the public installer and verify:
+The workflow itself must verify all of these before the release is considered published:
+
+- the exact `1.3.19` package version is visible in the npm registry;
+- npm `latest` resolves to `1.3.19`;
+- `bin.opencode-goal` resolves to the expected `bin/opencode-goal.js` path;
+- a clean consumer can run `npm exec --yes --package=@bybrawe/opencode-goal@1.3.19 -- opencode-goal --version` and receives `1.3.19`.
+
+Then, from a clean config directory, run the public installer and verify:
 
 - the plugin entry is pinned to the published exact version in every supported global config file that already exists;
 - the published package exposes a valid dedicated `./server` entrypoint;
@@ -90,4 +98,4 @@ Verify the registry shows the exact version. From a clean config directory, run 
 - `/goal status` and `/goal <objective>` are intercepted by the plugin rather than reaching the managed command bridge fallback;
 - `--uninstall` removes Goal-owned registration/command artifacts without deleting unrelated config or project Goal state.
 
-Do not claim a release is published merely because the merge or publish workflow started; the npm registry is the final publication source of truth.
+Do not claim a release is published merely because the merge or publish workflow started; the npm registry plus the clean-consumer installer check are the final publication source of truth.

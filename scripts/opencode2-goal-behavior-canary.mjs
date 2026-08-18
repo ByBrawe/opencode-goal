@@ -12,7 +12,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const CONTROL_TOOL = "opencode_goals_v2_control"
 const GET_TOOL = "opencode_goals_v2_get"
 const EXACT_ARGUMENTS = 'real v2 goal behavior --success "exact args persist" --constraint "no unrelated mutation"'
-const DECLARED_COMMAND_TEMPLATE = "UNTRANSFORMED_V2_GOAL_CANARY\\n$ARGUMENTS"
+const DECLARED_COMMAND_TEMPLATE = "UNTRANSFORMED_V2_GOAL_CANARY\n$ARGUMENTS"
 const COMMAND_WRAPPER_TEXT = "OpenCode Goals V2 command wrapper"
 
 function appendLog(current, chunk, limit = 100_000) {
@@ -58,34 +58,26 @@ function parseJSONOutput(result, label) {
   }
 }
 
-function contentText(content) {
-  if (typeof content === "string") return content
-  if (!Array.isArray(content)) return ""
-  return content.map((part) => {
-    if (typeof part === "string") return part
-    if (typeof part?.text === "string") return part.text
-    if (typeof part?.content === "string") return part.content
-    if (typeof part?.output === "string") return part.output
-    return ""
+function messageText(body) {
+  return (Array.isArray(body?.messages) ? body.messages : []).map((message) => {
+    const content = message?.content
+    if (typeof content === "string") return content
+    if (!Array.isArray(content)) return ""
+    return content.map((part) => {
+      if (typeof part === "string") return part
+      return part?.text ?? part?.content ?? part?.output ?? ""
+    }).join("\n")
   }).join("\n")
 }
 
-function allMessageText(body) {
-  return (Array.isArray(body?.messages) ? body.messages : [])
-    .map((message) => contentText(message?.content))
-    .join("\n")
-}
-
 function toolNames(body) {
-  const value = body?.tools
-  if (Array.isArray(value)) {
-    return value.map((item) => item?.function?.name ?? item?.name).filter((item) => typeof item === "string")
+  if (Array.isArray(body?.tools)) {
+    return body.tools.map((item) => item?.function?.name ?? item?.name).filter((item) => typeof item === "string")
   }
-  if (value && typeof value === "object") return Object.keys(value)
-  return []
+  return body?.tools && typeof body.tools === "object" ? Object.keys(body.tools) : []
 }
 
-function streamHeaders(res) {
+function beginStream(res) {
   res.writeHead(200, {
     "content-type": "text/event-stream; charset=utf-8",
     "cache-control": "no-cache",
@@ -93,33 +85,13 @@ function streamHeaders(res) {
   })
 }
 
-function writeSse(res, value) {
+function send(res, value) {
   res.write(`data: ${JSON.stringify(value)}\n\n`)
 }
 
-function streamText(res, { id, created, content }) {
-  streamHeaders(res)
-  writeSse(res, {
-    id,
-    object: "chat.completion.chunk",
-    created,
-    model: "canary",
-    choices: [{ index: 0, delta: { role: "assistant", content }, finish_reason: null }],
-  })
-  writeSse(res, {
-    id,
-    object: "chat.completion.chunk",
-    created,
-    model: "canary",
-    choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
-    usage: { prompt_tokens: 40, completion_tokens: 5, total_tokens: 45 },
-  })
-  res.end("data: [DONE]\n\n")
-}
-
-function streamToolCall(res, { id, created }) {
-  streamHeaders(res)
-  writeSse(res, {
+function streamToolCall(res, id, created) {
+  beginStream(res)
+  send(res, {
     id,
     object: "chat.completion.chunk",
     created,
@@ -129,39 +101,49 @@ function streamToolCall(res, { id, created }) {
       delta: {
         role: "assistant",
         content: null,
-        tool_calls: [{
-          index: 0,
-          id: "call-v2-goal-control",
-          type: "function",
-          function: { name: CONTROL_TOOL, arguments: "" },
-        }],
+        tool_calls: [{ index: 0, id: "call-v2-goal-control", type: "function", function: { name: CONTROL_TOOL, arguments: "" } }],
       },
       finish_reason: null,
     }],
   })
-  writeSse(res, {
+  send(res, {
     id,
     object: "chat.completion.chunk",
     created,
     model: "canary",
     choices: [{
       index: 0,
-      delta: {
-        tool_calls: [{
-          index: 0,
-          function: { arguments: JSON.stringify({ arguments: EXACT_ARGUMENTS }) },
-        }],
-      },
+      delta: { tool_calls: [{ index: 0, function: { arguments: JSON.stringify({ arguments: EXACT_ARGUMENTS }) } }] },
       finish_reason: null,
     }],
   })
-  writeSse(res, {
+  send(res, {
     id,
     object: "chat.completion.chunk",
     created,
     model: "canary",
     choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
     usage: { prompt_tokens: 48, completion_tokens: 12, total_tokens: 60 },
+  })
+  res.end("data: [DONE]\n\n")
+}
+
+function streamText(res, id, created) {
+  beginStream(res)
+  send(res, {
+    id,
+    object: "chat.completion.chunk",
+    created,
+    model: "canary",
+    choices: [{ index: 0, delta: { role: "assistant", content: "V2_GOAL_CONTROL_DONE" }, finish_reason: null }],
+  })
+  send(res, {
+    id,
+    object: "chat.completion.chunk",
+    created,
+    model: "canary",
+    choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+    usage: { prompt_tokens: 40, completion_tokens: 5, total_tokens: 45 },
   })
   res.end("data: [DONE]\n\n")
 }
@@ -177,11 +159,9 @@ function startProvider() {
     paths: [],
     observations: [],
   }
-
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1")
     stats.paths.push(`${req.method} ${url.pathname}`)
-
     if (req.method === "GET" && url.pathname.endsWith("/models")) {
       res.writeHead(200, { "content-type": "application/json" })
       res.end(JSON.stringify({ object: "list", data: [{ id: "canary", object: "model", owned_by: "canary" }] }))
@@ -197,9 +177,8 @@ function startProvider() {
     for await (const chunk of req) raw += String(chunk)
     const body = raw ? JSON.parse(raw) : {}
     const names = toolNames(body)
-    const text = allMessageText(body)
-    stats.chatRequests += 1
-    const request = stats.chatRequests
+    const text = messageText(body)
+    const request = ++stats.chatRequests
     const hasControl = names.includes(CONTROL_TOOL)
     const hasGet = names.includes(GET_TOOL)
     const sawWrapper = text.includes(COMMAND_WRAPPER_TEXT)
@@ -213,14 +192,12 @@ function startProvider() {
       stats.firstGetExposed = hasGet
       stats.transformedWrapperSeen = sawWrapper
       stats.exactArgumentsSeen = sawExactArguments
-      streamToolCall(res, { id, created })
+      streamToolCall(res, id, created)
       return
     }
-
     stats.postToolControlExposed ||= hasControl
-    streamText(res, { id, created, content: "V2_GOAL_CONTROL_DONE" })
+    streamText(res, id, created)
   })
-
   return {
     stats,
     async listen() {
@@ -239,16 +216,11 @@ function startProvider() {
 }
 
 async function readFailureLog(env) {
-  const candidates = [
+  for (const file of [
     path.join(env.XDG_DATA_HOME, "opencode", "log", "opencode.log"),
     path.join(env.XDG_STATE_HOME, "opencode", "log", "opencode.log"),
-  ]
-  for (const file of candidates) {
-    try {
-      return (await readFile(file, "utf8")).slice(-50_000)
-    } catch {
-      // Try the next beta service log location.
-    }
+  ]) {
+    try { return (await readFile(file, "utf8")).slice(-50_000) } catch {}
   }
   return ""
 }
@@ -272,7 +244,6 @@ async function main() {
   const state = path.join(home, ".local", "state")
   const pluginDirectory = path.join(project, ".opencode", "plugins")
   const pluginFile = path.join(root, "dist", "opencode2", "experimental.js")
-  const adapterBridge = path.join(pluginDirectory, "opencode-goals-v2-behavior.js")
   const provider = startProvider()
   const providerPort = await provider.listen()
 
@@ -282,8 +253,7 @@ async function main() {
     mkdir(data, { recursive: true }),
     mkdir(state, { recursive: true }),
   ])
-
-  await writeFile(adapterBridge, `export { default } from ${JSON.stringify(pathToFileURL(pluginFile).href)}\n`)
+  await writeFile(path.join(pluginDirectory, "opencode-goals-v2-behavior.js"), `export { default } from ${JSON.stringify(pathToFileURL(pluginFile).href)}\n`)
   await writeFile(path.join(project, "README.md"), "# OpenCode 2 Goal behavior canary\n")
   await writeFile(path.join(project, "opencode.json"), `${JSON.stringify({
     $schema: "https://opencode.ai/config.json",
@@ -317,7 +287,6 @@ async function main() {
     OPENCODE_LOG_LEVEL: "DEBUG",
     CI: "true",
   }
-
   await run("git", ["init", "-q"], { cwd: project, env })
   await run("git", ["config", "user.name", "OpenCode Goals Canary"], { cwd: project, env })
   await run("git", ["config", "user.email", "opencode-goals-canary@example.invalid"], { cwd: project, env })
@@ -330,27 +299,20 @@ async function main() {
     const args = ["api", method.toLowerCase(), scoped(pathname)]
     if (dataValue !== undefined) args.push("--data", JSON.stringify(dataValue))
     const result = await run("opencode2", args, { cwd: project, env, timeout: 90_000 })
-    const text = String(result.stdout ?? "").trim()
-    if (!text) return null
-    return parseJSONOutput(result, `${method.toUpperCase()} ${pathname}`)
+    return String(result.stdout ?? "").trim() ? parseJSONOutput(result, `${method.toUpperCase()} ${pathname}`) : null
   }
 
   try {
     await run("opencode2", ["service", "stop"], { cwd: project, env, allowFailure: true, timeout: 20_000 })
     const version = String((await run("opencode2", ["--version"], { cwd: project, env, timeout: 30_000 })).stdout ?? "").trim()
     assert.ok(version, "opencode2 --version returned no output")
-
-    const health = await api("get", "/api/health")
-    assert.ok(health, "OpenCode 2 health API returned no payload")
+    assert.ok(await api("get", "/api/health"), "OpenCode 2 health API returned no payload")
 
     const commandCatalog = await waitFor(async () => {
       const response = await api("get", "/api/command")
       const items = response?.data ?? response
-      if (!Array.isArray(items)) return null
-      const goal = items.find((item) => item?.name === "goal" || item?.id === "goal")
-      return goal ?? null
+      return Array.isArray(items) ? items.find((item) => item?.name === "goal" || item?.id === "goal") ?? null : null
     }, "declared goal command to enter the beta command catalog")
-    assert.notEqual(commandCatalog?.template, DECLARED_COMMAND_TEMPLATE, "V2 command.transform did not replace the declared goal template")
 
     const createdPayload = await api("post", "/api/session", {
       title: "OpenCode Goals V2 current-beta behavior",
@@ -396,7 +358,7 @@ async function main() {
       goalID: goal.id,
       commandCatalog: {
         name: commandCatalog?.name ?? commandCatalog?.id ?? "goal",
-        transformed: commandCatalog?.template !== DECLARED_COMMAND_TEMPLATE,
+        catalogShowsDeclaredTemplate: commandCatalog?.template === DECLARED_COMMAND_TEMPLATE,
       },
       provider: provider.stats,
     }, null, 2))

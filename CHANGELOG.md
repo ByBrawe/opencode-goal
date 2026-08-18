@@ -2,6 +2,15 @@
 
 All notable changes to **OpenCode Goals** are documented here.
 
+## 1.3.19 — 2026-08-18
+
+Shell timeout and Windows process-lock reliability hotfix.
+
+- Count Goal-owned `bash` activity as host progress only when OpenCode reports a finite numeric process exit; timeout/abort or missing exit metadata remains no-progress, while ordinary non-zero exits still count as completed diagnostic work.
+- Retry transient Windows `EPERM`/`EACCES`/`EBUSY` access/share denials while reading canonical process-lock owner metadata with a small bounded backoff; persistent denials, malformed owners, lock/CAS/lease authority, and POSIX behavior remain fail-closed.
+- Apply the same bounded Windows-only retry to canonical lock hard-link `fs.lstat()` so brief share/access races recover to normal lease classification; `ENOENT`, symlink/junction safety, and persistent permission failures remain authoritative.
+- Add regressions proving three distinct timed-out shell turns still reach the normal three-turn stall pause, transient owner-read/lstat denials recover, persistent denials remain fail-closed, and Windows Node 20/24 release smoke stays green.
+
 ## 1.3.18 — 2026-08-18
 
 Paused-state guidance and progress-guard validation release.

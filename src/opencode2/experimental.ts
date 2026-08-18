@@ -406,13 +406,14 @@ export const OpenCode2GoalsExperimental = {
       appendSystemContext(event, experimentalContext(goal))
     }
 
-    await ctx.session.hook("request", handleRequest)
+    let contextRegistered = false
     try {
       await ctx.session.hook("context", handleRequest)
+      contextRegistered = true
     } catch {
-      // Some earlier V2 prototypes exposed this hook name. Keep it best-effort
-      // without making it part of the current-host activation requirement.
+      // Earlier OpenCode 2 betas exposed this lifecycle as "request".
     }
+    if (!contextRegistered) await ctx.session.hook("request", handleRequest)
 
     return () => pendingControls.clear()
   },

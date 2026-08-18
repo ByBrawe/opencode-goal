@@ -1,0 +1,26 @@
+name: Verify npm 1.3.17 registry
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/verify-npm-1.3.17.yml
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify npm registry 1.3.17
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify published version and installer bin
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED="1.3.17"
+          VERSION="$(npm view "@bybrawe/opencode-goal@$EXPECTED" version --registry=https://registry.npmjs.org)"
+          BIN="$(npm view "@bybrawe/opencode-goal@$EXPECTED" bin.opencode-goal --registry=https://registry.npmjs.org)"
+          echo "version=$VERSION"
+          echo "bin=$BIN"
+          test "$VERSION" = "$EXPECTED"
+          test "$BIN" = "bin/opencode-goal.js" -o "$BIN" = "./bin/opencode-goal.js"

@@ -14,6 +14,11 @@ function fakeClient() {
   }
 }
 
+async function tick() {
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  await new Promise((resolve) => setTimeout(resolve, 0))
+}
+
 async function readOnlyGoal(root) {
   const dir = path.join(root, ".opencode", "goals")
   const files = (await readdir(dir)).filter((name) => name.endsWith(".json"))
@@ -37,6 +42,11 @@ async function runShell(hooks, { sessionID = "session-1", callID, command }) {
     { tool: "bash", sessionID, callID, args: { command } },
     { title: "bash", output: "completed", metadata: {} },
   )
+}
+
+async function closeTurn(hooks, sessionID = "session-1") {
+  await hooks.event({ event: { type: "session.idle", properties: { sessionID } } })
+  await tick()
 }
 
 test("shell activity fingerprint normalizes CRLF and never exposes command text", () => {
@@ -70,6 +80,53 @@ test("distinct Goal-owned shell actions count as host progress while identical r
     await runShell(hooks, { callID: "shell-3", command: "npm run typecheck" })
     goal = await readOnlyGoal(root)
     assert.equal(goal.progressRevision, before.progressRevision + 2, "a distinct completed shell action counts once")
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("three shell-only continuation turns do not false-pause, while repeated no-op shell activity still stalls", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-shell-stall-"))
+  try {
+    const hooks = await OpenCodeGoalPlugin({ client: fakeClient(), directory: root })
+    await createGoal(hooks)
+
+    // Settle the synthetic creation boundary first. Real continuation turns begin
+    // after this initial idle, and every distinct shell action below must reset
+    // the no-progress guard rather than reproducing the user's false pause.
+    await closeTurn(hooks)
+
+    const commands = [
+      "node tooling/capture.mjs --batch p0",
+      "node tooling/quality.mjs --captures",
+      "node tooling/normalize.mjs --move-captures",
+    ]
+
+    for (const [index, command] of commands.entries()) {
+      await runShell(hooks, { callID: `progress-${index + 1}`, command })
+      await closeTurn(hooks)
+      const goal = await readOnlyGoal(root)
+      assert.equal(goal.status, "active", `distinct shell progress turn ${index + 1} must stay active`)
+      assert.equal(goal.stalledTurns, 0, `distinct shell progress turn ${index + 1} must reset stalledTurns`)
+      assert.equal(goal.observedProgressRevision, goal.progressRevision)
+    }
+
+    const progressAfterDistinctWork = (await readOnlyGoal(root)).progressRevision
+    const repeated = "node tooling/quality.mjs --captures"
+    for (let index = 0; index < 3; index += 1) {
+      await runShell(hooks, { callID: `repeat-${index + 1}`, command: repeated })
+      await closeTurn(hooks)
+      const goal = await readOnlyGoal(root)
+      assert.equal(goal.progressRevision, progressAfterDistinctWork, "repeated shell activity must not create fresh progress")
+      if (index < 2) {
+        assert.equal(goal.status, "active")
+        assert.equal(goal.stalledTurns, index + 1)
+      } else {
+        assert.equal(goal.status, "paused")
+        assert.equal(goal.stalledTurns, 3)
+        assert.match(goal.stopReason, /3 continuation turns without host-observed progress/)
+      }
+    }
   } finally {
     await rm(root, { recursive: true, force: true })
   }

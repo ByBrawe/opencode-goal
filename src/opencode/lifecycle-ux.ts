@@ -1,6 +1,6 @@
 import type CorePlugin from "./plugin.js"
 import type { GoalState } from "../domain/types.js"
-import { GoalStore } from "../persistence/store.js"
+import { GoalStore, GoalStoreIntegrityError } from "../persistence/store.js"
 import { parseGoalCommand } from "./command.js"
 import { showGoalToast } from "./toast.js"
 
@@ -152,12 +152,13 @@ export function installGoalLifecycleUX(input: PluginInput, hooks: PluginHooks): 
     let goal: GoalState | null
     try {
       goal = await store.load(event.sessionID)
-    } catch {
-      // This wrapper is advisory UX only. Doctor and other underlying Goal
-      // behavior must remain available even when live storage is corrupt or
-      // uses a newer unsupported schema, so a toast lookup can never rethrow a
-      // persistence integrity error after the inner hook handled it safely.
-      return
+    } catch (error) {
+      // Paused-chat guidance is advisory. Unsupported/corrupt Goal storage must
+      // remain inspectable through /goal doctor instead of being converted into
+      // a foreground-chat failure by this UX wrapper. Other persistence failures
+      // still surface normally rather than being hidden by notification logic.
+      if (error instanceof GoalStoreIntegrityError) return
+      throw error
     }
     if (!goal || goal.status !== "paused") {
       pausedChatNotices.delete(event.sessionID)

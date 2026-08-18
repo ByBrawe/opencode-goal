@@ -145,7 +145,6 @@ test("three distinct timed-out shell turns cannot evade the stall guard", async 
   try {
     const hooks = await OpenCodeGoalPlugin({ client: fakeClient(), directory: root })
     await createGoal(hooks)
-    await closeTurn(hooks)
 
     const baseline = (await readOnlyGoal(root)).progressRevision
     for (let index = 0; index < 3; index += 1) {

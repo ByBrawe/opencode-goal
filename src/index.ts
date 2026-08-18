@@ -11,6 +11,7 @@ import { installRestrictedAgentSafety } from "./opencode/agent-boundary.js"
 import { installHostLimitHandling } from "./opencode/host-limits.js"
 import { preferSynchronousSessionPrompt } from "./opencode/client-compat.js"
 import { installGoalLifecycleUX } from "./opencode/lifecycle-ux.js"
+import { installGoalI18nUX } from "./opencode/i18n-ux.js"
 import { captureStartupGoals, scheduleStartupRecovery } from "./opencode/recovery.js"
 import { applySemanticVerifierTimeoutDefault } from "./opencode/verifier-defaults.js"
 
@@ -48,10 +49,11 @@ export default async function OpenCodeGoalPlugin(
   installRestrictedAgentSafety(input, hooks)
   installHostLimitHandling(input, hooks)
   scheduleStartupRecovery(input, hooks, startupGoals)
-  // Lifecycle UX is the outermost command wrapper so create-conflict and pause
-  // guidance is always visible to the user while the inner ownership wrappers
-  // still receive their original command-owned prompt text.
+  // Lifecycle UX remains the outer ownership-aware wrapper. Localization is
+  // installed after it and restores command-owned text before chat.message
+  // reaches lifecycle logic, so translated UI never becomes authorization.
   installGoalLifecycleUX(input, hooks)
+  installGoalI18nUX(input, hooks)
   return hooks
 }
 
@@ -67,6 +69,7 @@ export * from "./runtime/model-context.js"
 export * from "./runtime/progress.js"
 export * from "./runtime/todo-plan.js"
 export * from "./persistence/sequence-store.js"
+export * from "./i18n.js"
 export * from "./opencode/command.js"
 export * from "./opencode/audit-ux.js"
 export * from "./opencode/agent-boundary.js"
@@ -77,4 +80,5 @@ export * from "./opencode/sequence.js"
 export * from "./opencode/todo-orchestration.js"
 export * from "./opencode/client-compat.js"
 export * from "./opencode/lifecycle-ux.js"
+export * from "./opencode/i18n-ux.js"
 export * from "./opencode/verifier-defaults.js"

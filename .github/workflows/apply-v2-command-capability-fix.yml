@@ -1,0 +1,91 @@
+name: Apply V2 command capability fix
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'fix/v2-command-capability-turn'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: fix/v2-command-capability-turn
+          persist-credentials: true
+          fetch-depth: 0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+      - name: Apply focused runtime and regression patch
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs')
+
+          function replaceOnce(file, before, after) {
+            let text = fs.readFileSync(file, 'utf8')
+            if (!text.includes(before)) throw new Error(`pattern not found in ${file}: ${before.slice(0, 120)}`)
+            text = text.replace(before, after)
+            fs.writeFileSync(file, text)
+          }
+
+          const experimental = 'src/opencode2/experimental.ts'
+          replaceOnce(
+            experimental,
+            'import { randomUUID } from "node:crypto"',
+            'import { createHash, randomUUID } from "node:crypto"',
+          )
+          replaceOnce(
+            experimental,
+            `interface PendingControl {\n  arguments: string\n}`,
+            `interface PendingControl {\n  arguments: string\n  turnKey: string\n}`,
+          )
+          replaceOnce(
+            experimental,
+            `function commandArguments(text: string | undefined, marker: string): string | undefined {\n  if (!text) return undefined\n  const prefix = \`${'${V2_COMMAND_PREAMBLE}'}\\n${'${marker}'}\\n\`\n  if (!text.startsWith(prefix)) return undefined\n  return text.slice(prefix.length)\n}\n`,
+            `function commandArguments(text: string | undefined, marker: string): string | undefined {\n  if (!text) return undefined\n  const prefix = \`${'${V2_COMMAND_PREAMBLE}'}\\n${'${marker}'}\\n\`\n  if (!text.startsWith(prefix)) return undefined\n  return text.slice(prefix.length)\n}\n\nfunction commandTurnKey(messages: unknown, marker: string, rawArguments: string): string {\n  const digest = createHash("sha256").update(rawArguments).digest("hex")\n  if (!Array.isArray(messages)) return \`fallback:0:${'${digest}'}\`\n\n  let ordinal = 0\n  let latestMessageID: string | undefined\n  for (const message of messages) {\n    const role = roleOfMessage(message)\n    if (role && role.toLowerCase() !== "user") continue\n    const candidate = commandArguments(collectText(message), marker)\n    if (candidate === undefined) continue\n    ordinal += 1\n    if (candidate !== rawArguments) continue\n    const item = record(message)\n    latestMessageID = firstString(item?.id, record(item?.info)?.id) ?? latestMessageID\n  }\n\n  return latestMessageID ? \`message:${'${latestMessageID}'}:${'${digest}'}\` : \`ordinal:${'${ordinal}'}:${'${digest}'}\`\n}\n`,
+          )
+          replaceOnce(
+            experimental,
+            `    const capabilityMarker = \`__OPENCODE_GOALS_V2_COMMAND_${'${randomUUID()}'}__\`\n    const pendingControls = new Map<string, PendingControl>()`,
+            `    const capabilityMarker = \`__OPENCODE_GOALS_V2_COMMAND_${'${randomUUID()}'}__\`\n    const pendingControls = new Map<string, PendingControl>()\n    const consumedControls = new Map<string, string>()`,
+          )
+          replaceOnce(
+            experimental,
+            `          const pending = pendingControls.get(toolContext.sessionID)\n          pendingControls.delete(toolContext.sessionID)\n          if (!pending || input.arguments !== pending.arguments) {\n            throw new Error("OpenCode Goals V2 control rejected: no matching single-use /goal command capability. No Goal state was read or changed.")\n          }`,
+            `          const pending = pendingControls.get(toolContext.sessionID)\n          pendingControls.delete(toolContext.sessionID)\n          if (pending) consumedControls.set(toolContext.sessionID, pending.turnKey)\n          if (!pending || input.arguments !== pending.arguments) {\n            throw new Error("OpenCode Goals V2 control rejected: no matching single-use /goal command capability. No Goal state was read or changed.")\n          }`,
+          )
+          replaceOnce(
+            experimental,
+            `      const rawArguments = commandArguments(latestUserText(event?.messages), capabilityMarker)\n      if (rawArguments === undefined) {\n        pendingControls.delete(sessionID)\n        removeControlTool(event)\n      } else {\n        pendingControls.set(sessionID, { arguments: rawArguments })\n      }`,
+            `      const rawArguments = commandArguments(latestUserText(event?.messages), capabilityMarker)\n      if (rawArguments === undefined) {\n        pendingControls.delete(sessionID)\n        consumedControls.delete(sessionID)\n        removeControlTool(event)\n      } else {\n        const turnKey = commandTurnKey(event?.messages, capabilityMarker, rawArguments)\n        if (consumedControls.get(sessionID) === turnKey) {\n          pendingControls.delete(sessionID)\n          removeControlTool(event)\n        } else {\n          pendingControls.set(sessionID, { arguments: rawArguments, turnKey })\n        }\n      }`,
+          )
+          replaceOnce(
+            experimental,
+            `    return () => pendingControls.clear()`,
+            `    return () => {\n      pendingControls.clear()\n      consumedControls.clear()\n    }`,
+          )
+
+          const testFile = 'test/opencode2-experimental.test.mjs'
+          let tests = fs.readFileSync(testFile, 'utf8')
+          if (!tests.includes('tool-result request cannot reauthorize the same V2 command turn')) {
+            tests += `\n\ntest("tool-result request cannot reauthorize the same V2 command turn", async () => {\n  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-turn-capability-"))\n  try {\n    const host = fakeV2Context(root)\n    await OpenCode2GoalsExperimental.setup(host.ctx)\n    const sessionID = "v2-turn-capability-session"\n    await runGoalCommand(host, "ship docs", { sessionID })\n\n    const commandText = commandMessage(host, "status")\n    const firstRequest = {\n      sessionID,\n      agent: "build",\n      system: ["base system"],\n      tools: requestTools(),\n      messages: [{ role: "user", content: commandText }],\n    }\n    await host.hooks.get("request")(firstRequest)\n    assert.ok(firstRequest.tools.opencode_goals_v2_control)\n\n    const control = host.tools.get("opencode_goals_v2_control").definition\n    const first = await control.execute(\n      { arguments: "status" },\n      { sessionID, agent: "build", messageID: "assistant-status-1", callID: "call-status-1" },\n    )\n    assert.match(first.content, /Goal: ship docs/)\n\n    const sameTurn = {\n      sessionID,\n      agent: "build",\n      system: ["base system"],\n      tools: requestTools(),\n      messages: [\n        { role: "user", content: commandText },\n        { role: "assistant", content: "control tool call" },\n        { role: "tool", content: first.content },\n      ],\n    }\n    await host.hooks.get("request")(sameTurn)\n    assert.equal(sameTurn.tools.opencode_goals_v2_control, undefined, "tool-result continuation must not recreate the consumed control capability")\n    await assert.rejects(\n      control.execute(\n        { arguments: "status" },\n        { sessionID, agent: "build", messageID: "assistant-status-replay", callID: "call-status-replay" },\n      ),\n      /no matching single-use \\/goal command capability/i,\n    )\n\n    const nextTurn = {\n      sessionID,\n      agent: "build",\n      system: ["base system"],\n      tools: requestTools(),\n      messages: [\n        ...sameTurn.messages,\n        { role: "assistant", content: "status complete" },\n        { role: "user", content: commandText },\n      ],\n    }\n    await host.hooks.get("request")(nextTurn)\n    assert.ok(nextTurn.tools.opencode_goals_v2_control, "a later identical /goal command turn must receive a fresh capability")\n    const second = await control.execute(\n      { arguments: "status" },\n      { sessionID, agent: "build", messageID: "assistant-status-2", callID: "call-status-2" },\n    )\n    assert.match(second.content, /Goal: ship docs/)\n  } finally {\n    await rm(root, { recursive: true, force: true })\n  }\n})\n`
+            fs.writeFileSync(testFile, tests)
+          }
+          NODE
+      - run: npm install
+      - run: npm run check
+      - run: npm test
+      - name: Commit tested patch and remove helper
+        shell: bash
+        run: |
+          rm .github/workflows/apply-v2-command-capability-fix.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src/opencode2/experimental.ts test/opencode2-experimental.test.mjs .github/workflows/apply-v2-command-capability-fix.yml
+          git commit -m "fix: keep V2 command capability single-use per turn"
+          git push origin HEAD:fix/v2-command-capability-turn

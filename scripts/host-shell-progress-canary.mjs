@@ -11,7 +11,11 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const isWindows = process.platform === "win32"
 const OBJECTIVE = "real host shell progress canary"
-const SHELL_COMMAND = `node -e "process.stdout.write('SHELL_PROGRESS_OK')"`
+const SHELL_COMMANDS = [
+  `node -e "process.stdout.write('SHELL_PROGRESS_1')"`,
+  `node -e "process.stdout.write('SHELL_PROGRESS_2')"`,
+  `node -e "process.stdout.write('SHELL_PROGRESS_3')"`,
+]
 
 function resolveOpenCodeBinary() {
   if (!isWindows) return path.join(repoRoot, "node_modules", ".bin", "opencode")
@@ -132,14 +136,14 @@ function toolDefinition(body, name) {
   return (body.tools ?? []).find((item) => item?.function?.name === name)
 }
 
-function bashArgs(body) {
+function bashArgs(body, command) {
   const definition = toolDefinition(body, "bash")
   if (!definition) throw new Error("real OpenCode request did not expose the bash tool")
   const properties = definition.function?.parameters?.properties ?? {}
   if (!Object.prototype.hasOwnProperty.call(properties, "command")) {
     throw new Error(`unsupported OpenCode bash schema: ${JSON.stringify(definition.function?.parameters ?? null)}`)
   }
-  return { command: SHELL_COMMAND }
+  return { command }
 }
 
 function streamHeaders(res) {
@@ -210,7 +214,14 @@ function streamToolCall(res, { id, created, callID, name, args }) {
 }
 
 function startProvider() {
-  const stats = { chatRequests: 0, phase: "shell", shellCalls: 0, holdStarted: 0, paths: [] }
+  const stats = {
+    chatRequests: 0,
+    phase: "shell-0",
+    shellCalls: 0,
+    shellTurnsFinished: 0,
+    holdStarted: 0,
+    paths: [],
+  }
   const held = new Set()
 
   const server = createServer(async (req, res) => {
@@ -241,17 +252,32 @@ function startProvider() {
       return
     }
 
-    if (stats.phase === "shell") {
-      stats.phase = "shell-result"
+    const shellPhase = /^shell-(\d+)$/.exec(stats.phase)
+    if (shellPhase) {
+      const index = Number(shellPhase[1])
+      const command = SHELL_COMMANDS[index]
+      if (!command) throw new Error(`invalid shell progress canary phase: ${stats.phase}`)
+      stats.phase = `shell-${index}-result`
       stats.shellCalls += 1
-      streamToolCall(res, { id, created, callID: "call-real-shell", name: "bash", args: bashArgs(body) })
+      streamToolCall(res, {
+        id,
+        created,
+        callID: `call-real-shell-${index + 1}`,
+        name: "bash",
+        args: bashArgs(body, command),
+      })
       return
     }
-    if (stats.phase === "shell-result") {
-      stats.phase = "hold"
-      streamText(res, { id, created, content: "REAL_SHELL_DONE" })
+
+    const resultPhase = /^shell-(\d+)-result$/.exec(stats.phase)
+    if (resultPhase) {
+      const index = Number(resultPhase[1])
+      stats.shellTurnsFinished += 1
+      stats.phase = index + 1 < SHELL_COMMANDS.length ? `shell-${index + 1}` : "hold"
+      streamText(res, { id, created, content: `REAL_SHELL_${index + 1}_DONE` })
       return
     }
+
     if (stats.phase === "hold") {
       stats.phase = "holding"
       stats.holdStarted += 1
@@ -263,7 +289,7 @@ function startProvider() {
         object: "chat.completion.chunk",
         created,
         model: "canary",
-        choices: [{ index: 0, delta: { role: "assistant", content: "HOLD_AFTER_SHELL" }, finish_reason: null }],
+        choices: [{ index: 0, delta: { role: "assistant", content: "HOLD_AFTER_THREE_SHELL_TURNS" }, finish_reason: null }],
       })
       return
     }
@@ -302,7 +328,7 @@ async function readGoal(workspace) {
   }
 }
 
-async function waitFor(predicate, description, diagnostics, timeoutMs = 35_000) {
+async function waitFor(predicate, description, diagnostics, timeoutMs = 45_000) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     if (await predicate()) return
@@ -393,8 +419,8 @@ async function main() {
 
     const command = api(`/session/${encodeURIComponent(sessionID)}/command`, {
       method: "POST",
-      body: JSON.stringify({ agent: "build", model: "canary/canary", command: "goal", arguments: `${OBJECTIVE} --max-turns 6` }),
-      signal: AbortSignal.timeout(60_000),
+      body: JSON.stringify({ agent: "build", model: "canary/canary", command: "goal", arguments: `${OBJECTIVE} --max-turns 8` }),
+      signal: AbortSignal.timeout(75_000),
     }).catch((error) => {
       commandTransportError = error
       return null
@@ -403,24 +429,33 @@ async function main() {
     await waitFor(
       async () => {
         lastState = await readGoal(workspace)
-        return provider.stats.shellCalls === 1
+        const shellFingerprints = (lastState?.progressFingerprints ?? []).filter((item) => /^shell:[a-f0-9]{64}$/.test(item))
+        return provider.stats.shellCalls === SHELL_COMMANDS.length
+          && provider.stats.shellTurnsFinished === SHELL_COMMANDS.length
           && provider.stats.holdStarted === 1
-          && (lastState?.progressFingerprints ?? []).some((item) => /^shell:[a-f0-9]{64}$/.test(item))
+          && shellFingerprints.length === SHELL_COMMANDS.length
       },
-      "real shell command to produce one revision-owned shell fingerprint",
+      "three real shell-only Goal turns to complete without tripping the stall guard",
       diagnostics,
     )
     await new Promise((resolve) => setTimeout(resolve, 250))
     lastState = await readGoal(workspace)
 
-    assert.equal(lastState.status, "active")
-    assert.equal(lastState.progressRevision, 1, `real shell work should increment progress once: ${JSON.stringify(lastState.progressFingerprints)}`)
-    assert.equal(lastState.progressFingerprints.length, 1)
-    assert.match(lastState.progressFingerprints[0], /^shell:[a-f0-9]{64}$/)
-    assert.equal(lastState.stalledTurns, 0, "a successful Goal-owned shell turn must reset the stall counter")
-    const shellNote = lastState.progressNotes.findLast((item) => item?.summary?.includes("Goal-owned shell command completed."))
-    assert.ok(shellNote, `shell progress note was not persisted: ${JSON.stringify(lastState.progressNotes)}`)
-    assert.doesNotMatch(shellNote.summary, /SHELL_PROGRESS_OK|process\.stdout|node -e/, "raw shell command text must not be persisted in progress notes")
+    const shellFingerprints = lastState.progressFingerprints.filter((item) => /^shell:[a-f0-9]{64}$/.test(item))
+    assert.equal(lastState.status, "active", `three distinct shell-only turns must keep the Goal active: ${diagnostics()}`)
+    assert.equal(lastState.progressRevision, SHELL_COMMANDS.length, `each distinct real shell turn should increment progress exactly once: ${JSON.stringify(lastState.progressFingerprints)}`)
+    assert.equal(lastState.observedProgressRevision, lastState.progressRevision, "the host must settle all three shell progress revisions at turn boundaries")
+    assert.equal(lastState.stalledTurns, 0, "three successful Goal-owned shell turns must keep the stall counter at zero")
+    assert.equal(shellFingerprints.length, SHELL_COMMANDS.length)
+    assert.equal(new Set(shellFingerprints).size, SHELL_COMMANDS.length, "three distinct shell commands must produce three distinct fingerprints")
+
+    const shellNotes = lastState.progressNotes.filter((item) => item?.summary?.includes("Goal-owned shell command completed."))
+    assert.equal(shellNotes.length, SHELL_COMMANDS.length, `expected one generic host note per shell turn: ${JSON.stringify(lastState.progressNotes)}`)
+    const persistedProgress = JSON.stringify({
+      progressFingerprints: lastState.progressFingerprints,
+      progressNotes: lastState.progressNotes,
+    })
+    assert.doesNotMatch(persistedProgress, /SHELL_PROGRESS_[123]|process\.stdout|node -e/, "raw shell command text must not be persisted in progress state")
     assert.equal(server.exitCode, null, `OpenCode server exited during shell-progress assertions: ${diagnostics()}`)
 
     console.log(JSON.stringify({
@@ -428,8 +463,10 @@ async function main() {
       platform: process.platform,
       sessionID,
       shellCalls: provider.stats.shellCalls,
+      shellTurnsFinished: provider.stats.shellTurnsFinished,
       holdStarted: provider.stats.holdStarted,
       progressRevision: lastState.progressRevision,
+      observedProgressRevision: lastState.observedProgressRevision,
       progressFingerprints: lastState.progressFingerprints,
       stalledTurns: lastState.stalledTurns,
       commandTransportError: commandTransportError ? String(commandTransportError) : null,

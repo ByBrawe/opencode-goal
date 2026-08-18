@@ -123,6 +123,8 @@ Duraklatın ve devam ettirin:
 /goal resume
 ```
 
+Goal paused durumundayken `devam et`, `continue` veya `resume` gibi kısa ve açık bir devam mesajı da aynı lifecycle control zinciri üzerinden Goal'ı yeniden aktive eder. Diğer normal chat mesajları paused Goal'ı sessizce yeniden başlatmaz.
+
 Gelecekteki Goal'ları sıraya ekleyin:
 
 ```text
@@ -188,21 +190,15 @@ Queue için:
 
 Ayrı session'lar ayrı kalıcı Goal snapshot'larına sahiptir. Bu nedenle aynı proje dizininde farklı Goal'lar çalıştırabilirler; ancak iki session aynı proje dosyalarını değiştirirse normal workspace çakışmaları yine oluşabilir.
 
-## Pause ile normal chat farkı: neden `devam et`, `/goal resume` değildir?
+## Pause ile normal chat farkı: açık devam isteği ve sıradan chat
 
-`/goal pause`, kalıcı Goal durumunu `paused` yapar. `devam et`, `continue` veya başka bir normal kullanıcı mesajı bu kalıcı durumu tekrar `active` yapmaz.
+`/goal pause`, kalıcı Goal durumunu `paused` yapar. `/goal resume`, Goal'ı yeniden aktive etmek için açık lifecycle komutu olarak kalır.
 
-Kullanıcı mesajı modele tek bir foreground tur verebilir, ancak autonomous Goal continuation paused kalır. Goal state machine'i yeniden başlatmak için:
+Kolaylık için `devam et`, `continue`, `kaldığın yerden devam et` veya `resume` gibi kısa ve belirsiz olmayan devam mesajları, Goal paused durumundayken resume niyeti olarak kabul edilir. Plugin bu niyeti Goal state'ini doğrudan değiştirmek yerine mevcut `/goal resume` command/ownership zinciri üzerinden geçirir.
 
-```text
-/goal resume
-```
+Diğer foreground chat mesajları normal konuşma olarak kalır ve Goal'ı **sessizce yeniden aktive etmez**. Böylece rastgele chat lifecycle control'e dönüşmezken açık bir “devam et” isteği beklenen davranışı verir.
 
-kullanın.
-
-Bu davranış bilinçlidir: sıradan chat metni explicit lifecycle state'i sessizce değiştirmemelidir.
-
-Aynı kural fail-closed verifier kesintisi sonrasında da geçerlidir. Completion verification timeout olur ve Goal `paused` olarak kalıcılaştırılırsa verifier/provider kullanılabilir olduğunda `/goal resume` ile completion yeniden denenir.
+Aynı resume yolu fail-closed verifier kesintisi sonrasında da kullanılabilir. Completion verification timeout olur ve Goal `paused` olarak kalıcılaştırılırsa verifier/provider kullanılabilir olduğunda `/goal resume` veya kısa ve açık bir devam mesajıyla completion yeniden denenebilir.
 
 ## Goal Contracts
 
@@ -279,7 +275,7 @@ Verifier/provider tekrar sağlıklı olduğunda:
 /goal resume
 ```
 
-kullanın.
+kullanın. `devam et` veya `continue` gibi kısa ve açık bir mesaj da aynı resume yolunu kullanır.
 
 Verifier kesintisi kanıtlanmamış bir Goal'ı hiçbir zaman completed olarak işaretlemez.
 
@@ -326,7 +322,7 @@ Installer kullanıcıya ait bir `commands/goal.md` dosyasının üzerine yazmaz.
 /goal audit
 ```
 
-Stop reason verifier infrastructure/timeout ise ve workspace zaten doğruysa istenen mutation'ları elle tekrar etmeyin. Completion yolunu yeniden denemek için `/goal resume` kullanın.
+Stop reason verifier infrastructure/timeout ise ve workspace zaten doğruysa istenen mutation'ları elle tekrar etmeyin. Completion yolunu yeniden denemek için `/goal resume` veya kısa ve açık bir devam mesajı kullanın.
 
 ### Aynı session'da başka Goal başlatamıyorum
 

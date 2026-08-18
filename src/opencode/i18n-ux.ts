@@ -14,20 +14,29 @@ function replaceParts(parts: any[], text: string) {
   parts.splice(0, parts.length, { type: "text", text })
 }
 
+function withText(output: any, text: string): any {
+  return {
+    ...output,
+    parts: [{ type: "text", text }],
+  }
+}
+
 function isSyntheticHostMessage(parts: any[]): boolean {
   return parts.some((part) => part?.synthetic === true)
 }
 
 /**
  * Localize only the user-visible Goal command surface. Before the later
- * chat.message hook reaches the existing ownership/lifecycle wrappers, restore
- * the exact English command-owned text they originally produced. This keeps
- * localization from becoming lifecycle state or model-visible authorization.
+ * chat.message hook reaches the existing ownership/lifecycle wrappers, feed
+ * those wrappers a clone containing the exact English command-owned text they
+ * originally produced. The host-owned output object keeps the localized text,
+ * so localization never becomes lifecycle state or model-visible authorization.
  *
  * Short resume intent is recognized across all supported languages. When the
- * Goal is actually paused, normalize only that one foreground message to the
- * already-supported English "continue" intent and let the normal lifecycle
- * chain perform the resume. Persistence is never mutated here.
+ * Goal is actually paused, feed only that one foreground message to the inner
+ * lifecycle chain as the already-supported English "continue" intent. The
+ * original host-owned user message remains untouched and persistence is never
+ * mutated here.
  */
 export function installGoalI18nUX(input: PluginInput, hooks: PluginHooks): void {
   const commandHook = hooks["command.execute.before"]
@@ -56,8 +65,7 @@ export function installGoalI18nUX(input: PluginInput, hooks: PluginHooks): void 
     if (translation) {
       translations.delete(event.sessionID)
       if (shown === translation.shown) {
-        replaceParts(output.parts, translation.owned)
-        await chatHook(event, output)
+        await chatHook(event, withText(output, translation.owned))
         return
       }
     }
@@ -71,8 +79,7 @@ export function installGoalI18nUX(input: PluginInput, hooks: PluginHooks): void 
           // narrow explicit resume intent and routes it through /goal resume.
           // Normalize multilingual intent into that path rather than creating a
           // second persistence mutation path here.
-          replaceParts(output.parts, "continue")
-          await chatHook(event, output)
+          await chatHook(event, withText(output, "continue"))
           return
         }
       } catch (error) {

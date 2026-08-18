@@ -364,4 +364,4 @@ First stable release.
 
 ## 0.1.0-beta.1 / 0.1.0-beta.2
 
-Public prerelease line used to harden verification, persistence, restart recovery, storage integrity/concurrency, Goal Contracts, Plan safety, delegated-task coordination, and release gates before 1.0.0-beta.1 / 0.1.0-beta.2.
+Public prerelease line used to harden verification, persistence, restart recovery, storage integrity/concurrency, Goal Contracts, Plan safety, delegated-task coordination, and release gates before 1.0.0.

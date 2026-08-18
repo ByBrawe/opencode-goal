@@ -6,6 +6,7 @@ import { installGoalContractUX } from "./opencode/contract-ux.js"
 import { installGoalTodoOrchestration } from "./opencode/todo-orchestration.js"
 import { installGoalSequence } from "./opencode/sequence.js"
 import { installTaskDeferral } from "./opencode/task-deferral.js"
+import { installShellProgress } from "./opencode/shell-progress.js"
 import { installRestrictedAgentSafety } from "./opencode/agent-boundary.js"
 import { installHostLimitHandling } from "./opencode/host-limits.js"
 import { preferSynchronousSessionPrompt } from "./opencode/client-compat.js"
@@ -40,6 +41,10 @@ export default async function OpenCodeGoalPlugin(
   // Task deferral sits below the restricted-agent wrapper so Plan safety always
   // wins before a delegated-task idle suppression decision is made.
   installTaskDeferral(input, hooks)
+  // Shell work can be the only durable work in a Goal turn (builds, generators,
+  // capture pipelines, filesystem moves). Bind completed shell actions to the
+  // current Goal revision so the no-progress guard does not misclassify them.
+  installShellProgress(input, hooks)
   installRestrictedAgentSafety(input, hooks)
   installHostLimitHandling(input, hooks)
   scheduleStartupRecovery(input, hooks, startupGoals)
@@ -66,6 +71,7 @@ export * from "./opencode/command.js"
 export * from "./opencode/audit-ux.js"
 export * from "./opencode/agent-boundary.js"
 export * from "./opencode/task-deferral.js"
+export * from "./opencode/shell-progress.js"
 export * from "./opencode/project-index.js"
 export * from "./opencode/sequence.js"
 export * from "./opencode/todo-orchestration.js"

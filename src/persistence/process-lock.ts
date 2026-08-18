@@ -44,6 +44,7 @@ export interface GoalStoreProcessLockInput {
 
 const POLL_MS = 20
 const SAFE_PATH_RACE_RETRIES = 3
+const LOCK_READ_ACCESS_RETRIES = 5
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -75,13 +76,27 @@ function validOwner(value: unknown): value is LockOwner {
     && path.basename(owner.candidateName) === owner.candidateName
 }
 
+function transientLockReadAccessError(error: unknown): boolean {
+  const code = String((error as NodeJS.ErrnoException)?.code ?? "")
+  return process.platform === "win32" && ["EPERM", "EACCES", "EBUSY"].includes(code)
+}
+
 async function readOwner(file: string): Promise<LockOwner | null> {
   let raw: string
-  try {
-    raw = await fs.readFile(file, "utf8")
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null
-    throw error
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      raw = await fs.readFile(file, "utf8")
+      break
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (code === "ENOENT") return null
+      // Windows can briefly deny opening a canonical hard-link while another
+      // process is publishing/removing the lock. Retry only access/share errors
+      // for a small bounded window. Persistent permission failures still escape
+      // unchanged, and malformed owner bytes remain fail-closed below.
+      if (!transientLockReadAccessError(error) || attempt >= LOCK_READ_ACCESS_RETRIES) throw error
+      await sleep(10 * (attempt + 1))
+    }
   }
 
   let value: unknown

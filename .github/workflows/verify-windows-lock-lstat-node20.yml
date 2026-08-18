@@ -1,0 +1,73 @@
+name: Verify Windows lock lstat Node20
+
+on:
+  push:
+    branches: [verify/windows-lock-lstat-node20]
+    paths:
+      - ".github/workflows/verify-windows-lock-lstat-node20.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    name: Windows Node 20 targeted lock regression
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: verify/windows-lock-lstat-node20
+          fetch-depth: 0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "20"
+          package-manager-cache: false
+      - name: Run exact targeted regression
+        shell: bash
+        run: |
+          set +e
+          npm install > install.log 2>&1
+          install_code=$?
+          build_code=999
+          test_code=999
+          if [ "$install_code" -eq 0 ]; then
+            npm run build > build.log 2>&1
+            build_code=$?
+          fi
+          if [ "$install_code" -eq 0 ] && [ "$build_code" -eq 0 ]; then
+            node --test test/process-lock-read-retry.test.mjs > test.log 2>&1
+            test_code=$?
+          fi
+          cat install.log || true
+          cat build.log || true
+          cat test.log || true
+          INSTALL_CODE="$install_code" BUILD_CODE="$build_code" TEST_CODE="$test_code" NODE_VERSION="$(node --version)" NPM_VERSION="$(npm --version)" node <<'NODE'
+          const fs = require('node:fs')
+          const installCode = Number(process.env.INSTALL_CODE)
+          const buildCode = Number(process.env.BUILD_CODE)
+          const testCode = Number(process.env.TEST_CODE)
+          fs.writeFileSync('.windows-lock-lstat-node20.json', JSON.stringify({
+            checkedAt: new Date().toISOString(),
+            sourceHead: 'c0447a761bb57f0c704a139d6c7c90870a06aa41',
+            node: process.env.NODE_VERSION,
+            npm: process.env.NPM_VERSION,
+            installCode,
+            buildCode,
+            testCode,
+            passed: installCode === 0 && buildCode === 0 && testCode === 0,
+          }, null, 2) + '\n')
+          NODE
+      - name: Persist evidence and remove temporary verifier
+        if: always()
+        shell: bash
+        run: |
+          rm .github/workflows/verify-windows-lock-lstat-node20.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add .windows-lock-lstat-node20.json .github/workflows/verify-windows-lock-lstat-node20.yml
+          git commit -m "test: record Windows lock lstat Node20 evidence"
+          git push origin HEAD:verify/windows-lock-lstat-node20
+      - name: Require targeted regression success
+        shell: bash
+        run: node -e "const r=require('fs').readFileSync('.windows-lock-lstat-node20.json','utf8'); if(!JSON.parse(r).passed) process.exit(1)"

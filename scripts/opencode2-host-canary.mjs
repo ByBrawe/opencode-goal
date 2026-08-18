@@ -114,6 +114,10 @@ async function main() {
   await writeFile(path.join(project, "README.md"), "# OpenCode 2 host canary\n")
   await writeFile(path.join(project, "opencode.json"), `${JSON.stringify({
     $schema: "https://opencode.ai/config.json",
+    plugins: [
+      "./.opencode/plugins/00-opencode-goals-v2-sentinel.js",
+      "./.opencode/plugins/opencode-goals-v2-canary.js",
+    ],
   }, null, 2)}\n`)
 
   const env = {
@@ -161,8 +165,8 @@ async function main() {
     const sentinelMarker = await fileTextIfPresent(sentinelMarkerFile)
     if (!ids.includes(sentinelID)) {
       throw new Error([
-        "OpenCode 2 resolved the project Location, but did not activate the minimal V2 { id, setup } plugin from .opencode/plugins/.",
-        "The canary intentionally does not require V1 plugin execution because V1 plugins are not part of the OpenCode 2 compatibility contract.",
+        "OpenCode 2 resolved the project Location, but did not activate the explicitly configured minimal V2 { id, setup } plugin.",
+        "The canary uses documented project-local `plugins` paths so activation is tested independently from directory auto-discovery behavior.",
         `V2 sentinel setup marker written: ${sentinelMarker === "loaded\n"}`,
         `Active V2 IDs: ${JSON.stringify(ids)}`,
         `Raw response: ${String(pluginResult.stdout ?? "")}`,
@@ -171,13 +175,13 @@ async function main() {
     if (sentinelMarker !== "loaded\n") {
       throw new Error([
         `OpenCode 2 listed ${sentinelID}, but its setup() side effect did not run.`,
-        "Discovery/registry visibility exists, but V2 setup activation is not proven for this beta host.",
+        "Registry visibility exists, but V2 setup activation is not proven for this beta host.",
         `Active V2 IDs: ${JSON.stringify(ids)}`,
         `Raw response: ${String(pluginResult.stdout ?? "")}`,
       ].join("\n"))
     }
     if (!ids.includes(pluginID)) {
-      throw new Error(`OpenCode 2 activated the V2 sentinel but not ${pluginID}; the Goals adapter module/setup is incompatible with this beta host. Active IDs: ${JSON.stringify(ids)}\nRaw response: ${String(pluginResult.stdout ?? "")}`)
+      throw new Error(`OpenCode 2 activated the explicitly configured V2 sentinel but not ${pluginID}; the Goals adapter module/setup is incompatible with this beta host. Active IDs: ${JSON.stringify(ids)}\nRaw response: ${String(pluginResult.stdout ?? "")}`)
     }
 
     console.log(JSON.stringify({
@@ -188,6 +192,7 @@ async function main() {
       health,
       projectDirectory: response.location.directory,
       projectID: response.location.project.id,
+      pluginLoadMode: "explicit-project-config",
       v2SentinelSetupExecuted: true,
       sentinelID,
       pluginID,

@@ -99,16 +99,13 @@ function collectText(value: unknown, depth = 0): string {
   return ""
 }
 
-function latestUserText(messages: unknown): string | undefined {
-  if (!Array.isArray(messages)) return undefined
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index]
-    const role = roleOfMessage(message)
-    if (role && role.toLowerCase() !== "user") continue
-    const text = collectText(message)
-    if (text) return text
-  }
-  return undefined
+function terminalUserText(messages: unknown): string | undefined {
+  if (!Array.isArray(messages) || messages.length === 0) return undefined
+  const message = messages[messages.length - 1]
+  const role = roleOfMessage(message)
+  if (!role || role.toLowerCase() !== "user") return undefined
+  const text = collectText(message)
+  return text || undefined
 }
 
 function commandArguments(text: string | undefined, marker: string): string | undefined {
@@ -374,7 +371,11 @@ export const OpenCode2GoalsExperimental = {
         return
       }
 
-      const rawArguments = commandArguments(latestUserText(event?.messages), capabilityMarker)
+      // The request hook runs before every model dispatch, including the dispatch
+      // after a tool result. Mint command control only when the command wrapper
+      // is the terminal user message; otherwise the already-consumed capability
+      // must stay consumed for the rest of that tool loop.
+      const rawArguments = commandArguments(terminalUserText(event?.messages), capabilityMarker)
       if (rawArguments === undefined) {
         pendingControls.delete(sessionID)
         removeControlTool(event)

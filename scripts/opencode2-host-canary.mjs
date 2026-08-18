@@ -8,6 +8,8 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const pluginID = "bybrawe.open-code-goals.v2-experimental"
 const sentinelID = "bybrawe.open-code-goals.v2-canary-sentinel"
+const ACTIVATION_ATTEMPTS = 20
+const ACTIVATION_DELAY_MS = 500
 
 function run(command, args, { cwd, env, allowFailure = false, timeout = 60_000 } = {}) {
   const result = spawnSync(command, args, {
@@ -74,6 +76,33 @@ async function failureLog(env) {
     }
   }
   return ""
+}
+
+function assertProjectLocation(response, project) {
+  if (response?._tag) {
+    throw new Error(`project-scoped /api/plugin rejected the Location: ${JSON.stringify(response)}`)
+  }
+  if (response?.location?.directory !== project) {
+    throw new Error(`OpenCode 2 resolved the wrong Location: expected ${project}, got ${String(response?.location?.directory)}`)
+  }
+  if (response?.location?.project?.id === "global") {
+    throw new Error(`OpenCode 2 classified the committed git canary workspace as global: ${JSON.stringify(response.location)}`)
+  }
+}
+
+async function waitForActivation(project, env, pluginPath, markerFile) {
+  let last = null
+  for (let attempt = 1; attempt <= ACTIVATION_ATTEMPTS; attempt += 1) {
+    const pluginResult = run("opencode2", ["api", "get", pluginPath], { cwd: project, env })
+    const response = parseJSONOutput(pluginResult, `GET /api/plugin at project Location (attempt ${attempt})`)
+    assertProjectLocation(response, project)
+    const ids = [...new Set(collectPluginIDs(response))]
+    const marker = await fileTextIfPresent(markerFile)
+    last = { pluginResult, response, ids, marker, attempt }
+    if (ids.includes(sentinelID) && ids.includes(pluginID) && marker === "loaded\n") return last
+    if (attempt < ACTIVATION_ATTEMPTS) await new Promise((resolve) => setTimeout(resolve, ACTIVATION_DELAY_MS))
+  }
+  return last
 }
 
 async function main() {
@@ -144,25 +173,13 @@ async function main() {
     if (!health) throw new Error("OpenCode 2 health API returned no output")
 
     const pluginPath = `/api/plugin?location%5Bdirectory%5D=${encodeURIComponent(project)}`
-    const pluginResult = run("opencode2", ["api", "get", pluginPath], { cwd: project, env })
-    const response = parseJSONOutput(pluginResult, "GET /api/plugin at project Location")
+    const activation = await waitForActivation(project, env, pluginPath, sentinelMarkerFile)
+    if (!activation) throw new Error("OpenCode 2 activation probe produced no response")
+    const { pluginResult, response, ids, marker: sentinelMarker, attempt } = activation
 
-    if (response?._tag) {
-      throw new Error(`project-scoped /api/plugin rejected the Location: ${JSON.stringify(response)}`)
-    }
-    if (response?.location?.directory !== project) {
-      throw new Error(`OpenCode 2 resolved the wrong Location: expected ${project}, got ${String(response?.location?.directory)}`)
-    }
-    if (response?.location?.project?.id === "global") {
-      throw new Error(`OpenCode 2 classified the committed git canary workspace as global: ${JSON.stringify(response.location)}`)
-    }
-
-    const ids = [...new Set(collectPluginIDs(response))]
-    const sentinelMarker = await fileTextIfPresent(sentinelMarkerFile)
     if (!ids.includes(sentinelID)) {
       throw new Error([
-        "OpenCode 2 resolved the project Location, but did not activate the minimal V2 { id, setup } plugin from .opencode/plugins/.",
-        "The canary intentionally does not require V1 plugin execution because V1 plugins are not part of the OpenCode 2 compatibility contract.",
+        `OpenCode 2 resolved the project Location but did not activate the minimal V2 { id, setup } sentinel after ${attempt} bounded probes.`,
         `V2 sentinel setup marker written: ${sentinelMarker === "loaded\n"}`,
         `Active V2 IDs: ${JSON.stringify(ids)}`,
         `Raw response: ${String(pluginResult.stdout ?? "")}`,
@@ -186,6 +203,7 @@ async function main() {
       node: process.version,
       opencode2Version: version,
       health,
+      activationAttempt: attempt,
       projectDirectory: response.location.directory,
       projectID: response.location.project.id,
       v2SentinelSetupExecuted: true,

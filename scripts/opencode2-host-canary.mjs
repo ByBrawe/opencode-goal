@@ -8,8 +8,8 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const pluginID = "bybrawe.open-code-goals.v2-experimental"
 const sentinelID = "bybrawe.open-code-goals.v2-canary-sentinel"
-const PLUGIN_READY_ATTEMPTS = 10
-const PLUGIN_READY_DELAY_MS = 500
+const PLUGIN_READINESS_ATTEMPTS = 2
+const PLUGIN_READINESS_RETRY_MS = 500
 
 function run(command, args, { cwd, env, allowFailure = false, timeout = 60_000 } = {}) {
   const result = spawnSync(command, args, {
@@ -53,10 +53,6 @@ function collectPluginIDs(value) {
   return [...direct, ...nested]
 }
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
 async function fileTextIfPresent(file) {
   try {
     return await readFile(file, "utf8")
@@ -80,6 +76,41 @@ async function failureLog(env) {
     }
   }
   return ""
+}
+
+function assertProjectLocation(response, project) {
+  if (response?._tag) {
+    throw new Error(`project-scoped /api/plugin rejected the Location: ${JSON.stringify(response)}`)
+  }
+  if (response?.location?.directory !== project) {
+    throw new Error(`OpenCode 2 resolved the wrong Location: expected ${project}, got ${String(response?.location?.directory)}`)
+  }
+  if (response?.location?.project?.id === "global") {
+    throw new Error(`OpenCode 2 classified the committed git canary workspace as global: ${JSON.stringify(response.location)}`)
+  }
+}
+
+async function readPluginActivation({ project, env, pluginPath, sentinelMarkerFile }) {
+  let last = null
+  for (let attempt = 1; attempt <= PLUGIN_READINESS_ATTEMPTS; attempt += 1) {
+    const pluginResult = run("opencode2", ["api", "get", pluginPath], { cwd: project, env })
+    const response = parseJSONOutput(pluginResult, `GET /api/plugin at project Location (attempt ${attempt})`)
+    assertProjectLocation(response, project)
+    const ids = [...new Set(collectPluginIDs(response))]
+    const sentinelMarker = await fileTextIfPresent(sentinelMarkerFile)
+    last = { attempt, pluginResult, response, ids, sentinelMarker }
+
+    if (ids.includes(sentinelID) && sentinelMarker === "loaded\n" && ids.includes(pluginID)) return last
+    if (attempt < PLUGIN_READINESS_ATTEMPTS) {
+      console.error([
+        `OpenCode 2 project plugin registry was not ready on attempt ${attempt}/${PLUGIN_READINESS_ATTEMPTS}; retrying once after ${PLUGIN_READINESS_RETRY_MS}ms.`,
+        `V2 sentinel setup marker written: ${sentinelMarker === "loaded\n"}`,
+        `Active V2 IDs: ${JSON.stringify(ids)}`,
+      ].join("\n"))
+      await new Promise((resolve) => setTimeout(resolve, PLUGIN_READINESS_RETRY_MS))
+    }
+  }
+  return last
 }
 
 async function main() {
@@ -150,69 +181,29 @@ async function main() {
     if (!health) throw new Error("OpenCode 2 health API returned no output")
 
     const pluginPath = `/api/plugin?location%5Bdirectory%5D=${encodeURIComponent(project)}`
-    let pluginResult = null
-    let response = null
-    let ids = []
-    let sentinelMarker = null
-    const activationAttempts = []
-
-    for (let attempt = 1; attempt <= PLUGIN_READY_ATTEMPTS; attempt += 1) {
-      pluginResult = run("opencode2", ["api", "get", pluginPath], { cwd: project, env })
-      response = parseJSONOutput(pluginResult, "GET /api/plugin at project Location")
-
-      if (response?._tag) {
-        throw new Error(`project-scoped /api/plugin rejected the Location: ${JSON.stringify(response)}`)
-      }
-      if (response?.location?.directory !== project) {
-        throw new Error(`OpenCode 2 resolved the wrong Location: expected ${project}, got ${String(response?.location?.directory)}`)
-      }
-      if (response?.location?.project?.id === "global") {
-        throw new Error(`OpenCode 2 classified the committed git canary workspace as global: ${JSON.stringify(response.location)}`)
-      }
-
-      ids = [...new Set(collectPluginIDs(response))]
-      sentinelMarker = await fileTextIfPresent(sentinelMarkerFile)
-      const sentinelListed = ids.includes(sentinelID)
-      const sentinelSetup = sentinelMarker === "loaded\n"
-      const adapterListed = ids.includes(pluginID)
-      activationAttempts.push({
-        attempt,
-        activePluginCount: ids.length,
-        sentinelListed,
-        sentinelSetup,
-        adapterListed,
-      })
-
-      if (sentinelListed && sentinelSetup && adapterListed) break
-      if (attempt < PLUGIN_READY_ATTEMPTS) await sleep(PLUGIN_READY_DELAY_MS)
-    }
+    const activation = await readPluginActivation({ project, env, pluginPath, sentinelMarkerFile })
+    if (!activation) throw new Error("OpenCode 2 plugin readiness probe produced no activation result")
+    const { attempt: activationAttempt, pluginResult, response, ids, sentinelMarker } = activation
 
     if (!ids.includes(sentinelID)) {
       throw new Error([
-        `OpenCode 2 did not activate the minimal V2 { id, setup } plugin after ${PLUGIN_READY_ATTEMPTS} bounded project-scoped readiness checks.`,
-        "The first /api/plugin response may legitimately precede project plugin activation; the canary retries the same service instead of treating that transient empty registry as a permanent incompatibility.",
+        `OpenCode 2 resolved the project Location, but did not activate the minimal V2 { id, setup } plugin after ${PLUGIN_READINESS_ATTEMPTS} bounded project-registry attempts.`,
+        "The canary intentionally does not require V1 plugin execution because V1 plugins are not part of the OpenCode 2 compatibility contract.",
         `V2 sentinel setup marker written: ${sentinelMarker === "loaded\n"}`,
         `Active V2 IDs: ${JSON.stringify(ids)}`,
-        `Activation attempts: ${JSON.stringify(activationAttempts)}`,
-        `Last raw response: ${String(pluginResult?.stdout ?? "")}`,
+        `Raw final response: ${String(pluginResult.stdout ?? "")}`,
       ].join("\n"))
     }
     if (sentinelMarker !== "loaded\n") {
       throw new Error([
-        `OpenCode 2 listed ${sentinelID}, but its setup() side effect did not run after the bounded readiness window.`,
+        `OpenCode 2 listed ${sentinelID}, but its setup() side effect did not run after ${PLUGIN_READINESS_ATTEMPTS} bounded project-registry attempts.`,
         "Discovery/registry visibility exists, but V2 setup activation is not proven for this beta host.",
         `Active V2 IDs: ${JSON.stringify(ids)}`,
-        `Activation attempts: ${JSON.stringify(activationAttempts)}`,
-        `Last raw response: ${String(pluginResult?.stdout ?? "")}`,
+        `Raw final response: ${String(pluginResult.stdout ?? "")}`,
       ].join("\n"))
     }
     if (!ids.includes(pluginID)) {
-      throw new Error([
-        `OpenCode 2 activated the V2 sentinel but not ${pluginID}; the Goals adapter module/setup is incompatible with this beta host.`,
-        `Active IDs: ${JSON.stringify(ids)}`,
-        `Activation attempts: ${JSON.stringify(activationAttempts)}`,
-        `Last raw response: ${String(pluginResult?.stdout ?? "")}`,
-      ].join("\n"))
+      throw new Error(`OpenCode 2 activated the V2 sentinel but not ${pluginID}; the Goals adapter module/setup is incompatible with this beta host. Active IDs: ${JSON.stringify(ids)}\nRaw response: ${String(pluginResult.stdout ?? "")}`)
     }
 
     console.log(JSON.stringify({
@@ -223,11 +214,12 @@ async function main() {
       health,
       projectDirectory: response.location.directory,
       projectID: response.location.project.id,
+      activationAttempt,
+      activationRetryDelayMs: activationAttempt > 1 ? PLUGIN_READINESS_RETRY_MS : 0,
       v2SentinelSetupExecuted: true,
       sentinelID,
       pluginID,
       activePluginIDs: ids,
-      activationAttempts,
     }, null, 2))
   } catch (error) {
     const logs = await failureLog(env)

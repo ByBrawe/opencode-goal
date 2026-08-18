@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const pluginID = "bybrawe.open-code-goals.v2-experimental"
 const sentinelID = "bybrawe.open-code-goals.v2-canary-sentinel"
+const discoverySentinelID = "bybrawe.open-code-goals.v2-discovery-sentinel"
 
 function run(command, args, { cwd, env, allowFailure = false, timeout = 60_000 } = {}) {
   const result = spawnSync(command, args, {
@@ -76,6 +77,16 @@ async function failureLog(env) {
   return ""
 }
 
+function markerPlugin(id, markerFile) {
+  return [
+    'import { writeFile } from "node:fs/promises"',
+    `export default { id: ${JSON.stringify(id)}, setup: async () => {`,
+    `  await writeFile(${JSON.stringify(markerFile)}, "loaded\\n", "utf8")`,
+    "} }",
+    "",
+  ].join("\n")
+}
+
 async function main() {
   const temp = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-host-"))
   const project = path.join(temp, "project")
@@ -84,29 +95,25 @@ async function main() {
   const data = path.join(home, ".local", "share")
   const state = path.join(home, ".local", "state")
   const opencodeDirectory = path.join(project, ".opencode")
-  const pluginDirectory = path.join(opencodeDirectory, "plugins")
+  const explicitDirectory = path.join(opencodeDirectory, "v2-canary")
+  const discoveryDirectory = path.join(opencodeDirectory, "plugins")
   const pluginFile = path.join(root, "dist", "opencode2", "experimental.js")
-  const sentinelMarkerFile = path.join(temp, "v2-sentinel-setup-loaded")
-  const adapterBridge = path.join(pluginDirectory, "opencode-goals-v2-canary.js")
-  const sentinelFile = path.join(pluginDirectory, "00-opencode-goals-v2-sentinel.js")
+  const sentinelMarkerFile = path.join(temp, "v2-explicit-sentinel-setup-loaded")
+  const discoveryMarkerFile = path.join(temp, "v2-discovery-sentinel-setup-loaded")
+  const adapterBridge = path.join(explicitDirectory, "opencode-goals-v2-canary.js")
+  const sentinelFile = path.join(explicitDirectory, "00-opencode-goals-v2-sentinel.js")
+  const discoverySentinelFile = path.join(discoveryDirectory, "00-opencode-goals-v2-discovery-sentinel.js")
 
   await Promise.all([
-    mkdir(pluginDirectory, { recursive: true }),
+    mkdir(explicitDirectory, { recursive: true }),
+    mkdir(discoveryDirectory, { recursive: true }),
     mkdir(config, { recursive: true }),
     mkdir(data, { recursive: true }),
     mkdir(state, { recursive: true }),
   ])
 
-  await writeFile(
-    sentinelFile,
-    [
-      'import { writeFile } from "node:fs/promises"',
-      `export default { id: ${JSON.stringify(sentinelID)}, setup: async () => {`,
-      `  await writeFile(${JSON.stringify(sentinelMarkerFile)}, "loaded\\n", "utf8")`,
-      "} }",
-      "",
-    ].join("\n"),
-  )
+  await writeFile(sentinelFile, markerPlugin(sentinelID, sentinelMarkerFile))
+  await writeFile(discoverySentinelFile, markerPlugin(discoverySentinelID, discoveryMarkerFile))
   await writeFile(
     adapterBridge,
     `export { default } from ${JSON.stringify(pathToFileURL(pluginFile).href)}\n`,
@@ -114,6 +121,10 @@ async function main() {
   await writeFile(path.join(project, "README.md"), "# OpenCode 2 host canary\n")
   await writeFile(path.join(project, "opencode.json"), `${JSON.stringify({
     $schema: "https://opencode.ai/config.json",
+    plugins: [
+      "./.opencode/v2-canary/00-opencode-goals-v2-sentinel.js",
+      "./.opencode/v2-canary/opencode-goals-v2-canary.js",
+    ],
   }, null, 2)}\n`)
 
   const env = {
@@ -159,25 +170,38 @@ async function main() {
 
     const ids = [...new Set(collectPluginIDs(response))]
     const sentinelMarker = await fileTextIfPresent(sentinelMarkerFile)
+    const discoveryMarker = await fileTextIfPresent(discoveryMarkerFile)
+    const discoveryListed = ids.includes(discoverySentinelID)
+    const discoverySetupExecuted = discoveryMarker === "loaded\n"
+
     if (!ids.includes(sentinelID)) {
       throw new Error([
-        "OpenCode 2 resolved the project Location, but did not activate the minimal V2 { id, setup } plugin from .opencode/plugins/.",
-        "The canary intentionally does not require V1 plugin execution because V1 plugins are not part of the OpenCode 2 compatibility contract.",
-        `V2 sentinel setup marker written: ${sentinelMarker === "loaded\n"}`,
+        "OpenCode 2 resolved the project Location, but did not activate the explicitly configured minimal V2 { id, setup } sentinel.",
+        "The required activation gate uses the documented `plugins` local-path configuration so upstream auto-discovery churn is measured separately.",
+        `Explicit sentinel setup marker written: ${sentinelMarker === "loaded\n"}`,
+        `Auto-discovery sentinel listed: ${discoveryListed}`,
+        `Auto-discovery sentinel setup marker written: ${discoverySetupExecuted}`,
         `Active V2 IDs: ${JSON.stringify(ids)}`,
         `Raw response: ${String(pluginResult.stdout ?? "")}`,
       ].join("\n"))
     }
     if (sentinelMarker !== "loaded\n") {
       throw new Error([
-        `OpenCode 2 listed ${sentinelID}, but its setup() side effect did not run.`,
-        "Discovery/registry visibility exists, but V2 setup activation is not proven for this beta host.",
+        `OpenCode 2 listed ${sentinelID}, but its explicitly configured setup() side effect did not run.`,
+        "Registry visibility exists, but V2 setup activation is not proven for this beta host.",
         `Active V2 IDs: ${JSON.stringify(ids)}`,
         `Raw response: ${String(pluginResult.stdout ?? "")}`,
       ].join("\n"))
     }
     if (!ids.includes(pluginID)) {
-      throw new Error(`OpenCode 2 activated the V2 sentinel but not ${pluginID}; the Goals adapter module/setup is incompatible with this beta host. Active IDs: ${JSON.stringify(ids)}\nRaw response: ${String(pluginResult.stdout ?? "")}`)
+      throw new Error([
+        `OpenCode 2 activated the explicitly configured V2 sentinel but not ${pluginID}.`,
+        "The Goals adapter module/setup is incompatible with this beta host; auto-discovery is not used to decide this assertion.",
+        `Auto-discovery sentinel listed: ${discoveryListed}`,
+        `Auto-discovery sentinel setup marker written: ${discoverySetupExecuted}`,
+        `Active IDs: ${JSON.stringify(ids)}`,
+        `Raw response: ${String(pluginResult.stdout ?? "")}`,
+      ].join("\n"))
     }
 
     console.log(JSON.stringify({
@@ -188,9 +212,15 @@ async function main() {
       health,
       projectDirectory: response.location.directory,
       projectID: response.location.project.id,
-      v2SentinelSetupExecuted: true,
+      explicitSentinelSetupExecuted: true,
       sentinelID,
       pluginID,
+      autoDiscovery: {
+        sentinelID: discoverySentinelID,
+        listed: discoveryListed,
+        setupExecuted: discoverySetupExecuted,
+        observed: discoveryListed && discoverySetupExecuted,
+      },
       activePluginIDs: ids,
     }, null, 2))
   } catch (error) {

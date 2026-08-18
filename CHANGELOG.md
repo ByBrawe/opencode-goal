@@ -7,9 +7,9 @@ All notable changes to **OpenCode Goals** are documented here.
 Shell completion and Windows Goal storage reliability hotfix.
 
 - Count Goal-owned `bash` activity as host progress only when OpenCode reports a finite numeric process exit; timeout/abort or missing exit metadata remains no-progress, while ordinary nonzero exits still count as completed diagnostic work.
-- Retry transient Windows `EPERM`, `EACCES`, and `EBUSY` access/share denials while reading canonical Goal process-lock owner metadata, using a small bounded backoff window.
-- Preserve fail-closed semantics across both paths: shell hashing/deduplication/revision ownership and completion evidence stay unchanged, while `ENOENT`, malformed lock metadata, CAS/lease ownership, POSIX behavior, and persistent Windows access failures keep their existing authority.
-- Add regressions proving three distinct timed-out shell turns still reach the normal stall pause and one transient Windows lock-read denial recovers to `lock_timeout` while a persistent denial still escapes unchanged.
+- Retry transient Windows `EPERM`, `EACCES`, and `EBUSY` access/share denials for both canonical Goal process-lock owner reads and canonical hard-link `lstat()` inspection, using the same small bounded backoff window.
+- Preserve fail-closed semantics across both paths: shell hashing/deduplication/revision ownership and completion evidence stay unchanged, while `ENOENT`, malformed lock metadata, symlink/junction safety, CAS/lease ownership, POSIX behavior, and persistent Windows access failures keep their existing authority.
+- Add regressions proving three distinct timed-out shell turns still reach the normal stall pause, transient Windows owner-read or `lstat()` denial recovers to normal `lock_timeout`, and persistent denial still escapes unchanged.
 
 ## 1.3.18 — 2026-08-18
 

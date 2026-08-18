@@ -152,10 +152,15 @@ test("foreground chat on an automatically paused Goal warns once without silentl
     persisted = await readOnlyGoal(root)
     assert.equal(persisted.status, "active")
     await bindCommandChat(hooks, resume, "resume-owned")
+    warnings = pausedChatGuidance(fake)
+    assert.equal(warnings.length, 1, "the explicit /goal resume command chat must not be classified as paused foreground chat")
 
     const resumed = await store.load("session-ux")
     assert.ok(resumed)
     await store.save(pauseGoal(resumed, reason))
+    warnings = pausedChatGuidance(fake)
+    assert.equal(warnings.length, 1, "persisting a new paused snapshot must not emit UI by itself")
+
     await foregroundChat(hooks, "devam et yine", "human-3")
     warnings = pausedChatGuidance(fake)
     assert.equal(warnings.length, 2, "a new pause after explicit resume should be allowed to warn again")

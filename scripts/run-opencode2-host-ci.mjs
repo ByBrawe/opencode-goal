@@ -28,7 +28,7 @@ const behaviorConfig = JSON.stringify({
     },
   },
 })
-run("node", ["scripts/opencode2-goal-behavior-canary.mjs"], {
+run("node", ["scripts/opencode2-goal-readonly-canary.mjs"], {
   env: {
     ...process.env,
     OPENCODE_CONFIG_CONTENT: behaviorConfig,

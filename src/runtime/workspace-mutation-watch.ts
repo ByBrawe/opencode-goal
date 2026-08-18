@@ -3,7 +3,7 @@ import { watch, type FSWatcher } from "node:fs"
 import { promises as fs } from "node:fs"
 import path from "node:path"
 
-const MAX_TOUCHED_PATHS = 2_048
+const MAX_TOUCHED_PATHS = 4_096
 const WATCH_SETTLE_MS = 10
 const FULL_HASH_BYTES = 64 * 1024
 const SAMPLE_BYTES = 4 * 1024

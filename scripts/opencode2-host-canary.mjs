@@ -8,7 +8,7 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const pluginID = "bybrawe.open-code-goals.v2-experimental"
 const sentinelID = "bybrawe.open-code-goals.v2-canary-sentinel"
-const PLUGIN_READY_ATTEMPTS = 10
+const PLUGIN_READY_ATTEMPTS = 2
 const PLUGIN_READY_DELAY_MS = 500
 
 function run(command, args, { cwd, env, allowFailure = false, timeout = 60_000 } = {}) {

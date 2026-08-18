@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto"
 import { promises as fs } from "node:fs"
 import path from "node:path"
-import type { EvidenceRecord, GoalState } from "../domain/types.js"
+import type { EvidenceRecord, GoalRequirement, GoalState } from "../domain/types.js"
 
 function assertInside(root: string, candidate: string): string {
   const base = path.resolve(root)
@@ -18,6 +18,14 @@ function addEvidence(goal: GoalState, evidence: EvidenceRecord): GoalState {
     progressRevision: evidence.trust === "agent" ? goal.progressRevision : goal.progressRevision + 1,
     updatedAt: evidence.createdAt,
   }
+}
+
+function resolveRequirement(goal: GoalState, selector: string): GoalRequirement | undefined {
+  const trimmed = selector.trim()
+  const exact = goal.requirements.find((item) => item.id === trimmed)
+  if (exact) return exact
+  if (!/^[1-9]\d*$/.test(trimmed)) return undefined
+  return goal.requirements[Number(trimmed) - 1]
 }
 
 export function recordAgentNote(goal: GoalState, input: { summary: string; requirementIDs?: string[]; now?: number }): GoalState {
@@ -61,7 +69,7 @@ export async function recordFileEvidence(goal: GoalState, input: {
   requirementID: string
   now?: number
 }): Promise<{ goal: GoalState; evidence: EvidenceRecord }> {
-  const requirement = goal.requirements.find((item) => item.id === input.requirementID)
+  const requirement = resolveRequirement(goal, input.requirementID)
   if (!requirement) throw new Error("requirement not found")
   if (requirement.verification !== "file" || !requirement.file) {
     throw new Error("requirement does not have a host-verifiable file contract")

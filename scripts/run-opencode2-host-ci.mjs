@@ -16,5 +16,7 @@ run("npm", ["install"])
 run("npm", ["run", "build"])
 run("npm", ["install", "-g", "@opencode-ai/cli@next"])
 run("opencode2", ["--version"])
+// Prove project-plugin activation/readiness first so a behavior failure below
+// is attributable to the real command/tool/session contract rather than startup.
 run("node", ["scripts/opencode2-host-canary.mjs"])
 run("node", ["scripts/opencode2-behavior-canary.mjs"])

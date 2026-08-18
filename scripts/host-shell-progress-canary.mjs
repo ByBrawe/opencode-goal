@@ -11,11 +11,16 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const isWindows = process.platform === "win32"
 const OBJECTIVE = "real host shell progress canary"
-const SHELL_COMMANDS = [
-  `node -e "process.stdout.write('SHELL_PROGRESS_1')"`,
-  `node -e "process.stdout.write('SHELL_PROGRESS_2')"`,
-  `node -e "process.stdout.write('SHELL_PROGRESS_3')"`,
-]
+const MODE = process.env.OPENCODE_GOAL_SHELL_CANARY_MODE === "repeated" ? "repeated" : "distinct"
+const REPEATED_SHELL_COMMAND = `node -e "process.stdout.write('SHELL_REPEAT')"`
+const SHELL_COMMANDS = MODE === "repeated"
+  ? Array.from({ length: 4 }, () => REPEATED_SHELL_COMMAND)
+  : [
+      `node -e "process.stdout.write('SHELL_PROGRESS_1')"`,
+      `node -e "process.stdout.write('SHELL_PROGRESS_2')"`,
+      `node -e "process.stdout.write('SHELL_PROGRESS_3')"`,
+    ]
+const EXPECT_PAUSE = MODE === "repeated"
 
 function resolveOpenCodeBinary() {
   if (!isWindows) return path.join(repoRoot, "node_modules", ".bin", "opencode")
@@ -289,7 +294,7 @@ function startProvider() {
         object: "chat.completion.chunk",
         created,
         model: "canary",
-        choices: [{ index: 0, delta: { role: "assistant", content: "HOLD_AFTER_THREE_SHELL_TURNS" }, finish_reason: null }],
+        choices: [{ index: 0, delta: { role: "assistant", content: "HOLD_AFTER_SHELL_TURNS" }, finish_reason: null }],
       })
       return
     }
@@ -338,7 +343,7 @@ async function waitFor(predicate, description, diagnostics, timeoutMs = 45_000) 
 }
 
 async function main() {
-  const workspace = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-shell-progress-canary-"))
+  const workspace = await mkdtemp(path.join(os.tmpdir(), `opencode-goal-shell-progress-${MODE}-`))
   const home = path.join(workspace, ".home")
   const projectConfig = path.join(workspace, ".opencode")
   const globalConfig = path.join(home, ".config", "opencode")
@@ -391,7 +396,7 @@ async function main() {
   server.stderr?.on("data", (chunk) => { serverLog = appendLog(serverLog, chunk) })
   const baseURL = `http://127.0.0.1:${port}`
   const directoryQuery = `directory=${encodeURIComponent(workspace)}`
-  const diagnostics = () => `provider=${JSON.stringify(provider.stats)}\ncommandTransportError=${String(commandTransportError ?? "none")}\nstate=${JSON.stringify(lastState, null, 2)}\nserver log:\n${serverLog}`
+  const diagnostics = () => `mode=${MODE}\nprovider=${JSON.stringify(provider.stats)}\ncommandTransportError=${String(commandTransportError ?? "none")}\nstate=${JSON.stringify(lastState, null, 2)}\nserver log:\n${serverLog}`
 
   const api = async (pathname, init = {}) => {
     const separator = pathname.includes("?") ? "&" : "?"
@@ -401,10 +406,10 @@ async function main() {
       headers: { "content-type": "application/json", ...(init.headers ?? {}) },
       signal: init.signal ?? AbortSignal.timeout(20_000),
     })
-    const text = await response.text()
-    if (!response.ok) throw new Error(`HTTP ${response.status}: ${text}`)
-    if (!text) return null
-    try { return JSON.parse(text) } catch { return text }
+    const responseText = await response.text()
+    if (!response.ok) throw new Error(`HTTP ${response.status}: ${responseText}`)
+    if (!responseText) return null
+    try { return JSON.parse(responseText) } catch { return responseText }
   }
 
   try {
@@ -412,7 +417,7 @@ async function main() {
     const sessionsBefore = await api("/session", { method: "GET", signal: AbortSignal.timeout(45_000) })
     assert.ok(Array.isArray(sessionsBefore?.data ?? sessionsBefore), "GET /session bootstrap probe did not return a session array")
 
-    const createdPayload = await api("/session", { method: "POST", body: JSON.stringify({ title: "opencode-goal shell progress canary" }) })
+    const createdPayload = await api("/session", { method: "POST", body: JSON.stringify({ title: `opencode-goal shell progress ${MODE} canary` }) })
     const session = createdPayload?.data ?? createdPayload
     const sessionID = String(session?.id ?? "")
     assert.ok(sessionID, `OpenCode did not create a session: ${JSON.stringify(createdPayload)}`)
@@ -430,45 +435,69 @@ async function main() {
       async () => {
         lastState = await readGoal(workspace)
         const shellFingerprints = (lastState?.progressFingerprints ?? []).filter((item) => /^shell:[a-f0-9]{64}$/.test(item))
+        if (EXPECT_PAUSE) {
+          return provider.stats.shellCalls === SHELL_COMMANDS.length
+            && provider.stats.shellTurnsFinished === SHELL_COMMANDS.length
+            && lastState?.status === "paused"
+            && lastState?.stalledTurns === 3
+            && shellFingerprints.length === 1
+        }
         return provider.stats.shellCalls === SHELL_COMMANDS.length
           && provider.stats.shellTurnsFinished === SHELL_COMMANDS.length
           && provider.stats.holdStarted === 1
           && shellFingerprints.length === SHELL_COMMANDS.length
       },
-      "three real shell-only Goal turns to complete without tripping the stall guard",
+      EXPECT_PAUSE
+        ? "four real repeated shell Goal turns to reach the three-turn stall guard"
+        : "three real distinct shell-only Goal turns to complete without tripping the stall guard",
       diagnostics,
     )
     await new Promise((resolve) => setTimeout(resolve, 250))
     lastState = await readGoal(workspace)
 
     const shellFingerprints = lastState.progressFingerprints.filter((item) => /^shell:[a-f0-9]{64}$/.test(item))
-    assert.equal(lastState.status, "active", `three distinct shell-only turns must keep the Goal active: ${diagnostics()}`)
-    assert.equal(lastState.progressRevision, SHELL_COMMANDS.length, `each distinct real shell turn should increment progress exactly once: ${JSON.stringify(lastState.progressFingerprints)}`)
-    assert.equal(lastState.observedProgressRevision, lastState.progressRevision, "the host must settle all three shell progress revisions at turn boundaries")
-    assert.equal(lastState.stalledTurns, 0, "three successful Goal-owned shell turns must keep the stall counter at zero")
-    assert.equal(shellFingerprints.length, SHELL_COMMANDS.length)
-    assert.equal(new Set(shellFingerprints).size, SHELL_COMMANDS.length, "three distinct shell commands must produce three distinct fingerprints")
-
     const shellNotes = lastState.progressNotes.filter((item) => item?.summary?.includes("Goal-owned shell command completed."))
-    assert.equal(shellNotes.length, SHELL_COMMANDS.length, `expected one generic host note per shell turn: ${JSON.stringify(lastState.progressNotes)}`)
+
+    if (EXPECT_PAUSE) {
+      assert.equal(lastState.status, "paused", `three repeated no-progress shell turns must pause the Goal: ${diagnostics()}`)
+      assert.equal(lastState.progressRevision, 1, "only the first occurrence of an identical shell command may count as progress")
+      assert.equal(lastState.observedProgressRevision, 1, "the single shell progress revision must remain settled")
+      assert.equal(lastState.stalledTurns, 3, "the three deduplicated repeated turns must reach the normal stall limit")
+      assert.match(lastState.stopReason ?? "", /3 continuation turns without host-observed progress/)
+      assert.equal(shellFingerprints.length, 1, "repeating one shell command must persist only one shell fingerprint")
+      assert.equal(shellNotes.length, 1, "repeating one shell command must persist only one shell progress note")
+      assert.equal(provider.stats.holdStarted, 0, "a paused Goal must not dispatch another autonomous continuation")
+    } else {
+      assert.equal(lastState.status, "active", `three distinct shell-only turns must keep the Goal active: ${diagnostics()}`)
+      assert.equal(lastState.progressRevision, SHELL_COMMANDS.length, `each distinct real shell turn should increment progress exactly once: ${JSON.stringify(lastState.progressFingerprints)}`)
+      assert.equal(lastState.observedProgressRevision, lastState.progressRevision, "the host must settle all three shell progress revisions at turn boundaries")
+      assert.equal(lastState.stalledTurns, 0, "three successful Goal-owned shell turns must keep the stall counter at zero")
+      assert.equal(shellFingerprints.length, SHELL_COMMANDS.length)
+      assert.equal(new Set(shellFingerprints).size, SHELL_COMMANDS.length, "three distinct shell commands must produce three distinct fingerprints")
+      assert.equal(shellNotes.length, SHELL_COMMANDS.length, `expected one generic host note per shell turn: ${JSON.stringify(lastState.progressNotes)}`)
+    }
+
     const persistedProgress = JSON.stringify({
       progressFingerprints: lastState.progressFingerprints,
       progressNotes: lastState.progressNotes,
     })
-    assert.doesNotMatch(persistedProgress, /SHELL_PROGRESS_[123]|process\.stdout|node -e/, "raw shell command text must not be persisted in progress state")
+    assert.doesNotMatch(persistedProgress, /SHELL_PROGRESS_[123]|SHELL_REPEAT|process\.stdout|node -e/, "raw shell command text must not be persisted in progress state")
     assert.equal(server.exitCode, null, `OpenCode server exited during shell-progress assertions: ${diagnostics()}`)
 
     console.log(JSON.stringify({
       ok: true,
+      mode: MODE,
       platform: process.platform,
       sessionID,
       shellCalls: provider.stats.shellCalls,
       shellTurnsFinished: provider.stats.shellTurnsFinished,
       holdStarted: provider.stats.holdStarted,
+      status: lastState.status,
       progressRevision: lastState.progressRevision,
       observedProgressRevision: lastState.observedProgressRevision,
       progressFingerprints: lastState.progressFingerprints,
       stalledTurns: lastState.stalledTurns,
+      stopReason: lastState.stopReason ?? null,
       commandTransportError: commandTransportError ? String(commandTransportError) : null,
     }, null, 2))
 

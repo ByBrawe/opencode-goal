@@ -12,7 +12,7 @@ permissions:
 jobs:
   progress:
     name: Host progress (${{ matrix.os }})
-    timeout-minutes: 15
+    timeout-minutes: 18
     strategy:
       fail-fast: false
       matrix:
@@ -52,7 +52,7 @@ jobs:
           OPENCODE_PRINT_LOGS: "1"
           OPENCODE_LOG_LEVEL: DEBUG
           OPENCODE_CONFIG_CONTENT: '{"permission":{"external_directory":"allow"}}'
-      - name: Run real host shell progress canary
+      - name: Run real host distinct-shell progress canary
         id: shell-canary
         shell: bash
         run: |
@@ -65,6 +65,20 @@ jobs:
           OPENCODE_PRINT_LOGS: "1"
           OPENCODE_LOG_LEVEL: DEBUG
           OPENCODE_CONFIG_CONTENT: '{"permission":{"external_directory":"allow"}}'
+      - name: Run real host repeated-shell stall canary
+        id: shell-repeat-canary
+        shell: bash
+        run: |
+          set +e
+          node --import ./scripts/host-canary-bootstrap.mjs scripts/host-shell-progress-canary.mjs > shell-repeat-canary.log 2>&1
+          code=$?
+          cat shell-repeat-canary.log
+          exit $code
+        env:
+          OPENCODE_GOAL_SHELL_CANARY_MODE: repeated
+          OPENCODE_PRINT_LOGS: "1"
+          OPENCODE_LOG_LEVEL: DEBUG
+          OPENCODE_CONFIG_CONTENT: '{"permission":{"external_directory":"allow"}}'
       - name: Upload failure diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
@@ -73,4 +87,5 @@ jobs:
           path: |
             progress-canary.log
             shell-progress-canary.log
+            shell-repeat-canary.log
           if-no-files-found: error

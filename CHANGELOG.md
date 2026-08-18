@@ -153,7 +153,7 @@ OpenCode npm-plugin loading hotfix.
 - Fixed the published plugin failing to load while the managed `/goal` command bridge was still discoverable.
 - Moved `@opencode-ai/plugin`, which is imported by the compiled plugin at runtime, into production `dependencies` so OpenCode's isolated npm-plugin cache installs it with the package.
 - Hardened package smoke so the tarball must import successfully in a production-only clean consumer without pre-installing the OpenCode SDK as a separate peer fixture.
-- The managed command bridge remains a fail-visible diagnostic: if the plugin cannot intercept it, it tells the user the plugin did not load instead of silently executing the requested Goal as a normal prompt.
+- The managed command bridge remains a fail-visible diagnostic: if the plugin cannot intercept `/goal`, it tells the user the plugin did not load instead of silently executing the requested Goal as a normal prompt.
 
 ## 1.3.3 — 2026-08-11
 

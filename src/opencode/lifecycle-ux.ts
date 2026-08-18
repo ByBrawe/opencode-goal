@@ -61,6 +61,7 @@ export function installGoalLifecycleUX(input: PluginInput, hooks: PluginHooks): 
 
   const store = new GoalStore(input.directory)
   const translations = new Map<string, PromptTranslation>()
+  const commandOutputs = new Map<string, string>()
   const pausedChatNotices = new Map<string, string>()
 
   hooks["command.execute.before"] = async (event: any, output: any) => {
@@ -111,6 +112,13 @@ export function installGoalLifecycleUX(input: PluginInput, hooks: PluginHooks): 
 
     await commandHook(event, output)
     if (["create", "edit", "resume", "clear"].includes(parsed.action)) pausedChatNotices.delete(event.sessionID)
+
+    // `noReply` is command-hook metadata and is not guaranteed to survive into
+    // the later chat.message payload. Remember the concrete command response so
+    // doctor/status/contract/history and lifecycle command messages are never
+    // misclassified as ordinary foreground steering by this outer UX wrapper.
+    const commandOutput = textFromParts(output?.parts ?? [])
+    if (commandOutput) commandOutputs.set(event.sessionID, commandOutput)
   }
 
   hooks["chat.message"] = async (event: any, output: any) => {
@@ -125,10 +133,20 @@ export function installGoalLifecycleUX(input: PluginInput, hooks: PluginHooks): 
       return
     }
 
+    const commandOutput = commandOutputs.get(event.sessionID)
+    if (commandOutput) {
+      commandOutputs.delete(event.sessionID)
+      if (shown === commandOutput) {
+        await chatHook(event, output)
+        return
+      }
+    }
+
     await chatHook(event, output)
 
-    // Read-only/status commands and host-generated synthetic task notifications
-    // are not foreground user steering. Do not nag on those internal messages.
+    // Host-generated synthetic task notifications are not foreground user
+    // steering. `noReply` is kept as a best-effort extra signal, but command
+    // ownership above does not rely on it crossing the host hook boundary.
     if ((output as any)?.noReply === true || isSyntheticHostMessage(output?.parts ?? [])) return
 
     const goal = await store.load(event.sessionID)

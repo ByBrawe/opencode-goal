@@ -95,8 +95,8 @@
       "category": "opencode2-experimental",
       "weight": 3,
       "testFile": "test/opencode2-sequence-boundary.test.mjs",
-      "testName": "V2 sequence controls fail closed instead of creating or advancing stable V1 queue state",
-      "expected": "Stable V1 ordered-sequence controls remain unavailable in the experimental V2 adapter and never create or mutate live Goal state."
+      "testName": "V2 sequence and lifecycle controls stay read-only and never create or advance Goal state",
+      "expected": "Experimental OpenCode 2 sequence and lifecycle controls stay read-only and never create, mutate, or advance stable Goal state while the host promotion gate remains blocked."
     }
   ]
 }

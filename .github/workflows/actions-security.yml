@@ -40,7 +40,8 @@ jobs:
           cd "$VERIFY_DIR"
 
           TARBALL="$(npm pack --silent --ignore-scripts "$PACKAGE" --registry="$REGISTRY")"
-          tar -tzf "$TARBALL" | grep -qx 'package/dist/opencode/shell-progress.js'
+          tar -tzf "$TARBALL" > tar-contents.txt
+          grep -Fxq 'package/dist/opencode/shell-progress.js' tar-contents.txt
 
           INSTALLED_VERSION="$(npm exec --yes --package="$PACKAGE" -- opencode-goal --version)"
           test "$INSTALLED_VERSION" = "$EXPECTED"

@@ -99,16 +99,12 @@ function collectText(value: unknown, depth = 0): string {
   return ""
 }
 
-function latestUserText(messages: unknown): string | undefined {
-  if (!Array.isArray(messages)) return undefined
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index]
-    const role = roleOfMessage(message)
-    if (role && role.toLowerCase() !== "user") continue
-    const text = collectText(message)
-    if (text) return text
-  }
-  return undefined
+function currentUserText(messages: unknown): string | undefined {
+  if (!Array.isArray(messages) || messages.length === 0) return undefined
+  const message = messages[messages.length - 1]
+  if (roleOfMessage(message)?.toLowerCase() !== "user") return undefined
+  const text = collectText(message)
+  return text || undefined
 }
 
 function commandArguments(text: string | undefined, marker: string): string | undefined {
@@ -374,7 +370,11 @@ export const OpenCode2GoalsExperimental = {
         return
       }
 
-      const rawArguments = commandArguments(latestUserText(event?.messages), capabilityMarker)
+      // A request hook runs before every model dispatch, including the dispatch
+      // that follows a tool result. Authorize lifecycle control only while the
+      // transformed /goal command itself is the current user message; otherwise
+      // the already-consumed capability could be re-armed on the same command turn.
+      const rawArguments = commandArguments(currentUserText(event?.messages), capabilityMarker)
       if (rawArguments === undefined) {
         pendingControls.delete(sessionID)
         removeControlTool(event)

@@ -2,6 +2,16 @@
 
 All notable changes to **OpenCode Goals** are documented here.
 
+## 1.3.23 — 2026-08-18
+
+Multilingual core UX and semantic-verifier evidence resilience release.
+
+- Add 25 locale packs for stable core Goal command/sidebar labels, with environment/OS locale detection, English fallback, and unchanged canonical `/goal` subcommand names for script and host compatibility.
+- Recognize short explicit resume intent across the supported languages while continuing to route lifecycle control through the existing guarded `/goal resume` chain instead of mutating Goal state directly.
+- Harden semantic-verifier file corroboration against model/tool rendering artifacts such as line-numbered read output by conservatively normalizing only literal quote wrappers/prefixes before re-reading the current file.
+- When a verifier supplies a malformed root/file citation, recover only through exactly one current passing host file proof whose declared `contains` token matches and whose stored SHA-256 still equals the current file; unrelated hallucinated quotes, stale or ambiguous evidence, and path escapes remain fail-closed.
+- Add regressions for line-numbered verifier quotes, malformed root citations backed by fresh host evidence, unrelated hallucinated quote rejection, all 25 locales, multilingual resume intent, and localized command/sidebar ownership behavior.
+
 ## 1.3.22 — 2026-08-18
 
 Experimental OpenCode 2 fail-closed safety release.

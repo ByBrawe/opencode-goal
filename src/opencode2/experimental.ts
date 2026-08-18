@@ -33,7 +33,7 @@ export interface OpenCode2ExperimentalContext {
   }
   session: {
     get(input: { sessionID: string }): unknown | Promise<unknown>
-    hook(name: string, callback: (event: any) => void | Promise<void>): unknown | Promise<unknown>
+    hook(name: "context", callback: (event: any) => void | Promise<void>): unknown | Promise<unknown>
   }
   tool: {
     transform(callback: (tools: any) => void | Promise<void>): unknown | Promise<unknown>
@@ -333,6 +333,12 @@ export const OpenCode2GoalsExperimental = {
     const pendingControls = new Map<string, PendingControl>()
 
     await ctx.command.transform((commands) => {
+      // OpenCode 2 command transforms may only update commands that already
+      // exist in the host registry. Project commands are sourced from config
+      // (for example .opencode/commands/goal.md); a plugin cannot add one here.
+      // Missing command transport must therefore disable only the /goal wrapper,
+      // not crash plugin setup and hide the otherwise valid tools/hooks.
+      if (typeof commands?.get !== "function" || !commands.get("goal")) return
       commands.update("goal", (command: any) => {
         command.description = "Manage a persistent OpenCode Goal (experimental OpenCode 2 adapter)."
         command.template = `${V2_COMMAND_PREAMBLE}\n${capabilityMarker}\n$ARGUMENTS`
@@ -367,7 +373,7 @@ export const OpenCode2GoalsExperimental = {
       }, { codemode: false })
     })
 
-    const handleRequest = async (event: any) => {
+    const handleContext = async (event: any) => {
       const sessionID = sessionIDFromEvent(event)
       if (!sessionID) {
         removeControlTool(event)
@@ -406,13 +412,10 @@ export const OpenCode2GoalsExperimental = {
       appendSystemContext(event, experimentalContext(goal))
     }
 
-    await ctx.session.hook("request", handleRequest)
-    try {
-      await ctx.session.hook("context", handleRequest)
-    } catch {
-      // Some earlier V2 prototypes exposed this hook name. Keep it best-effort
-      // without making it part of the current-host activation requirement.
-    }
+    // OpenCode 2's current beta contract exposes mutable model-dispatch state
+    // through the `context` session hook. Unknown historical hook names must not
+    // be probed during setup because a setup failure removes the whole plugin.
+    await ctx.session.hook("context", handleContext)
 
     return () => pendingControls.clear()
   },

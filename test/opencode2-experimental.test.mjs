@@ -9,6 +9,8 @@ import OpenCode2GoalsExperimental, {
 } from "../dist/opencode2/experimental.js"
 import { GoalStore } from "../dist/persistence/store.js"
 
+let requestSequence = 0
+
 function fakeV2Context(directory) {
   const commands = new Map()
   const tools = new Map()
@@ -69,6 +71,7 @@ async function runRequest(host, {
   sessionID,
   agent = "build",
   text,
+  messageID = `user-v2-${++requestSequence}`,
   system = ["base system"],
 } = {}) {
   const event = {
@@ -76,20 +79,24 @@ async function runRequest(host, {
     agent,
     system,
     tools: requestTools(),
-    messages: [{ role: "user", content: text }],
+    messages: [{ id: messageID, role: "user", content: text }],
   }
-  await host.hooks.get("request")(event)
+  const hook = host.hooks.get("context") ?? host.hooks.get("request")
+  assert.equal(typeof hook, "function")
+  await hook(event)
   return event
 }
 
 async function runGoalCommand(host, rawArguments, {
   sessionID = "v2-session",
   agent = "build",
+  messageID,
 } = {}) {
   const event = await runRequest(host, {
     sessionID,
     agent,
     text: commandMessage(host, rawArguments),
+    ...(messageID ? { messageID } : {}),
   })
   assert.ok(event.tools.opencode_goals_v2_control, "authorized /goal request must retain the control tool")
   return await host.tools.get("opencode_goals_v2_control").definition.execute(
@@ -98,7 +105,7 @@ async function runGoalCommand(host, rawArguments, {
   )
 }
 
-test("experimental V2 plugin registers an isolated command, direct tools, and request hook", async () => {
+test("experimental V2 plugin registers an isolated command, direct tools, and current context hook", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-"))
   try {
     const host = fakeV2Context(root)
@@ -115,7 +122,8 @@ test("experimental V2 plugin registers an isolated command, direct tools, and re
 
     assert.equal(host.tools.get("opencode_goals_v2_control")?.options?.codemode, false)
     assert.equal(host.tools.get("opencode_goals_v2_get")?.options?.codemode, false)
-    assert.equal(typeof host.hooks.get("request"), "function")
+    assert.equal(typeof host.hooks.get("context"), "function")
+    assert.equal(host.hooks.get("request"), undefined)
     assert.equal(typeof cleanup, "function")
     cleanup()
   } finally {
@@ -123,7 +131,7 @@ test("experimental V2 plugin registers an isolated command, direct tools, and re
   }
 })
 
-test("V2 control is request-scoped exact-argument-bound and single-use", async () => {
+test("V2 control is exact-argument-bound and single-use across repeated model dispatches", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-capability-"))
   try {
     const host = fakeV2Context(root)
@@ -160,9 +168,12 @@ test("V2 control is request-scoped exact-argument-bound and single-use", async (
     )
     assert.deepEqual(await new GoalStore(root).load(sessionID), before)
 
+    const commandText = commandMessage(host, "status")
+    const commandMessageID = "user-status-command-1"
     const exact = await runRequest(host, {
       sessionID,
-      text: commandMessage(host, "status"),
+      text: commandText,
+      messageID: commandMessageID,
     })
     assert.ok(exact.tools.opencode_goals_v2_control)
     const first = await host.tools.get("opencode_goals_v2_control").definition.execute(
@@ -170,6 +181,18 @@ test("V2 control is request-scoped exact-argument-bound and single-use", async (
       { sessionID, agent: "build", messageID: "assistant-exact", callID: "call-exact" },
     )
     assert.match(first.content, /Goal: ship docs/)
+
+    const toolResultRedispatch = await runRequest(host, {
+      sessionID,
+      text: commandText,
+      messageID: commandMessageID,
+    })
+    assert.equal(
+      toolResultRedispatch.tools.opencode_goals_v2_control,
+      undefined,
+      "the same command user message must not re-arm control after its first tool execution",
+    )
+    assert.ok(toolResultRedispatch.tools.opencode_goals_v2_get)
     await assert.rejects(
       host.tools.get("opencode_goals_v2_control").definition.execute(
         { arguments: "status" },
@@ -177,6 +200,48 @@ test("V2 control is request-scoped exact-argument-bound and single-use", async (
       ),
       /no matching single-use \/goal command capability/i,
     )
+
+    const freshSameText = await runRequest(host, {
+      sessionID,
+      text: commandText,
+      messageID: "user-status-command-2",
+    })
+    assert.ok(
+      freshSameText.tools.opencode_goals_v2_control,
+      "a new user message may intentionally run the same /goal command text again",
+    )
+    const second = await host.tools.get("opencode_goals_v2_control").definition.execute(
+      { arguments: "status" },
+      { sessionID, agent: "build", messageID: "assistant-fresh", callID: "call-fresh" },
+    )
+    assert.match(second.content, /Goal: ship docs/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("V2 command capability fails closed when the host omits the user message identity", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-no-message-id-"))
+  try {
+    const host = fakeV2Context(root)
+    await OpenCode2GoalsExperimental.setup(host.ctx)
+    const event = {
+      sessionID: "v2-no-message-id",
+      agent: "build",
+      system: ["base system"],
+      tools: requestTools(),
+      messages: [{ role: "user", content: commandMessage(host, "ship docs") }],
+    }
+    await host.hooks.get("context")(event)
+    assert.equal(event.tools.opencode_goals_v2_control, undefined)
+    await assert.rejects(
+      host.tools.get("opencode_goals_v2_control").definition.execute(
+        { arguments: "ship docs" },
+        { sessionID: "v2-no-message-id", agent: "build", messageID: "assistant", callID: "call" },
+      ),
+      /no matching single-use \/goal command capability/i,
+    )
+    assert.equal(await new GoalStore(root).load("v2-no-message-id"), null)
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -237,7 +302,7 @@ test("unsupported V2 parity-sensitive controls are explicit and never mutate liv
   }
 })
 
-test("V2 request hook injects persisted state and pauses an active Goal selected through Plan", async () => {
+test("V2 context hook injects persisted state and pauses an active Goal selected through Plan", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-request-"))
   try {
     const host = fakeV2Context(root)

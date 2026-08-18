@@ -11,10 +11,13 @@ Before a stable release reaches `main`, the exact pull-request head should have 
 - `Real Host Progress`
 - `Real Restart Recovery`
 - `Release Readiness`
+- `Experimental OpenCode 2 Host`
 
 `CI` exercises the minimum supported OpenCode compatibility target, the current published OpenCode plugin SDK, and real OpenCode lifecycle/semantic/steering/Todo canaries.
 
 `Release Readiness` runs on Ubuntu and Windows with Node 20 and Node 24. It runs checks/tests/evals, builds the npm tarball, installs it into a clean production-only consumer without manually injecting runtime dependencies, imports the public API plus dedicated server/TUI entrypoints, and executes the packed installer artifact.
+
+`Experimental OpenCode 2 Host` is a non-promotion safety gate for the isolated V2 adapter. A green result proves only that the experimental adapter can activate safely on the pinned exact beta used by the workflow; it does not widen the stable `<2` OpenCode plugin compatibility claim or imply lifecycle parity/support.
 
 For installer releases, package smoke must verify all of these from the packed artifact:
 
@@ -66,7 +69,7 @@ npm run package:smoke -- --json package-smoke-report.json
 The current one-shot stable guard is:
 
 ```text
-1.3.21
+1.3.22
 ```
 
 Before `npm publish`, the workflow:
@@ -75,7 +78,7 @@ Before `npm publish`, the workflow:
 2. verifies the trusted-publishing npm runtime;
 3. checks that `package.json` equals the expected one-shot version;
 4. checks the npm registry and skips publication if the exact version already exists while still running registry/installer verification;
-5. when publication is still needed, requires the predecessor release (`1.3.20`) to exist and remain authoritative as npm `latest` with the expected installer bin before allowing `1.3.21` to publish.
+5. when publication is still needed, requires the predecessor release (`1.3.21`) to exist and remain authoritative as npm `latest` with the expected installer bin before allowing `1.3.22` to publish.
 
 Publication uses npm Trusted Publishing/OIDC under the `latest` tag; no long-lived npm token is stored in the workflow.
 
@@ -83,10 +86,10 @@ Publication uses npm Trusted Publishing/OIDC under the `latest` tag; no long-liv
 
 The workflow itself must verify all of these before the release is considered published:
 
-- the exact `1.3.21` package version is visible in the npm registry;
-- npm `latest` resolves to `1.3.21`;
+- the exact `1.3.22` package version is visible in the npm registry;
+- npm `latest` resolves to `1.3.22`;
 - `bin.opencode-goal` resolves to the expected `bin/opencode-goal.js` path;
-- a clean consumer can run `npm exec --yes --package=@bybrawe/opencode-goal@1.3.21 -- opencode-goal --version` and receives `1.3.21`.
+- a clean consumer can run `npm exec --yes --package=@bybrawe/opencode-goal@1.3.22 -- opencode-goal --version` and receives `1.3.22`.
 
 Then, from a clean config directory, run the public installer and verify:
 

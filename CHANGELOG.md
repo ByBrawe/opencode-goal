@@ -2,6 +2,17 @@
 
 All notable changes to **OpenCode Goals** are documented here.
 
+## 1.3.22 — 2026-08-18
+
+Experimental OpenCode 2 fail-closed safety release.
+
+- Fix exact-beta OpenCode 2 tool registration for the current one-object `tools.add(definition)` contract while retaining the legacy multi-argument prototype path only when the host explicitly exposes it.
+- Keep the experimental V2 lifecycle fail-closed/read-only on current hosts: remove model-visible command nonce/capability wrapping, stop registering the mutating `opencode_goals_v2_control` tool, and leave only read-only Goal inspection wired.
+- Retain `status` and `contract` through the compatibility control entrypoint, but refuse create/edit/pause/resume/clear/queue/next and other lifecycle mutations with an explicit read-only notice and no Goal storage writes.
+- Make experimental context/request presentation read-only, including under Plan, and defensively remove stale control-tool exposure without treating model-visible bridge text as authorization.
+- Record exact beta-17498 evidence that plugin tools are not materialized into the effective provider request and real `/goal` origin is lowered to forgeable ordinary user text with empty metadata; OpenCode 2 lifecycle promotion remains blocked on host capabilities tracked in #27, and stable compatibility remains `@opencode-ai/plugin >=1.4.0 <2`.
+- Add beta registration, no-mutation lifecycle/sequence, Plan/context, workspace fail-closed, and adversarial eval coverage; validate the hardening head with CI, Actions Security Gate, Real Host Progress, Real Restart Recovery, Release Readiness, and Experimental OpenCode 2 Host.
+
 ## 1.3.21 — 2026-08-18
 
 Semantic verifier timeout recovery release.

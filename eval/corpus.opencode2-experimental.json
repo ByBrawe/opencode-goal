@@ -9,8 +9,16 @@
       "category": "opencode2-experimental",
       "weight": 3,
       "testFile": "test/opencode2-experimental.test.mjs",
-      "testName": "V2 control is request-scoped exact-argument-bound and single-use",
-      "expected": "Ordinary model requests cannot see or invoke the mutating Goal control; an authorized /goal request binds exact raw arguments once, so changed or replayed tool input fails before storage mutation."
+      "testName": "V2 control is exact-argument-bound and single-use across repeated model dispatches",
+      "expected": "Ordinary model requests cannot see or invoke the mutating Goal control; an authorized /goal request binds exact raw arguments to one concrete user command message, and the same command message cannot re-arm control after its first tool execution."
+    },
+    {
+      "id": "opencode2.command-capability-missing-identity-fail-closed",
+      "category": "opencode2-experimental",
+      "weight": 3,
+      "testFile": "test/opencode2-experimental.test.mjs",
+      "testName": "V2 command capability fails closed when the host omits the user message identity",
+      "expected": "If the V2 host does not expose a stable user message identity for the transformed /goal command, the mutating control capability remains hidden and no Goal state can be created through that request."
     },
     {
       "id": "opencode2.plan-contract-paused-build-resume",

@@ -9,7 +9,7 @@ Shell-heavy Goal progress and diagnostics release.
 - Count completed Goal-owned `bash` tool calls as host-observed activity for the no-progress guard without turning shell activity into completion evidence.
 - Bind shell activity to the active Goal ID and revision, reject stale completions after Goal edits, deduplicate identical normalized commands by SHA-256, and never persist raw command text in progress notes.
 - Add active Goal session-lease diagnostics plus same-project parallel-session isolation coverage.
-- Add a deterministic real-OpenCode shell-progress canary on Ubuntu and Windows; stable V1 completion/verifier requirements remain unchanged.
+- Keep experimental OpenCode 2 discovery/activation probes isolated from the stable V1 support contract.
 
 ## 1.3.16 — 2026-08-14
 
@@ -44,7 +44,7 @@ npm installer publication-verification hardening release.
 
 - Canonicalize the packaged installer bin path and require it in package/release checks.
 - Harden scoped OpenCode session bootstrap on Windows.
-- Add npm registry visibility retries plus explicit clean-consumer `npm exec` verification of the published installer.
+- Add npm registry visibility retries for the published installer manifest.
 
 ## 1.3.12 — 2026-08-12
 
@@ -146,7 +146,7 @@ Installation, command-discovery, removal, and documentation patch release.
 - Made `npx -y @bybrawe/opencode-goal@latest` the primary README install/update path.
 - The installer now creates a managed global `commands/goal.md`, matching OpenCode's supported custom-command discovery path so `/goal` appears reliably in CLI/TUI command lists.
 - The managed command is a diagnostic bridge: if the Goal plugin fails to intercept it, the fallback prompt tells the user the plugin did not load instead of silently treating `/goal` arguments as ordinary work.
-- Installer refuses to overwrite a user-owned global goal command before mutating config and continues to preserve unrelated OpenCode config/JSONC content.
+- Installer refuses to overwrite a user-owned `commands/goal.md` and continues to preserve unrelated OpenCode config/JSONC content.
 - Existing package entries remain normalized to one exact `@bybrawe/opencode-goal@<installed-version>` pin to avoid stale package-cache resolution.
 
 ### Uninstall

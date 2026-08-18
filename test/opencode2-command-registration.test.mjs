@@ -47,6 +47,7 @@ function strictV2Context(directory, { seedGoal = false } = {}) {
           return { id: sessionID, location: { directory } }
         },
         async hook(name, callback) {
+          if (name !== "context") throw new Error(`unsupported V2 session hook: ${name}`)
           hooks.set(name, callback)
         },
       },
@@ -75,7 +76,8 @@ test("V2 setup stays active when the project has not declared a goal command", a
     assert.equal(host.commands.has("goal"), false, "a transform hook must not fabricate a new V2 command")
     assert.ok(host.tools.has("opencode_goals_v2_control"), "tool setup should still complete")
     assert.ok(host.tools.has("opencode_goals_v2_get"), "read-only Goal tool should still be available")
-    assert.equal(typeof host.hooks.get("request"), "function", "request hook setup should still complete")
+    assert.equal(typeof host.hooks.get("context"), "function", "documented context hook setup should still complete")
+    assert.equal(host.hooks.get("request"), undefined, "historical request hook must not be registered")
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -95,6 +97,7 @@ test("V2 setup transforms a project-declared goal command in place", async () =>
     assert.match(command.template, /__OPENCODE_GOALS_V2_COMMAND_[0-9a-f-]+__/i)
     assert.match(command.template, /\$ARGUMENTS/)
     assert.equal(command.subtask, false)
+    assert.equal(typeof host.hooks.get("context"), "function")
   } finally {
     await rm(root, { recursive: true, force: true })
   }

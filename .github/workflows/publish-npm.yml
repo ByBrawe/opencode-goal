@@ -53,10 +53,10 @@ jobs:
             exit 0
           fi
 
-          echo "verify=true" >> "$GITHUB_OUTPUT"
           if npm view "@bybrawe/opencode-goal@$EXPECTED" version --registry=https://registry.npmjs.org >/dev/null 2>&1; then
             echo "@bybrawe/opencode-goal@$EXPECTED is already published; publish will be skipped but registry verification will still run."
             echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "verify=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -87,6 +87,7 @@ jobs:
           fi
 
           echo "publish=true" >> "$GITHUB_OUTPUT"
+          echo "verify=true" >> "$GITHUB_OUTPUT"
       - name: Install release dependencies
         if: steps.release.outputs.publish == 'true'
         run: npm install

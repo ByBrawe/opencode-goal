@@ -93,6 +93,7 @@ async function main() {
   const pluginDirectory = path.join(opencodeDirectory, "plugins")
   const pluginFile = path.join(root, "dist", "opencode2", "experimental.js")
   const sentinelMarkerFile = path.join(temp, "v2-sentinel-setup-loaded")
+  const setupBoundaryTraceFile = path.join(temp, "v2-setup-boundary-trace.jsonl")
   const adapterBridge = path.join(pluginDirectory, "opencode-goals-v2-canary.js")
   const sentinelFile = path.join(pluginDirectory, "00-opencode-goals-v2-sentinel.js")
 
@@ -115,7 +116,79 @@ async function main() {
   )
   await writeFile(
     adapterBridge,
-    `export { default } from ${JSON.stringify(pathToFileURL(pluginFile).href)}\n`,
+    [
+      'import { appendFile } from "node:fs/promises"',
+      `import target from ${JSON.stringify(pathToFileURL(pluginFile).href)}`,
+      `const traceFile = ${JSON.stringify(setupBoundaryTraceFile)}`,
+      "async function trace(event) {",
+      '  await appendFile(traceFile, `${JSON.stringify(event)}\\n`, "utf8")',
+      "}",
+      "function errorRecord(error) {",
+      '  return { name: error?.name ?? typeof error, message: error?.message ?? String(error) }',
+      "}",
+      "function wrapMethod(domainName, methodName, targetDomain, targetMethod) {",
+      "  return async function (...args) {",
+      '    const suffix = domainName === "session" && methodName === "hook" ? `:${String(args[0])}` : ""',
+      '    const boundary = `${domainName}.${methodName}${suffix}`',
+      '    await trace({ phase: "before", boundary })',
+      "    try {",
+      "      const result = await Reflect.apply(targetMethod, targetDomain, args)",
+      '      await trace({ phase: "after", boundary })',
+      "      return result",
+      "    } catch (error) {",
+      '      await trace({ phase: "error", boundary, error: errorRecord(error) })',
+      "      throw error",
+      "    }",
+      "  }",
+      "}",
+      "function wrapDomain(domainName, value) {",
+      '  if (!value || (typeof value !== "object" && typeof value !== "function")) return value',
+      '  const methodNames = domainName === "command" || domainName === "tool" ? new Set(["transform"]) : domainName === "session" ? new Set(["hook"]) : new Set()',
+      "  return new Proxy(value, {",
+      "    get(targetDomain, prop, receiver) {",
+      "      const original = Reflect.get(targetDomain, prop, receiver)",
+      "      if (methodNames.has(String(prop)) && typeof original === \"function\") {",
+      "        return wrapMethod(domainName, String(prop), targetDomain, original)",
+      "      }",
+      "      return original",
+      "    },",
+      "  })",
+      "}",
+      "const diagnosticPlugin = {",
+      "  id: target.id,",
+      "  async setup(ctx) {",
+      "    await trace({",
+      '      phase: "setup-enter",',
+      "      domains: {",
+      "        command: Boolean(ctx?.command),",
+      '        commandTransform: typeof ctx?.command?.transform === "function",',
+      "        tool: Boolean(ctx?.tool),",
+      '        toolTransform: typeof ctx?.tool?.transform === "function",',
+      "        session: Boolean(ctx?.session),",
+      '        sessionHook: typeof ctx?.session?.hook === "function",',
+      "      },",
+      "    })",
+      "    const wrappedCtx = new Proxy(ctx, {",
+      "      get(targetCtx, prop, receiver) {",
+      '        if (prop === "command" || prop === "tool" || prop === "session") {',
+      "          return wrapDomain(String(prop), Reflect.get(targetCtx, prop, receiver))",
+      "        }",
+      "        return Reflect.get(targetCtx, prop, receiver)",
+      "      },",
+      "    })",
+      "    try {",
+      "      const cleanup = await target.setup(wrappedCtx)",
+      '      await trace({ phase: "setup-after" })',
+      "      return cleanup",
+      "    } catch (error) {",
+      '      await trace({ phase: "setup-error", error: errorRecord(error) })',
+      "      throw error",
+      "    }",
+      "  },",
+      "}",
+      "export default diagnosticPlugin",
+      "",
+    ].join("\n"),
   )
   await writeFile(path.join(project, "README.md"), "# OpenCode 2 host canary\n")
   await writeFile(path.join(project, "opencode.json"), `${JSON.stringify({
@@ -154,6 +227,7 @@ async function main() {
     let response = null
     let ids = []
     let sentinelMarker = null
+    let setupBoundaryTrace = null
     const activationAttempts = []
 
     for (let attempt = 1; attempt <= PLUGIN_READY_ATTEMPTS; attempt += 1) {
@@ -172,6 +246,7 @@ async function main() {
 
       ids = [...new Set(collectPluginIDs(response))]
       sentinelMarker = await fileTextIfPresent(sentinelMarkerFile)
+      setupBoundaryTrace = await fileTextIfPresent(setupBoundaryTraceFile)
       const sentinelListed = ids.includes(sentinelID)
       const sentinelSetup = sentinelMarker === "loaded\n"
       const adapterListed = ids.includes(pluginID)
@@ -181,6 +256,7 @@ async function main() {
         sentinelListed,
         sentinelSetup,
         adapterListed,
+        setupBoundaryTracePresent: Boolean(setupBoundaryTrace),
       })
 
       if (sentinelListed && sentinelSetup && adapterListed) break
@@ -194,6 +270,7 @@ async function main() {
         `V2 sentinel setup marker written: ${sentinelMarker === "loaded\n"}`,
         `Active V2 IDs: ${JSON.stringify(ids)}`,
         `Activation attempts: ${JSON.stringify(activationAttempts)}`,
+        `Setup boundary trace: ${setupBoundaryTrace ?? "<not written>"}`,
         `Last raw response: ${String(pluginResult?.stdout ?? "")}`,
       ].join("\n"))
     }
@@ -203,6 +280,7 @@ async function main() {
         "Discovery/registry visibility exists, but V2 setup activation is not proven for this beta host.",
         `Active V2 IDs: ${JSON.stringify(ids)}`,
         `Activation attempts: ${JSON.stringify(activationAttempts)}`,
+        `Setup boundary trace: ${setupBoundaryTrace ?? "<not written>"}`,
         `Last raw response: ${String(pluginResult?.stdout ?? "")}`,
       ].join("\n"))
     }
@@ -211,6 +289,7 @@ async function main() {
         `OpenCode 2 activated the V2 sentinel but not ${pluginID}; the Goals adapter module/setup is incompatible with this beta host.`,
         `Active IDs: ${JSON.stringify(ids)}`,
         `Activation attempts: ${JSON.stringify(activationAttempts)}`,
+        `Setup boundary trace: ${setupBoundaryTrace ?? "<not written>"}`,
         `Last raw response: ${String(pluginResult?.stdout ?? "")}`,
       ].join("\n"))
     }
@@ -228,8 +307,11 @@ async function main() {
       pluginID,
       activePluginIDs: ids,
       activationAttempts,
+      setupBoundaryTrace,
     }, null, 2))
   } catch (error) {
+    const setupBoundaryTrace = await fileTextIfPresent(setupBoundaryTraceFile)
+    if (setupBoundaryTrace) console.error(`OpenCode 2 setup boundary trace:\n${setupBoundaryTrace}`)
     const logs = await failureLog(env)
     if (logs) console.error(`OpenCode 2 server log tail:\n${logs}`)
     throw error

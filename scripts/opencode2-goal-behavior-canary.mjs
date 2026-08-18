@@ -330,7 +330,7 @@ async function main() {
       command: "goal",
       arguments: EXACT_ARGUMENTS,
       agent: "build",
-      model: "canary/canary",
+      model: { id: "canary", providerID: "canary" },
     })
 
     const store = new GoalStore(project)

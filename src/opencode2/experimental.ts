@@ -370,10 +370,10 @@ export const OpenCode2GoalsExperimental = {
         return
       }
 
-      // A request hook runs before every model dispatch, including the dispatch
-      // that follows a tool result. Authorize lifecycle control only while the
-      // transformed /goal command itself is the current user message; otherwise
-      // the already-consumed capability could be re-armed on the same command turn.
+      // The request/context hook runs before every model dispatch, including
+      // the dispatch that follows a tool result. Authorize lifecycle control
+      // only while the transformed /goal command itself is the current user
+      // message; otherwise the consumed capability could be re-armed.
       const rawArguments = commandArguments(currentUserText(event?.messages), capabilityMarker)
       if (rawArguments === undefined) {
         pendingControls.delete(sessionID)
@@ -406,13 +406,18 @@ export const OpenCode2GoalsExperimental = {
       appendSystemContext(event, experimentalContext(goal))
     }
 
-    await ctx.session.hook("request", handleRequest)
+    // Current OpenCode 2 documents the model-dispatch hook as "context".
+    // Earlier betas exposed "request". Register exactly one hook so the same
+    // command turn cannot be processed twice when a transitional host supports
+    // both names.
+    let contextRegistered = false
     try {
       await ctx.session.hook("context", handleRequest)
+      contextRegistered = true
     } catch {
-      // Some earlier V2 prototypes exposed this hook name. Keep it best-effort
-      // without making it part of the current-host activation requirement.
+      // Fall through to the older beta hook name below.
     }
+    if (!contextRegistered) await ctx.session.hook("request", handleRequest)
 
     return () => pendingControls.clear()
   },

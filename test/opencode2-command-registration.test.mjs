@@ -67,6 +67,23 @@ function strictV2Context(directory, { seedGoal = false } = {}) {
   }
 }
 
+test("V2 setup fails closed when the beta Promise host lacks session/tool control domains", async () => {
+  let commandTransforms = 0
+  const betaPromiseShape = {
+    options: {},
+    command: {
+      async transform() {
+        commandTransforms += 1
+      },
+    },
+  }
+
+  const cleanup = await OpenCode2GoalsExperimental.setup(betaPromiseShape)
+  assert.equal(typeof cleanup, "function")
+  assert.equal(commandTransforms, 0, "do not install a /goal wrapper when no runtime control transport exists")
+  cleanup()
+})
+
 test("V2 setup stays active when the project has not declared a goal command", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-no-command-"))
   try {

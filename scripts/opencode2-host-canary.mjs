@@ -89,6 +89,7 @@ async function main() {
   const sentinelMarkerFile = path.join(temp, "v2-sentinel-setup-loaded")
   const adapterBridge = path.join(pluginDirectory, "opencode-goals-v2-canary.js")
   const sentinelFile = path.join(pluginDirectory, "00-opencode-goals-v2-sentinel.js")
+  const projectConfigFile = path.join(project, "opencode.json")
 
   await Promise.all([
     mkdir(pluginDirectory, { recursive: true }),
@@ -112,7 +113,7 @@ async function main() {
     `export { default } from ${JSON.stringify(pathToFileURL(pluginFile).href)}\n`,
   )
   await writeFile(path.join(project, "README.md"), "# OpenCode 2 host canary\n")
-  await writeFile(path.join(project, "opencode.json"), `${JSON.stringify({
+  await writeFile(projectConfigFile, `${JSON.stringify({
     $schema: "https://opencode.ai/config.json",
   }, null, 2)}\n`)
 
@@ -140,12 +141,12 @@ async function main() {
     const version = output(run("opencode2", ["--version"], { cwd: project, env, timeout: 30_000 }))
     if (!version) throw new Error("opencode2 --version returned no output")
 
-    const health = output(run("opencode2", ["api", "get", "/api/health"], { cwd: project, env }))
+    let health = output(run("opencode2", ["api", "get", "/api/health"], { cwd: project, env }))
     if (!health) throw new Error("OpenCode 2 health API returned no output")
 
     const pluginPath = `/api/plugin?location%5Bdirectory%5D=${encodeURIComponent(project)}`
-    const pluginResult = run("opencode2", ["api", "get", pluginPath], { cwd: project, env })
-    const response = parseJSONOutput(pluginResult, "GET /api/plugin at project Location")
+    let pluginResult = run("opencode2", ["api", "get", pluginPath], { cwd: project, env })
+    let response = parseJSONOutput(pluginResult, "GET /api/plugin at project Location")
 
     if (response?._tag) {
       throw new Error(`project-scoped /api/plugin rejected the Location: ${JSON.stringify(response)}`)
@@ -157,12 +158,38 @@ async function main() {
       throw new Error(`OpenCode 2 classified the committed git canary workspace as global: ${JSON.stringify(response.location)}`)
     }
 
-    const ids = [...new Set(collectPluginIDs(response))]
+    let ids = [...new Set(collectPluginIDs(response))]
+    const autoDiscoveryActive = ids.includes(sentinelID)
+    let explicitConfigFallback = false
+
+    if (!autoDiscoveryActive) {
+      explicitConfigFallback = true
+      console.error([
+        "OpenCode 2 did not expose project-local auto-discovered plugins on the first Location probe.",
+        "Continuing with an explicit documented plugins[] configuration so adapter behavior can still be tested.",
+        `Initial active IDs: ${JSON.stringify(ids)}`,
+      ].join("\n"))
+      await writeFile(projectConfigFile, `${JSON.stringify({
+        $schema: "https://opencode.ai/config.json",
+        plugins: [
+          "./.opencode/plugins/00-opencode-goals-v2-sentinel.js",
+          "./.opencode/plugins/opencode-goals-v2-canary.js",
+        ],
+      }, null, 2)}\n`)
+      run("opencode2", ["service", "stop"], { cwd: project, env, allowFailure: true, timeout: 15_000 })
+      health = output(run("opencode2", ["api", "get", "/api/health"], { cwd: project, env }))
+      if (!health) throw new Error("OpenCode 2 health API returned no output after explicit plugin configuration")
+      pluginResult = run("opencode2", ["api", "get", pluginPath], { cwd: project, env })
+      response = parseJSONOutput(pluginResult, "GET /api/plugin after explicit plugins[] fallback")
+      ids = [...new Set(collectPluginIDs(response))]
+    }
+
     const sentinelMarker = await fileTextIfPresent(sentinelMarkerFile)
     if (!ids.includes(sentinelID)) {
       throw new Error([
-        "OpenCode 2 resolved the project Location, but did not activate the minimal V2 { id, setup } plugin from .opencode/plugins/.",
-        "The canary intentionally does not require V1 plugin execution because V1 plugins are not part of the OpenCode 2 compatibility contract.",
+        "OpenCode 2 did not activate the minimal V2 { id, setup } sentinel even through explicit plugins[] configuration.",
+        `Auto-discovery active: ${autoDiscoveryActive}`,
+        `Explicit fallback attempted: ${explicitConfigFallback}`,
         `V2 sentinel setup marker written: ${sentinelMarker === "loaded\n"}`,
         `Active V2 IDs: ${JSON.stringify(ids)}`,
         `Raw response: ${String(pluginResult.stdout ?? "")}`,
@@ -188,6 +215,8 @@ async function main() {
       health,
       projectDirectory: response.location.directory,
       projectID: response.location.project.id,
+      autoDiscoveryActive,
+      explicitConfigFallback,
       v2SentinelSetupExecuted: true,
       sentinelID,
       pluginID,

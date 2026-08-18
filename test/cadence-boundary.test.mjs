@@ -41,6 +41,24 @@ test("explicit cadence rejects a second successful file mutation in the same Goa
       { metadata: { filepath: "1.json" } },
     )
 
+    await assert.doesNotReject(
+      hooks["tool.execute.before"]({
+        tool: "bash",
+        sessionID: "s1",
+        callID: "read-only-shell",
+        args: { command: 'Get-Content -LiteralPath "1.json"' },
+      }),
+    )
+    await assert.rejects(
+      hooks["tool.execute.before"]({
+        tool: "bash",
+        sessionID: "s1",
+        callID: "mutating-shell",
+        args: { command: 'Set-Content -LiteralPath "1.json" -Value "{\\"value\\":12}"' },
+      }),
+      /Goal cadence boundary/,
+    )
+
     await assert.rejects(
       hooks["tool.execute.before"]({ tool: "edit", sessionID: "s1", callID: "call-2" }),
       /Goal cadence boundary/,

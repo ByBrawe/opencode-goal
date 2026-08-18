@@ -4,7 +4,7 @@ import type { GoalExecutionContext, GoalState } from "../domain/types.js"
 import { GoalStore, GoalStoreConcurrencyError } from "../persistence/store.js"
 import { accountAssistantUsage } from "../runtime/accounting.js"
 import { reportBlocker } from "../runtime/blocker.js"
-import { CADENCE_BOUNDARY_MESSAGE, requiresDistinctGoalTurnCadence } from "../runtime/cadence.js"
+import { CADENCE_BOUNDARY_MESSAGE, isClearlyReadOnlyShellCommand, requiresDistinctGoalTurnCadence } from "../runtime/cadence.js"
 import { runConfiguredChecks } from "../runtime/checks.js"
 import { formatModelContext, observeModelContextLimits, observeModelContextUsage } from "../runtime/model-context.js"
 import { collectMutationFingerprints } from "../runtime/mutation-progress.js"
@@ -382,6 +382,7 @@ export default async function OpenCodeGoalPlugin(input: any, options: OpenCodeGo
 
     "tool.execute.before": async (event: any) => {
       if (event.tool === SHELL_TOOL) {
+        if (isClearlyReadOnlyShellCommand(event?.args?.command)) return
         await serialize(event.sessionID, async () => {
           const goal = await load(event.sessionID)
           if (goal?.status === "active" && requiresDistinctGoalTurnCadence(goal) && cadenceMutationReservations.has(event.sessionID)) {
@@ -558,7 +559,7 @@ export default async function OpenCodeGoalPlugin(input: any, options: OpenCodeGo
         }),
       }),
       opencode_goal_evidence_file: tool({
-        description: "Ask the host to verify a predeclared project-file requirement. Use only the exact ID of a requirement whose verification kind is file; semantic/objective requirements are verified by completion audit instead.",
+        description: "Ask the host to verify a predeclared project-file requirement. Use either the exact requirement ID or the 1-based requirement number shown by opencode_goal_get/status; semantic/objective requirements are verified by completion audit instead.",
         args: { requirementID: tool.schema.string() },
         execute: async (args: any, context: any) => await serialize(context.sessionID, async () => {
           let goal = await load(context.sessionID)

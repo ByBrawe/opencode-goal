@@ -13,6 +13,22 @@
       "expected": "Ordinary model requests cannot see or invoke the mutating Goal control; an authorized /goal request binds exact raw arguments once, so changed or replayed tool input fails before storage mutation."
     },
     {
+      "id": "opencode2.command-capability-same-turn-replay",
+      "category": "opencode2-experimental",
+      "weight": 4,
+      "testFile": "test/opencode2-control-replay.test.mjs",
+      "testName": "V2 control capability is consumed for one command message but a new identical user command can authorize again",
+      "expected": "After the authorized control executes, later provider steps for that exact user command cannot re-expose or replay the control capability, while a genuinely new user command may authorize one new execution."
+    },
+    {
+      "id": "opencode2.command-capability-ordinal-fallback",
+      "category": "opencode2-experimental",
+      "weight": 2,
+      "testFile": "test/opencode2-control-replay.test.mjs",
+      "testName": "V2 replay guard also distinguishes command turns by user ordinal when host request messages omit IDs",
+      "expected": "When provider-facing request messages omit durable IDs, the user-message ordinal still distinguishes a same-turn retry from a later new command without reopening a consumed capability."
+    },
+    {
       "id": "opencode2.plan-contract-paused-build-resume",
       "category": "opencode2-experimental",
       "weight": 3,

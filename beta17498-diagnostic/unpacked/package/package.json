@@ -1,0 +1,38 @@
+{
+  "name": "@opencode-ai/cli",
+  "bin": {
+    "opencode2": "./bin/opencode2.exe"
+  },
+  "scripts": {
+    "postinstall": "node ./postinstall.mjs"
+  },
+  "version": "0.0.0-beta-17498",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/anomalyco/opencode.git"
+  },
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
+  "cpu": [
+    "arm64",
+    "x64"
+  ],
+  "optionalDependencies": {
+    "@opencode-ai/cli-darwin-arm64": "0.0.0-beta-17498",
+    "@opencode-ai/cli-linux-x64-baseline-musl": "0.0.0-beta-17498",
+    "@opencode-ai/cli-windows-arm64": "0.0.0-beta-17498",
+    "@opencode-ai/cli-darwin-x64-baseline": "0.0.0-beta-17498",
+    "@opencode-ai/cli-darwin-x64": "0.0.0-beta-17498",
+    "@opencode-ai/cli-windows-x64-baseline": "0.0.0-beta-17498",
+    "@opencode-ai/cli-linux-arm64": "0.0.0-beta-17498",
+    "@opencode-ai/cli-linux-x64": "0.0.0-beta-17498",
+    "@opencode-ai/cli-windows-x64": "0.0.0-beta-17498",
+    "@opencode-ai/cli-linux-x64-musl": "0.0.0-beta-17498",
+    "@opencode-ai/cli-linux-x64-baseline": "0.0.0-beta-17498",
+    "@opencode-ai/cli-linux-arm64-musl": "0.0.0-beta-17498"
+  }
+}

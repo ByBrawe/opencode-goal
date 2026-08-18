@@ -1,0 +1,3 @@
+beta17498-diagnostic/unpacked/package/bin/opencode2.exe
+beta17498-diagnostic/unpacked/package/package.json
+beta17498-diagnostic/unpacked/package/postinstall.mjs

@@ -1,0 +1,31 @@
+[
+  {
+    "id": "@opencode-ai/cli@0.0.0-beta-17498",
+    "name": "@opencode-ai/cli",
+    "version": "0.0.0-beta-17498",
+    "size": 2396,
+    "unpackedSize": 6915,
+    "shasum": "3a0166b85dd9337c493b5031b883f8509ce378a3",
+    "integrity": "sha512-ccaDH7PTHTkYjk9+Ag2SKGRh2kD3oC3x+8L4hC/GpggbMetDPpr+TdlCmFLXyEWlNut4lRO3J+VFf7peU/l45w==",
+    "filename": "opencode-ai-cli-0.0.0-beta-17498.tgz",
+    "files": [
+      {
+        "path": "bin/opencode2.exe",
+        "size": 232,
+        "mode": 493
+      },
+      {
+        "path": "package.json",
+        "size": 1146,
+        "mode": 493
+      },
+      {
+        "path": "postinstall.mjs",
+        "size": 5537,
+        "mode": 493
+      }
+    ],
+    "entryCount": 3,
+    "bundled": []
+  }
+]

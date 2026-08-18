@@ -1,0 +1,5 @@
+echo "Error: @opencode-ai/cli's postinstall script was not run." >&2
+echo "" >&2
+echo "This occurs when installation scripts are disabled." >&2
+echo "Run the package postinstall script or reinstall with scripts enabled." >&2
+exit 1

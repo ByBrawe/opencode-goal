@@ -92,7 +92,8 @@ test("V2 setup stays active when the project has not declared a goal command", a
     assert.equal(host.commands.has("goal"), false, "a transform hook must not fabricate a new V2 command")
     assert.ok(host.tools.has("opencode_goals_v2_control"), "tool setup should still complete")
     assert.ok(host.tools.has("opencode_goals_v2_get"), "read-only Goal tool should still be available")
-    assert.equal(typeof host.hooks.get("request"), "function", "request hook setup should still complete")
+    assert.equal(typeof host.hooks.get("context"), "function", "documented context hook setup should still complete")
+    assert.equal(host.hooks.get("request"), undefined, "historical request hook must not be registered")
   } finally {
     await rm(root, { recursive: true, force: true })
   }

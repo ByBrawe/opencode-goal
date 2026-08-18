@@ -8,6 +8,8 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const pluginID = "bybrawe.open-code-goals.v2-experimental"
 const sentinelID = "bybrawe.open-code-goals.v2-canary-sentinel"
+const rawGoalTemplateMarker = "UNTRANSFORMED_GOAL_CANARY"
+const transformedGoalPreamble = "OpenCode Goals V2 command wrapper."
 
 function run(command, args, { cwd, env, allowFailure = false, timeout = 60_000 } = {}) {
   const result = spawnSync(command, args, {
@@ -51,6 +53,17 @@ function collectPluginIDs(value) {
   return [...direct, ...nested]
 }
 
+function collectGoalCommands(value, seen = new Set()) {
+  if (!value || typeof value !== "object" || seen.has(value)) return []
+  seen.add(value)
+  if (Array.isArray(value)) return value.flatMap((item) => collectGoalCommands(item, seen))
+
+  const directName = [value.name, value.id, value.command].find((item) => typeof item === "string")
+  const direct = directName === "goal" ? [value] : []
+  const nested = Object.values(value).flatMap((item) => collectGoalCommands(item, seen))
+  return [...direct, ...nested]
+}
+
 async function fileTextIfPresent(file) {
   try {
     return await readFile(file, "utf8")
@@ -85,6 +98,7 @@ async function main() {
   const state = path.join(home, ".local", "state")
   const opencodeDirectory = path.join(project, ".opencode")
   const pluginDirectory = path.join(opencodeDirectory, "plugins")
+  const commandDirectory = path.join(opencodeDirectory, "commands")
   const pluginFile = path.join(root, "dist", "opencode2", "experimental.js")
   const sentinelMarkerFile = path.join(temp, "v2-sentinel-setup-loaded")
   const adapterBridge = path.join(pluginDirectory, "opencode-goals-v2-canary.js")
@@ -92,6 +106,7 @@ async function main() {
 
   await Promise.all([
     mkdir(pluginDirectory, { recursive: true }),
+    mkdir(commandDirectory, { recursive: true }),
     mkdir(config, { recursive: true }),
     mkdir(data, { recursive: true }),
     mkdir(state, { recursive: true }),
@@ -110,6 +125,17 @@ async function main() {
   await writeFile(
     adapterBridge,
     `export { default } from ${JSON.stringify(pathToFileURL(pluginFile).href)}\n`,
+  )
+  await writeFile(
+    path.join(commandDirectory, "goal.md"),
+    [
+      "---",
+      "description: Untransformed OpenCode Goals V2 canary command",
+      "subtask: true",
+      "---",
+      `${rawGoalTemplateMarker} $ARGUMENTS`,
+      "",
+    ].join("\n"),
   )
   await writeFile(path.join(project, "README.md"), "# OpenCode 2 host canary\n")
   await writeFile(path.join(project, "opencode.json"), `${JSON.stringify({
@@ -143,7 +169,8 @@ async function main() {
     const health = output(run("opencode2", ["api", "get", "/api/health"], { cwd: project, env }))
     if (!health) throw new Error("OpenCode 2 health API returned no output")
 
-    const pluginPath = `/api/plugin?location%5Bdirectory%5D=${encodeURIComponent(project)}`
+    const locationQuery = `location%5Bdirectory%5D=${encodeURIComponent(project)}`
+    const pluginPath = `/api/plugin?${locationQuery}`
     const pluginResult = run("opencode2", ["api", "get", pluginPath], { cwd: project, env })
     const response = parseJSONOutput(pluginResult, "GET /api/plugin at project Location")
 
@@ -180,6 +207,37 @@ async function main() {
       throw new Error(`OpenCode 2 activated the V2 sentinel but not ${pluginID}; the Goals adapter module/setup is incompatible with this beta host. Active IDs: ${JSON.stringify(ids)}\nRaw response: ${String(pluginResult.stdout ?? "")}`)
     }
 
+    const commandPath = `/api/command?${locationQuery}`
+    const commandResult = run("opencode2", ["api", "get", commandPath], { cwd: project, env })
+    const commandResponse = parseJSONOutput(commandResult, "GET /api/command at project Location")
+    if (commandResponse?._tag) {
+      throw new Error(`project-scoped /api/command rejected the Location: ${JSON.stringify(commandResponse)}`)
+    }
+
+    const goalCommands = collectGoalCommands(commandResponse)
+    const goalCommand = goalCommands.find((item) => typeof item?.template === "string")
+    if (!goalCommand) {
+      throw new Error([
+        "OpenCode 2 activated the Goals V2 plugin but the project-scoped command registry did not expose a goal command definition.",
+        `Raw response: ${String(commandResult.stdout ?? "")}`,
+      ].join("\n"))
+    }
+    if (goalCommand.template.includes(rawGoalTemplateMarker)) {
+      throw new Error(`OpenCode 2 exposed the untransformed project goal command; command.transform did not replace its template. Command: ${JSON.stringify(goalCommand)}`)
+    }
+    if (!goalCommand.template.startsWith(transformedGoalPreamble)) {
+      throw new Error(`OpenCode 2 goal command template did not contain the Goals V2 command wrapper preamble. Command: ${JSON.stringify(goalCommand)}`)
+    }
+    if (!goalCommand.template.includes("__OPENCODE_GOALS_V2_COMMAND_") || !goalCommand.template.includes("$ARGUMENTS")) {
+      throw new Error(`OpenCode 2 goal command template did not contain the request capability marker and raw-argument placeholder. Command: ${JSON.stringify(goalCommand)}`)
+    }
+    if (goalCommand.description !== "Manage a persistent OpenCode Goal (experimental OpenCode 2 adapter).") {
+      throw new Error(`OpenCode 2 goal command description was not transformed by the Goals V2 adapter. Command: ${JSON.stringify(goalCommand)}`)
+    }
+    if (goalCommand.subtask !== false) {
+      throw new Error(`OpenCode 2 goal command remained a subtask after the Goals V2 transform. Command: ${JSON.stringify(goalCommand)}`)
+    }
+
     console.log(JSON.stringify({
       ok: true,
       platform: process.platform,
@@ -189,6 +247,7 @@ async function main() {
       projectDirectory: response.location.directory,
       projectID: response.location.project.id,
       v2SentinelSetupExecuted: true,
+      goalCommandTransformed: true,
       sentinelID,
       pluginID,
       activePluginIDs: ids,

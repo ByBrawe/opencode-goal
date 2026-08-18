@@ -2,6 +2,80 @@
 
 All notable changes to **OpenCode Goals** are documented here.
 
+## 1.3.17 — 2026-08-18
+
+Shell-heavy Goal progress and diagnostics release.
+
+- Count completed Goal-owned `bash` tool calls as host-observed activity for the no-progress guard without turning shell activity into completion evidence.
+- Bind shell activity to the active Goal ID and revision, reject stale completions after Goal edits, deduplicate identical normalized commands by SHA-256, and never persist raw command text in progress notes.
+- Add active Goal session-lease diagnostics plus same-project parallel-session isolation coverage.
+- Keep experimental OpenCode 2 discovery/activation probes isolated from the stable V1 support contract.
+
+## 1.3.16 — 2026-08-14
+
+Active steering and long-running verification release.
+
+- Keep ordinary user steering inside an active Goal instead of pausing it: preempt only the in-flight autonomous turn, run the queued user message first, and resume autonomous Goal continuation afterward.
+- Reject completion/check/verifier results that became stale because newer user steering arrived.
+- Raise configured Goal-check default timeout to 60 minutes with an environment override, and raise the effective semantic-verifier default to five minutes while preserving explicit/environment overrides.
+- Add isolated experimental OpenCode 2 adapter/request-hook host canaries and daily compatibility checks without changing the stable V1 support contract.
+- Add Turkish README coverage and a README language switcher.
+
+## 1.3.15 — 2026-08-13
+
+Lifecycle UX and verifier transport reliability release.
+
+- Surface actionable Goal lifecycle conflict, pause, and resume guidance instead of opaque failures.
+- Prefer the supported bounded synchronous session-prompt transport for semantic verification when available while retaining compatibility fallback behavior.
+- Improve npm package discoverability metadata and Goal workflow documentation.
+
+## 1.3.14 — 2026-08-12
+
+Multi-turn process-integrity and budget-boundary release.
+
+- Enforce explicit multi-turn/per-turn process requirements using current-revision host runtime evidence rather than trusting a final-state verifier claim alone.
+- Treat mutation cadence as distinct-turn proof and reject same-turn batching for objectives that explicitly require separate Goal turns.
+- Add real 10-turn completion and same-turn batch-rejection host canaries.
+- Settle reached Goal budgets at turn boundaries and enforce reached limits before autonomous continuation.
+
+## 1.3.13 — 2026-08-12
+
+npm installer publication-verification hardening release.
+
+- Canonicalize the packaged installer bin path and require it in package/release checks.
+- Harden scoped OpenCode session bootstrap on Windows.
+- Add npm registry visibility retries for the published installer manifest.
+
+## 1.3.12 — 2026-08-12
+
+Installer-bin packaging hotfix.
+
+- Ship the installer through the committed `bin/opencode-goal.js` shim so the npm bin target exists before publish-time compilation.
+- Verify the packed bin link and the published npm `bin.opencode-goal` manifest.
+
+## 1.3.11 — 2026-08-12
+
+Verifier setup/dispatch timeout hardening release.
+
+- Bound semantic-verifier child-session creation and asynchronous dispatch so a hung provider path cannot wedge the parent Goal completion queue.
+- Add regression coverage for hung verifier setup and async dispatch.
+
+## 1.3.10 — 2026-08-12
+
+Cadence enforcement and model-context separation release.
+
+- Detect and enforce explicit per-Goal-turn cadence at the host mutation boundary, including one-mutation-unit guidance for cadence-sensitive objectives.
+- Scope pending ownership fallback to fast mutation hooks while keeping native Todo planning advisory and non-evidentiary.
+- Separate model context-window telemetry from cumulative Goal token budgets and preserve model/progress context across compaction.
+- Decouple the semantic-verifier model from the Goal executor model and make verifier/model-context behavior host-aware.
+
+## 1.3.9 — 2026-08-12
+
+Fast-tool ownership hotfix.
+
+- Preserve Goal prompt ownership when a fast model reaches mutation tool hooks before the assistant `message.updated` lifecycle event arrives.
+- Keep resulting host mutation progress revision-bound and observable across that race.
+
 ## 1.3.8 — 2026-08-12
 
 Semantic verifier retry-loop and across-turn verification hotfix.

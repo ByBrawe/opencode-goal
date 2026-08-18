@@ -1,0 +1,41 @@
+name: Probe npm 1.3.18 ordering gate
+
+on:
+  push:
+    branches: [release/1.3.19]
+
+permissions:
+  contents: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: release/1.3.19
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+      - name: Query exact published version and latest dist-tag
+        shell: bash
+        run: |
+          VERSION="$(npm view '@bybrawe/opencode-goal@1.3.18' version --registry=https://registry.npmjs.org 2>/dev/null || true)"
+          LATEST="$(npm view '@bybrawe/opencode-goal' dist-tags.latest --registry=https://registry.npmjs.org 2>/dev/null || true)"
+          node -e 'const fs=require("fs"); fs.writeFileSync(".release-probe-1.3.18.json", JSON.stringify({checkedAt:new Date().toISOString(), requested:"1.3.18", version:process.env.VERSION||"", latest:process.env.LATEST||"", published:process.env.VERSION==="1.3.18"}, null, 2)+"\n")' 
+        env:
+          VERSION: ${{ env.VERSION }}
+          LATEST: ${{ env.LATEST }}
+      - name: Persist probe result and remove helper
+        shell: bash
+        run: |
+          VERSION="$(npm view '@bybrawe/opencode-goal@1.3.18' version --registry=https://registry.npmjs.org 2>/dev/null || true)"
+          LATEST="$(npm view '@bybrawe/opencode-goal' dist-tags.latest --registry=https://registry.npmjs.org 2>/dev/null || true)"
+          VERSION="$VERSION" LATEST="$LATEST" node -e 'const fs=require("fs"); fs.writeFileSync(".release-probe-1.3.18.json", JSON.stringify({checkedAt:new Date().toISOString(), requested:"1.3.18", version:process.env.VERSION||"", latest:process.env.LATEST||"", published:process.env.VERSION==="1.3.18"}, null, 2)+"\n")'
+          rm .github/workflows/probe-1.3.18-registry.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add .release-probe-1.3.18.json .github/workflows/probe-1.3.18-registry.yml
+          git commit -m "chore: record npm 1.3.18 ordering probe"
+          git push origin HEAD:release/1.3.19

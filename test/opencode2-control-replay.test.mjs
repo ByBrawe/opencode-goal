@@ -115,6 +115,48 @@ test("V2 control capability is consumed for one command message but a new identi
   }
 })
 
+test("V2 control capability is consumed by a mismatched attempt and cannot be retried in the same command turn", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-v2-control-mismatch-"))
+  try {
+    const fake = fakeV2Context(root)
+    await OpenCode2GoalsExperimental.setup(fake.ctx)
+    const requestHook = fake.hooks.get("request")
+    const control = fake.tools.get("opencode_goals_v2_control")
+    const args = "status"
+    const wrapped = commandText(fake.command.template, args)
+
+    const first = requestEvent({
+      messages: [{ id: "user-command-mismatch", role: "user", content: wrapped }],
+    })
+    await requestHook(first)
+    assert.ok(first.tools.opencode_goals_v2_control)
+
+    await assert.rejects(
+      control.execute({ arguments: "different" }, { sessionID: "s1", agent: "build", callID: "call-mismatch" }),
+      /no matching single-use \/goal command capability/i,
+    )
+
+    const sameTurnSecondStep = requestEvent({
+      messages: [
+        { id: "user-command-mismatch", role: "user", content: wrapped },
+        { id: "assistant-mismatch", role: "assistant", content: "rejected tool call" },
+      ],
+    })
+    await requestHook(sameTurnSecondStep)
+    assert.equal(
+      sameTurnSecondStep.tools.opencode_goals_v2_control,
+      undefined,
+      "a rejected control attempt must consume the command-turn capability",
+    )
+    await assert.rejects(
+      control.execute({ arguments: args }, { sessionID: "s1", agent: "build", callID: "call-correct-after-mismatch" }),
+      /no matching single-use \/goal command capability/i,
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test("V2 replay guard also distinguishes command turns by user ordinal when host request messages omit IDs", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-v2-control-ordinal-"))
   try {

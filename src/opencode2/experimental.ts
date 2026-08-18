@@ -49,6 +49,13 @@ export interface OpenCode2ExperimentalToolContext {
 
 interface PendingControl {
   arguments: string
+  commandKey: string
+  consumed: boolean
+}
+
+interface LatestUserMessage {
+  text: string
+  commandKey: string
 }
 
 function record(value: unknown): UnknownRecord | undefined {
@@ -85,6 +92,11 @@ function roleOfMessage(value: unknown): string | undefined {
   return firstString(item?.role, nestedRecord(value, "info")?.role)
 }
 
+function messageIDOf(value: unknown): string | undefined {
+  const item = record(value)
+  return firstString(item?.id, nestedRecord(value, "info")?.id, record(item?.message)?.id, nestedRecord(item?.message, "info")?.id)
+}
+
 function collectText(value: unknown, depth = 0): string {
   if (depth > 6 || value === null || value === undefined) return ""
   if (typeof value === "string") return value
@@ -99,16 +111,23 @@ function collectText(value: unknown, depth = 0): string {
   return ""
 }
 
-function latestUserText(messages: unknown): string | undefined {
+function latestUserMessage(messages: unknown): LatestUserMessage | undefined {
   if (!Array.isArray(messages)) return undefined
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index]
+  let userOrdinal = 0
+  let latest: LatestUserMessage | undefined
+  for (const message of messages) {
     const role = roleOfMessage(message)
     if (role && role.toLowerCase() !== "user") continue
     const text = collectText(message)
-    if (text) return text
+    if (!text) continue
+    userOrdinal += 1
+    const messageID = messageIDOf(message)
+    latest = {
+      text,
+      commandKey: messageID ? `message:${messageID}` : `ordinal:${userOrdinal}`,
+    }
   }
-  return undefined
+  return latest
 }
 
 function commandArguments(text: string | undefined, marker: string): string | undefined {
@@ -347,10 +366,10 @@ export const OpenCode2GoalsExperimental = {
         output: controlOutputSchema,
         execute: async (input: { arguments: string }, toolContext: OpenCode2ExperimentalToolContext) => {
           const pending = pendingControls.get(toolContext.sessionID)
-          pendingControls.delete(toolContext.sessionID)
-          if (!pending || input.arguments !== pending.arguments) {
+          if (!pending || pending.consumed || input.arguments !== pending.arguments) {
             throw new Error("OpenCode Goals V2 control rejected: no matching single-use /goal command capability. No Goal state was read or changed.")
           }
+          pendingControls.set(toolContext.sessionID, { ...pending, consumed: true })
           return await executeOpenCode2GoalControl(ctx, input.arguments, toolContext)
         },
       }, { codemode: false })
@@ -374,12 +393,27 @@ export const OpenCode2GoalsExperimental = {
         return
       }
 
-      const rawArguments = commandArguments(latestUserText(event?.messages), capabilityMarker)
-      if (rawArguments === undefined) {
+      const latest = latestUserMessage(event?.messages)
+      const rawArguments = commandArguments(latest?.text, capabilityMarker)
+      if (rawArguments === undefined || !latest) {
         pendingControls.delete(sessionID)
         removeControlTool(event)
       } else {
-        pendingControls.set(sessionID, { arguments: rawArguments })
+        const pending = pendingControls.get(sessionID)
+        const sameCommandTurn = Boolean(
+          pending
+          && pending.arguments === rawArguments
+          && pending.commandKey === latest.commandKey,
+        )
+        if (!sameCommandTurn) {
+          pendingControls.set(sessionID, {
+            arguments: rawArguments,
+            commandKey: latest.commandKey,
+            consumed: false,
+          })
+        } else if (pending?.consumed) {
+          removeControlTool(event)
+        }
       }
 
       // Context injection is best-effort presentation for an already persisted

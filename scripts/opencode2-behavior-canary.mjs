@@ -9,8 +9,11 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const CONTROL_TOOL = "opencode_goals_v2_control"
+const V2_PLUGIN_ID = "bybrawe.open-code-goals.v2-experimental"
 const CREATE_ARGUMENTS = 'ship real v2 host --success "real command path persists"'
 const COMMAND_PREAMBLE = "OpenCode Goals V2 command wrapper."
+const PLUGIN_READY_ATTEMPTS = 10
+const PLUGIN_READY_DELAY_MS = 500
 
 function appendLog(current, chunk, limit = 80_000) {
   return (current + String(chunk)).slice(-limit)
@@ -36,6 +39,19 @@ function toolNames(body) {
 
 function toolDefinition(body, name) {
   return (body.tools ?? []).find((item) => (item?.function?.name ?? item?.name) === name)
+}
+
+function collectPluginIDs(value) {
+  if (Array.isArray(value)) return value.flatMap(collectPluginIDs)
+  if (typeof value === "string") return [value]
+  if (!value || typeof value !== "object") return []
+  const direct = [value.id, value.pluginID, value.name].filter((item) => typeof item === "string")
+  const nested = [value.data, value.plugins, value.items].flatMap((item) => collectPluginIDs(item))
+  return [...direct, ...nested]
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 function streamHeaders(res) {
@@ -242,6 +258,36 @@ async function run(command, args, { cwd, env, timeoutMs = 90_000, allowFailure =
   })
 }
 
+async function waitForProjectPluginReady(project, env) {
+  const pluginPath = `/api/plugin?location%5Bdirectory%5D=${encodeURIComponent(project)}`
+  const attempts = []
+  for (let attempt = 1; attempt <= PLUGIN_READY_ATTEMPTS; attempt += 1) {
+    const result = await run("opencode2", ["api", "get", pluginPath], { cwd: project, env, timeoutMs: 60_000 })
+    let response
+    try {
+      response = JSON.parse(String(result.stdout ?? "").trim())
+    } catch {
+      throw new Error(`behavior canary readiness probe did not return JSON on attempt ${attempt}.\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`)
+    }
+    if (response?._tag) {
+      throw new Error(`behavior canary project Location was rejected: ${JSON.stringify(response)}`)
+    }
+    if (response?.location?.directory !== project) {
+      throw new Error(`behavior canary resolved the wrong project Location: expected ${project}, got ${String(response?.location?.directory)}`)
+    }
+    if (response?.location?.project?.id === "global") {
+      throw new Error(`behavior canary project was classified as global: ${JSON.stringify(response.location)}`)
+    }
+
+    const ids = [...new Set(collectPluginIDs(response))]
+    const ready = ids.includes(V2_PLUGIN_ID)
+    attempts.push({ attempt, activePluginCount: ids.length, adapterListed: ready })
+    if (ready) return { attempt, attempts }
+    if (attempt < PLUGIN_READY_ATTEMPTS) await sleep(PLUGIN_READY_DELAY_MS)
+  }
+  throw new Error(`behavior canary Goals V2 plugin was not ready after ${PLUGIN_READY_ATTEMPTS} bounded project-scoped checks: ${JSON.stringify(attempts)}`)
+}
+
 async function readOnlyGoal(project) {
   const directory = path.join(project, ".opencode", "goals")
   const files = (await readdir(directory)).filter((name) => name.endsWith(".json"))
@@ -313,6 +359,7 @@ async function main() {
 
   let commandResult = null
   let ordinaryResult = null
+  let pluginReadiness = null
   try {
     await run("git", ["init", "-q"], { cwd: project, env, timeoutMs: 30_000 })
     await run("git", ["config", "user.name", "OpenCode Goals Canary"], { cwd: project, env, timeoutMs: 30_000 })
@@ -322,6 +369,7 @@ async function main() {
 
     await run("opencode2", ["service", "stop"], { cwd: project, env, allowFailure: true, timeoutMs: 15_000 })
     const version = await run("opencode2", ["--version"], { cwd: project, env, timeoutMs: 30_000 })
+    pluginReadiness = await waitForProjectPluginReady(project, env)
 
     commandResult = await run("opencode2", [
       "run",
@@ -363,6 +411,8 @@ async function main() {
       platform: process.platform,
       node: process.version,
       opencode2Version: version.stdout.trim(),
+      pluginReadyAttempt: pluginReadiness.attempt,
+      pluginReadinessAttempts: pluginReadiness.attempts,
       sessionID,
       objective: goal.objective,
       status: goal.status,
@@ -371,6 +421,7 @@ async function main() {
       providerRequests: provider.stats.requests,
     }, null, 2))
   } catch (error) {
+    console.error(`plugin readiness:\n${JSON.stringify(pluginReadiness, null, 2)}`)
     console.error(`provider state:\n${JSON.stringify(provider.stats, null, 2)}`)
     if (commandResult) console.error(`command stdout:\n${commandResult.stdout}\ncommand stderr:\n${commandResult.stderr}`)
     if (ordinaryResult) console.error(`ordinary stdout:\n${ordinaryResult.stdout}\nordinary stderr:\n${ordinaryResult.stderr}`)

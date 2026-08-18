@@ -9,7 +9,6 @@ type PluginHooks = Awaited<ReturnType<typeof CorePlugin>>
 type PendingShell = {
   goalID: string
   revision: number
-  fingerprint: string
 }
 
 const SHELL_TOOL = "bash"
@@ -59,17 +58,16 @@ export function installShellProgress(input: PluginInput, hooks: PluginHooks): vo
     }
   }
 
-  hooks["tool.execute.before"] = async (event: any, output: any) => {
-    await beforeHook(event, output)
+  hooks["tool.execute.before"] = async (event: any) => {
+    await beforeHook(event)
     if (event?.tool !== SHELL_TOOL) return
 
     const key = callKey(event.sessionID, event.callID)
-    const fingerprint = shellActivityFingerprint(output?.args)
-    if (!key || !fingerprint) return
+    if (!key) return
 
     const goal = await store.load(event.sessionID)
     if (!goal || goal.status !== "active") return
-    remember(key, { goalID: goal.id, revision: goal.revision, fingerprint })
+    remember(key, { goalID: goal.id, revision: goal.revision })
   }
 
   hooks["tool.execute.after"] = async (event: any, output: any) => {
@@ -82,12 +80,15 @@ export function installShellProgress(input: PluginInput, hooks: PluginHooks): vo
     pending.delete(key)
     if (!owned) return
 
+    const fingerprint = shellActivityFingerprint(event.args)
+    if (!fingerprint) return
+
     for (let attempt = 0; attempt < MAX_SAVE_ATTEMPTS; attempt += 1) {
       const goal = await store.load(event.sessionID)
       if (!goal || goal.status !== "active" || goal.id !== owned.goalID || goal.revision !== owned.revision) return
 
       const next = markHostProgress(goal, {
-        fingerprint: owned.fingerprint,
+        fingerprint,
         source: "tool:bash",
         summary: "Goal-owned shell command completed.",
       })

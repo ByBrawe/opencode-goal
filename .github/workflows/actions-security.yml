@@ -22,3 +22,27 @@ jobs:
           node-version: 24
       - name: Enforce read-only workflow policy
         run: node scripts/actions-security-gate.mjs
+      - name: Verify published 1.3.17 registry artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED="1.3.17"
+          PACKAGE="@bybrawe/opencode-goal@$EXPECTED"
+          REGISTRY="https://registry.npmjs.org"
+
+          VERSION="$(npm view "$PACKAGE" version --registry="$REGISTRY")"
+          BIN="$(npm view "$PACKAGE" bin.opencode-goal --registry="$REGISTRY")"
+          test "$VERSION" = "$EXPECTED"
+          test "$BIN" = "bin/opencode-goal.js" -o "$BIN" = "./bin/opencode-goal.js"
+
+          VERIFY_DIR="$(mktemp -d)"
+          trap 'rm -rf "$VERIFY_DIR"' EXIT
+          cd "$VERIFY_DIR"
+
+          TARBALL="$(npm pack --silent --ignore-scripts "$PACKAGE" --registry="$REGISTRY")"
+          tar -tzf "$TARBALL" | grep -qx 'package/dist/opencode/shell-progress.js'
+
+          INSTALLED_VERSION="$(npm exec --yes --package="$PACKAGE" -- opencode-goal --version)"
+          test "$INSTALLED_VERSION" = "$EXPECTED"
+
+          echo "Verified published $PACKAGE with installer and shell-progress runtime artifact."

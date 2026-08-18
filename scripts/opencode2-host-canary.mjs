@@ -82,6 +82,112 @@ async function failureLog(env) {
   return ""
 }
 
+function diagnosticAdapterBridge(pluginURL, stageFile) {
+  return [
+    'import { appendFileSync } from "node:fs"',
+    `import plugin from ${JSON.stringify(pluginURL)}`,
+    `const stageFile = ${JSON.stringify(stageFile)}`,
+    'function mark(text) { try { appendFileSync(stageFile, String(text) + "\\n", "utf8") } catch {} }',
+    'function describe(error) { return String(error?.message ?? error).replace(/\\s+/g, " ").slice(0, 500) }',
+    'function settle(value, label) {',
+    '  if (value && typeof value.then === "function") {',
+    '    return value.then(',
+    '      (result) => { mark(label + ":after"); return result },',
+    '      (error) => { mark(label + ":error:" + describe(error)); throw error },',
+    '    )',
+    '  }',
+    '  mark(label + ":after")',
+    '  return value',
+    '}',
+    'function wrapCallback(callback, label) {',
+    '  if (typeof callback !== "function") return callback',
+    '  return function (...args) {',
+    '    mark(label + ":callback:before")',
+    '    try {',
+    '      const value = callback.apply(this, args)',
+    '      if (value && typeof value.then === "function") {',
+    '        return value.then(',
+    '          (result) => { mark(label + ":callback:after"); return result },',
+    '          (error) => { mark(label + ":callback:error:" + describe(error)); throw error },',
+    '        )',
+    '      }',
+    '      mark(label + ":callback:after")',
+    '      return value',
+    '    } catch (error) {',
+    '      mark(label + ":callback:error:" + describe(error))',
+    '      throw error',
+    '    }',
+    '  }',
+    '}',
+    'function wrapTransform(target, label) {',
+    '  if (!target || typeof target.transform !== "function") return target',
+    '  const original = target.transform',
+    '  return new Proxy(target, {',
+    '    get(object, property, receiver) {',
+    '      if (property !== "transform") return Reflect.get(object, property, receiver)',
+    '      return function (callback, ...rest) {',
+    '        mark(label + ":before")',
+    '        try {',
+    '          return settle(original.call(target, wrapCallback(callback, label), ...rest), label)',
+    '        } catch (error) {',
+    '          mark(label + ":error:" + describe(error))',
+    '          throw error',
+    '        }',
+    '      }',
+    '    },',
+    '  })',
+    '}',
+    'function wrapSession(target) {',
+    '  if (!target || typeof target.hook !== "function") return target',
+    '  const original = target.hook',
+    '  return new Proxy(target, {',
+    '    get(object, property, receiver) {',
+    '      if (property !== "hook") return Reflect.get(object, property, receiver)',
+    '      return function (name, ...rest) {',
+    '        const label = "session.hook:" + String(name)',
+    '        mark(label + ":before")',
+    '        try {',
+    '          return settle(original.call(target, name, ...rest), label)',
+    '        } catch (error) {',
+    '          mark(label + ":error:" + describe(error))',
+    '          throw error',
+    '        }',
+    '      }',
+    '    },',
+    '  })',
+    '}',
+    'function wrapContext(ctx) {',
+    '  const command = wrapTransform(ctx?.command, "command.transform")',
+    '  const tool = wrapTransform(ctx?.tool, "tool.transform")',
+    '  const session = wrapSession(ctx?.session)',
+    '  return new Proxy(ctx, {',
+    '    get(object, property, receiver) {',
+    '      if (property === "command") return command',
+    '      if (property === "tool") return tool',
+    '      if (property === "session") return session',
+    '      return Reflect.get(object, property, receiver)',
+    '    },',
+    '  })',
+    '}',
+    'mark("bridge:loaded")',
+    'export default {',
+    '  ...plugin,',
+    '  setup: async (ctx) => {',
+    '    mark("setup:before")',
+    '    try {',
+    '      const result = await plugin.setup(wrapContext(ctx))',
+    '      mark("setup:after")',
+    '      return result',
+    '    } catch (error) {',
+    '      mark("setup:error:" + describe(error))',
+    '      throw error',
+    '    }',
+    '  },',
+    '}',
+    '',
+  ].join("\n")
+}
+
 async function main() {
   const temp = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-host-"))
   const project = path.join(temp, "project")
@@ -93,6 +199,7 @@ async function main() {
   const pluginDirectory = path.join(opencodeDirectory, "plugins")
   const pluginFile = path.join(root, "dist", "opencode2", "experimental.js")
   const sentinelMarkerFile = path.join(temp, "v2-sentinel-setup-loaded")
+  const adapterStageFile = path.join(temp, "v2-adapter-setup-stages.log")
   const adapterBridge = path.join(pluginDirectory, "opencode-goals-v2-canary.js")
   const sentinelFile = path.join(pluginDirectory, "00-opencode-goals-v2-sentinel.js")
 
@@ -115,7 +222,7 @@ async function main() {
   )
   await writeFile(
     adapterBridge,
-    `export { default } from ${JSON.stringify(pathToFileURL(pluginFile).href)}\n`,
+    diagnosticAdapterBridge(pathToFileURL(pluginFile).href, adapterStageFile),
   )
   await writeFile(path.join(project, "README.md"), "# OpenCode 2 host canary\n")
   await writeFile(path.join(project, "opencode.json"), `${JSON.stringify({
@@ -207,10 +314,12 @@ async function main() {
       ].join("\n"))
     }
     if (!ids.includes(pluginID)) {
+      const adapterStages = await fileTextIfPresent(adapterStageFile)
       throw new Error([
         `OpenCode 2 activated the V2 sentinel but not ${pluginID}; the Goals adapter module/setup is incompatible with this beta host.`,
         `Active IDs: ${JSON.stringify(ids)}`,
         `Activation attempts: ${JSON.stringify(activationAttempts)}`,
+        `Adapter setup stages:\n${adapterStages ?? "<no stage markers written>"}`,
         `Last raw response: ${String(pluginResult?.stdout ?? "")}`,
       ].join("\n"))
     }
@@ -230,6 +339,8 @@ async function main() {
       activationAttempts,
     }, null, 2))
   } catch (error) {
+    const adapterStages = await fileTextIfPresent(adapterStageFile)
+    if (adapterStages) console.error(`OpenCode 2 adapter setup stages:\n${adapterStages}`)
     const logs = await failureLog(env)
     if (logs) console.error(`OpenCode 2 server log tail:\n${logs}`)
     throw error

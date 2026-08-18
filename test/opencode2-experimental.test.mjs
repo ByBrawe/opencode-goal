@@ -65,6 +65,12 @@ function commandMessage(host, rawArguments) {
   return template.replace("$ARGUMENTS", () => rawArguments)
 }
 
+function modelDispatchHook(host) {
+  const hook = host.hooks.get("context") ?? host.hooks.get("request")
+  assert.equal(typeof hook, "function", "experimental V2 adapter did not register a model-dispatch hook")
+  return hook
+}
+
 async function runRequest(host, {
   sessionID,
   agent = "build",
@@ -78,7 +84,7 @@ async function runRequest(host, {
     tools: requestTools(),
     messages: [{ role: "user", content: text }],
   }
-  await host.hooks.get("request")(event)
+  await modelDispatchHook(host)(event)
   return event
 }
 
@@ -98,7 +104,7 @@ async function runGoalCommand(host, rawArguments, {
   )
 }
 
-test("experimental V2 plugin registers an isolated command, direct tools, and request hook", async () => {
+test("experimental V2 plugin registers an isolated command, direct tools, and current context hook", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-"))
   try {
     const host = fakeV2Context(root)
@@ -115,9 +121,26 @@ test("experimental V2 plugin registers an isolated command, direct tools, and re
 
     assert.equal(host.tools.get("opencode_goals_v2_control")?.options?.codemode, false)
     assert.equal(host.tools.get("opencode_goals_v2_get")?.options?.codemode, false)
-    assert.equal(typeof host.hooks.get("request"), "function")
+    assert.equal(typeof host.hooks.get("context"), "function")
+    assert.equal(host.hooks.get("request"), undefined, "current hosts must not receive a duplicate legacy hook")
     assert.equal(typeof cleanup, "function")
     cleanup()
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("experimental V2 plugin falls back to legacy request hook when context is unsupported", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-hook-fallback-"))
+  try {
+    const host = fakeV2Context(root)
+    host.ctx.session.hook = async (name, callback) => {
+      if (name === "context") throw new Error("unsupported hook")
+      host.hooks.set(name, callback)
+    }
+    await OpenCode2GoalsExperimental.setup(host.ctx)
+    assert.equal(host.hooks.get("context"), undefined)
+    assert.equal(typeof host.hooks.get("request"), "function")
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -237,7 +260,7 @@ test("unsupported V2 parity-sensitive controls are explicit and never mutate liv
   }
 })
 
-test("V2 request hook injects persisted state and pauses an active Goal selected through Plan", async () => {
+test("V2 model-dispatch hook injects persisted state and pauses an active Goal selected through Plan", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-request-"))
   try {
     const host = fakeV2Context(root)

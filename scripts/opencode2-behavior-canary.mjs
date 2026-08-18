@@ -9,10 +9,14 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const CONTROL_TOOL = "opencode_goals_v2_control"
+const PLUGIN_ID = "bybrawe.open-code-goals.v2-experimental"
 const COMMAND_PREAMBLE = "OpenCode Goals V2 command wrapper."
 const OBJECTIVE = "real OpenCode 2 behavior canary"
 const ORDINARY_PROMPT = "ordinary OpenCode 2 request after Goal control"
 const PLAN_OBJECTIVE = "real OpenCode 2 plan boundary canary"
+const MODEL = { providerID: "canary", id: "canary" }
+const READINESS_ATTEMPTS = 20
+const READINESS_DELAY_MS = 500
 
 function appendLog(current, chunk, limit = 80_000) {
   return (current + String(chunk)).slice(-limit)
@@ -65,6 +69,7 @@ async function run(command, args, { cwd, env, allowFailure = false, timeout = 60
 
 function parseJSON(result, label) {
   const text = String(result.stdout ?? "").trim()
+  if (!text) return null
   try {
     return JSON.parse(text)
   } catch {
@@ -72,8 +77,21 @@ function parseJSON(result, label) {
   }
 }
 
+function collectPluginIDs(value) {
+  if (Array.isArray(value)) return value.flatMap(collectPluginIDs)
+  if (typeof value === "string") return [value]
+  if (!value || typeof value !== "object") return []
+  const direct = [value.id, value.pluginID, value.name].filter((item) => typeof item === "string")
+  const nested = [value.data, value.plugins, value.items].flatMap((item) => collectPluginIDs(item))
+  return [...direct, ...nested]
+}
+
 function toolNames(body) {
-  return new Set((body.tools ?? []).map((item) => String(item?.function?.name ?? item?.name ?? "")).filter(Boolean))
+  if (Array.isArray(body?.tools)) {
+    return new Set(body.tools.map((item) => String(item?.function?.name ?? item?.name ?? "")).filter(Boolean))
+  }
+  if (body?.tools && typeof body.tools === "object") return new Set(Object.keys(body.tools))
+  return new Set()
 }
 
 function contentText(content) {
@@ -365,32 +383,57 @@ async function main() {
     return parseJSON(result, `${method} ${pathname}`)
   }
 
+  const waitForPlugin = async () => {
+    let lastIDs = []
+    for (let attempt = 1; attempt <= READINESS_ATTEMPTS; attempt += 1) {
+      const response = await api("GET", "/api/plugin")
+      lastIDs = [...new Set(collectPluginIDs(response))]
+      if (lastIDs.includes(PLUGIN_ID)) return attempt
+      if (attempt < READINESS_ATTEMPTS) await new Promise((resolve) => setTimeout(resolve, READINESS_DELAY_MS))
+    }
+    throw new Error(`experimental V2 Goals plugin did not become ready after ${READINESS_ATTEMPTS} probes: ${JSON.stringify(lastIDs)}`)
+  }
+
   try {
     runSync("opencode2", ["service", "stop"], { cwd: project, env, allowFailure: true, timeout: 15_000 })
     await api("GET", "/api/health")
+    const pluginReadyAttempt = await waitForPlugin()
 
-    const createSession = async (title) => {
-      const payload = await api("POST", "/api/session", { title })
+    const createSession = async (title, agent = "build") => {
+      const payload = await api("POST", "/api/session", {
+        title,
+        agent,
+        model: MODEL,
+        location: { directory: project },
+      })
       const session = payload?.data ?? payload
       assert.ok(session?.id, `OpenCode 2 did not create a session: ${JSON.stringify(payload)}`)
       return String(session.id)
     }
 
-    const runCommand = async (sessionID, argumentsText, agent = "build") => {
-      return await api("POST", `/api/session/${encodeURIComponent(sessionID)}/command`, {
-        agent,
-        model: "canary/canary",
-        command: "goal",
-        arguments: argumentsText,
-      }, 90_000)
+    const waitForIdle = async (sessionID) => {
+      await api("POST", `/api/session/${encodeURIComponent(sessionID)}/wait`, undefined, 90_000)
     }
 
-    const runPrompt = async (sessionID, text) => {
-      return await api("POST", `/api/session/${encodeURIComponent(sessionID)}/message`, {
-        agent: "build",
-        model: { providerID: "canary", modelID: "canary" },
-        parts: [{ type: "text", text }],
+    const runCommand = async (sessionID, argumentsText, agent = "build") => {
+      await api("POST", `/api/session/${encodeURIComponent(sessionID)}/command`, {
+        agent,
+        model: MODEL,
+        command: "goal",
+        arguments: argumentsText,
+        resume: true,
       }, 90_000)
+      await waitForIdle(sessionID)
+    }
+
+    const runPrompt = async (sessionID, text, agent = "build") => {
+      await api("POST", `/api/session/${encodeURIComponent(sessionID)}/prompt`, {
+        text,
+        agent,
+        model: MODEL,
+        resume: true,
+      }, 90_000)
+      await waitForIdle(sessionID)
     }
 
     const sessionID = await createSession("OpenCode 2 Goal behavior canary")
@@ -410,7 +453,7 @@ async function main() {
     const afterStatus = await readGoal(project, sessionID)
     assert.deepEqual(afterStatus, created, "read-only /goal status changed persisted Goal state")
 
-    const planSessionID = await createSession("OpenCode 2 Plan boundary canary")
+    const planSessionID = await createSession("OpenCode 2 Plan boundary canary", "plan")
     await runCommand(planSessionID, `${PLAN_OBJECTIVE} --constraint "plan must stay paused"`, "plan")
     const planned = await readGoal(project, planSessionID)
     assert.ok(planned, "Plan /goal command did not persist Goal state")
@@ -429,6 +472,7 @@ async function main() {
       ok: true,
       platform: process.platform,
       node: process.version,
+      pluginReadyAttempt,
       sessionID,
       planSessionID,
       goalStatus: created.status,

@@ -65,6 +65,8 @@ function commandMessage(host, rawArguments) {
   return template.replace("$ARGUMENTS", () => rawArguments)
 }
 
+let requestSerial = 0
+
 async function runRequest(host, {
   sessionID,
   agent = "build",
@@ -76,7 +78,7 @@ async function runRequest(host, {
     agent,
     system,
     tools: requestTools(),
-    messages: [{ role: "user", content: text }],
+    messages: [{ id: `user-request-${++requestSerial}`, role: "user", content: text }],
   }
   await host.hooks.get("request")(event)
   return event

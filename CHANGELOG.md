@@ -2,6 +2,15 @@
 
 All notable changes to **OpenCode Goals** are documented here.
 
+## 1.3.20 — 2026-08-18
+
+Natural paused-Goal continuation UX release.
+
+- Treat a narrow allowlist of short, explicit continuation messages such as `devam et`, `continue`, `kaldığın yerden devam et`, and `resume` as resume intent when the persisted Goal is paused.
+- Route natural-language resume through the existing `/goal resume` command/ownership chain instead of mutating persistence directly, preserving budget, restricted-agent, revision, and lifecycle guards.
+- Keep arbitrary foreground chat non-mutating while paused, exclude command-owned/synthetic host messages from natural resume, and retain one-shot actionable paused guidance for ordinary chat.
+- Add Turkish/English natural-resume regressions plus ordinary-paused-chat coverage, including `stalledTurns` reset and continuation prompt ownership.
+
 ## 1.3.19 — 2026-08-18
 
 Shell completion and Windows Goal storage reliability hotfix.

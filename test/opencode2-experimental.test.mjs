@@ -279,3 +279,74 @@ test("V2 adapter fails closed when the session workspace cannot be resolved", as
     await rm(root, { recursive: true, force: true })
   }
 })
+
+
+test("tool-result request cannot reauthorize the same V2 command turn", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-turn-capability-"))
+  try {
+    const host = fakeV2Context(root)
+    await OpenCode2GoalsExperimental.setup(host.ctx)
+    const sessionID = "v2-turn-capability-session"
+    await runGoalCommand(host, "ship docs", { sessionID })
+
+    const commandText = commandMessage(host, "status")
+    const firstRequest = {
+      sessionID,
+      agent: "build",
+      system: ["base system"],
+      tools: requestTools(),
+      messages: [{ role: "user", content: commandText }],
+    }
+    await host.hooks.get("request")(firstRequest)
+    assert.ok(firstRequest.tools.opencode_goals_v2_control)
+
+    const control = host.tools.get("opencode_goals_v2_control").definition
+    const first = await control.execute(
+      { arguments: "status" },
+      { sessionID, agent: "build", messageID: "assistant-status-1", callID: "call-status-1" },
+    )
+    assert.match(first.content, /Goal: ship docs/)
+
+    const sameTurn = {
+      sessionID,
+      agent: "build",
+      system: ["base system"],
+      tools: requestTools(),
+      messages: [
+        { role: "user", content: commandText },
+        { role: "assistant", content: "control tool call" },
+        { role: "tool", content: first.content },
+      ],
+    }
+    await host.hooks.get("request")(sameTurn)
+    assert.equal(sameTurn.tools.opencode_goals_v2_control, undefined, "tool-result continuation must not recreate the consumed control capability")
+    await assert.rejects(
+      control.execute(
+        { arguments: "status" },
+        { sessionID, agent: "build", messageID: "assistant-status-replay", callID: "call-status-replay" },
+      ),
+      /no matching single-use \/goal command capability/i,
+    )
+
+    const nextTurn = {
+      sessionID,
+      agent: "build",
+      system: ["base system"],
+      tools: requestTools(),
+      messages: [
+        ...sameTurn.messages,
+        { role: "assistant", content: "status complete" },
+        { role: "user", content: commandText },
+      ],
+    }
+    await host.hooks.get("request")(nextTurn)
+    assert.ok(nextTurn.tools.opencode_goals_v2_control, "a later identical /goal command turn must receive a fresh capability")
+    const second = await control.execute(
+      { arguments: "status" },
+      { sessionID, agent: "build", messageID: "assistant-status-2", callID: "call-status-2" },
+    )
+    assert.match(second.content, /Goal: ship docs/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})

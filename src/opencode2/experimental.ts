@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import path from "node:path"
 import { createGoal, editGoal, pauseGoal, resumeGoal } from "../domain/goal.js"
 import type { GoalExecutionContext, GoalState } from "../domain/types.js"
@@ -49,6 +49,7 @@ export interface OpenCode2ExperimentalToolContext {
 
 interface PendingControl {
   arguments: string
+  turnKey: string
 }
 
 function record(value: unknown): UnknownRecord | undefined {
@@ -116,6 +117,38 @@ function commandArguments(text: string | undefined, marker: string): string | un
   const prefix = `${V2_COMMAND_PREAMBLE}\n${marker}\n`
   if (!text.startsWith(prefix)) return undefined
   return text.slice(prefix.length)
+}
+
+function commandTurnKey(messages: unknown, marker: string, rawArguments: string): string {
+  const digest = createHash("sha256").update(rawArguments).digest("hex")
+  if (!Array.isArray(messages)) return `fallback:0:${digest}`
+
+  let ordinal = 0
+  let latestMessageID: string | undefined
+  for (const message of messages) {
+    const role = roleOfMessage(message)
+    if (role && role.toLowerCase() !== "user") continue
+    const candidate = commandArguments(collectText(message), marker)
+    if (candidate === undefined) continue
+    ordinal += 1
+    if (candidate !== rawArguments) continue
+    const item = record(message)
+    latestMessageID = firstString(item?.id, record(item?.info)?.id) ?? latestMessageID
+  }
+
+  return latestMessageID ? `message:${latestMessageID}:${digest}` : `ordinal:${ordinal}:${digest}`
+}
+
+function hasMessagesAfterLatestCommand(messages: unknown, marker: string, rawArguments: string): boolean {
+  if (!Array.isArray(messages)) return false
+  let latestIndex = -1
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index]
+    const role = roleOfMessage(message)
+    if (role && role.toLowerCase() !== "user") continue
+    if (commandArguments(collectText(message), marker) === rawArguments) latestIndex = index
+  }
+  return latestIndex >= 0 && latestIndex < messages.length - 1
 }
 
 async function resolveSessionDirectory(ctx: OpenCode2ExperimentalContext, sessionID: string): Promise<string> {
@@ -331,6 +364,7 @@ export const OpenCode2GoalsExperimental = {
   setup: async (ctx: OpenCode2ExperimentalContext) => {
     const capabilityMarker = `__OPENCODE_GOALS_V2_COMMAND_${randomUUID()}__`
     const pendingControls = new Map<string, PendingControl>()
+    const consumedControls = new Map<string, string>()
 
     await ctx.command.transform((commands) => {
       commands.update("goal", (command: any) => {
@@ -348,6 +382,7 @@ export const OpenCode2GoalsExperimental = {
         execute: async (input: { arguments: string }, toolContext: OpenCode2ExperimentalToolContext) => {
           const pending = pendingControls.get(toolContext.sessionID)
           pendingControls.delete(toolContext.sessionID)
+          if (pending) consumedControls.set(toolContext.sessionID, pending.turnKey)
           if (!pending || input.arguments !== pending.arguments) {
             throw new Error("OpenCode Goals V2 control rejected: no matching single-use /goal command capability. No Goal state was read or changed.")
           }
@@ -379,7 +414,16 @@ export const OpenCode2GoalsExperimental = {
         pendingControls.delete(sessionID)
         removeControlTool(event)
       } else {
-        pendingControls.set(sessionID, { arguments: rawArguments })
+        const turnKey = commandTurnKey(event?.messages, capabilityMarker, rawArguments)
+        const consumedTurn = consumedControls.get(sessionID)
+        const hasStableMessageID = turnKey.startsWith("message:")
+        const sameTurnContinuation = hasMessagesAfterLatestCommand(event?.messages, capabilityMarker, rawArguments)
+        if (consumedTurn === turnKey && (hasStableMessageID || sameTurnContinuation)) {
+          pendingControls.delete(sessionID)
+          removeControlTool(event)
+        } else {
+          pendingControls.set(sessionID, { arguments: rawArguments, turnKey })
+        }
       }
 
       // Context injection is best-effort presentation for an already persisted
@@ -414,7 +458,10 @@ export const OpenCode2GoalsExperimental = {
       // without making it part of the current-host activation requirement.
     }
 
-    return () => pendingControls.clear()
+    return () => {
+      pendingControls.clear()
+      consumedControls.clear()
+    }
   },
 }
 

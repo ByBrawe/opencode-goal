@@ -2,6 +2,10 @@ import { createHash } from "node:crypto"
 import type CorePlugin from "./plugin.js"
 import { GoalStore, GoalStoreConcurrencyError } from "../persistence/store.js"
 import { markHostProgress } from "../runtime/progress.js"
+import {
+  beginWorkspaceMutationWatch,
+  type WorkspaceMutationWatch,
+} from "../runtime/workspace-mutation-watch.js"
 
 type PluginInput = Parameters<typeof CorePlugin>[0]
 type PluginHooks = Awaited<ReturnType<typeof CorePlugin>>
@@ -9,6 +13,7 @@ type PluginHooks = Awaited<ReturnType<typeof CorePlugin>>
 type PendingShell = {
   goalID: string
   revision: number
+  watcher: WorkspaceMutationWatch | null
 }
 
 const SHELL_TOOL = "bash"
@@ -37,18 +42,49 @@ export function shellProcessExited(output: any): boolean {
   return typeof exit === "number" && Number.isFinite(exit)
 }
 
+function shellOutput(output: any): string {
+  if (typeof output?.metadata?.output === "string") return output.metadata.output
+  return typeof output?.output === "string" ? output.output : ""
+}
+
+export function shellObservationFingerprint(args: any, output: any): string | undefined {
+  if (!shellProcessExited(output)) return undefined
+  const activity = shellActivityFingerprint(args)
+  if (!activity) return undefined
+  const outputDigest = createHash("sha256").update(shellOutput(output)).digest("hex")
+  const exit = output.metadata.exit
+  return `shell-observation:${createHash("sha256")
+    .update(activity)
+    .update("\0")
+    .update(String(exit))
+    .update("\0")
+    .update(outputDigest)
+    .digest("hex")}`
+}
+
+export function shellResultFingerprint(args: any, output: any, workspaceFingerprint?: string): string | undefined {
+  const observation = shellObservationFingerprint(args, output)
+  if (!observation) return undefined
+  return `shell-result:${createHash("sha256")
+    .update(observation)
+    .update("\0")
+    .update(workspaceFingerprint ?? "")
+    .digest("hex")}`
+}
+
 /**
- * Count completed, Goal-revision-bound shell actions as host-observed progress.
+ * Count completed, Goal-revision-bound shell work as host-observed progress.
  *
- * The core plugin already owns shell safety/cadence. This wrapper only feeds the
- * no-progress guard so real work performed through `bash` is not mistaken for a
- * stalled turn. Raw command text is never persisted; only a SHA-256 fingerprint
- * and a generic progress note are stored. Repeating the exact same command is
- * therefore a no-op for progress accounting.
+ * The core plugin still owns shell safety/cadence and completion evidence. This
+ * wrapper only feeds the no-progress guard. It combines a secret-safe hash of
+ * command/exit/output with a bounded project-local filesystem watcher so the
+ * same command can count again only when its host-observed result or workspace
+ * effect actually changes. Raw command/output/path values are never persisted.
  *
  * OpenCode 1.4.0+ reports a numeric metadata.exit when the shell process really
  * exits and null when the tool is aborted or times out. Incomplete executions
- * must not manufacture progress merely because tool.execute.after still fires.
+ * never mark shell progress, even if they emitted filesystem events before the
+ * abort/timeout boundary.
  */
 export function installShellProgress(input: PluginInput, hooks: PluginHooks): void {
   const beforeHook = hooks["tool.execute.before"]
@@ -58,11 +94,17 @@ export function installShellProgress(input: PluginInput, hooks: PluginHooks): vo
   const store = new GoalStore(input.directory)
   const pending = new Map<string, PendingShell>()
 
+  function dispose(value: PendingShell | undefined) {
+    value?.watcher?.dispose()
+  }
+
   function remember(key: string, value: PendingShell) {
+    dispose(pending.get(key))
     pending.set(key, value)
     while (pending.size > MAX_PENDING_SHELL_CALLS) {
       const oldest = pending.keys().next().value
       if (typeof oldest !== "string") break
+      dispose(pending.get(oldest))
       pending.delete(oldest)
     }
   }
@@ -76,20 +118,33 @@ export function installShellProgress(input: PluginInput, hooks: PluginHooks): vo
 
     const goal = await store.load(event.sessionID)
     if (!goal || goal.status !== "active") return
-    remember(key, { goalID: goal.id, revision: goal.revision })
+    const watcher = await beginWorkspaceMutationWatch(input.directory).catch(() => null)
+    remember(key, { goalID: goal.id, revision: goal.revision, watcher })
   }
 
   hooks["tool.execute.after"] = async (event: any, output: any) => {
-    await afterHook(event, output)
-    if (event?.tool !== SHELL_TOOL) return
+    const shellKey = event?.tool === SHELL_TOOL ? callKey(event.sessionID, event.callID) : undefined
+    const owned = shellKey ? pending.get(shellKey) : undefined
+    if (shellKey) pending.delete(shellKey)
 
-    const key = callKey(event.sessionID, event.callID)
-    if (!key) return
-    const owned = pending.get(key)
-    pending.delete(key)
-    if (!owned || !shellProcessExited(output)) return
+    try {
+      await afterHook(event, output)
+    } catch (error) {
+      dispose(owned)
+      throw error
+    }
 
-    const fingerprint = shellActivityFingerprint(event.args)
+    if (event?.tool !== SHELL_TOOL || !owned) return
+
+    let workspaceFingerprint: string | undefined
+    try {
+      workspaceFingerprint = (await owned.watcher?.finish())?.fingerprint
+    } catch {
+      dispose(owned)
+    }
+
+    if (!shellProcessExited(output)) return
+    const fingerprint = shellResultFingerprint(event.args, output, workspaceFingerprint)
     if (!fingerprint) return
 
     for (let attempt = 0; attempt < MAX_SAVE_ATTEMPTS; attempt += 1) {
@@ -99,7 +154,7 @@ export function installShellProgress(input: PluginInput, hooks: PluginHooks): vo
       const next = markHostProgress(goal, {
         fingerprint,
         source: "tool:bash",
-        summary: "Goal-owned shell command completed.",
+        summary: "Goal-owned shell command completed with a new host-observed result.",
       })
       if (next === goal) return
 

@@ -21,10 +21,12 @@ async function createGoal(hooks, objective, sessionID = "parent") {
 test("verifier infrastructure failure pauses the Goal and prevents idle retry loops", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-verifier-circuit-"))
   let parentPromptCalls = 0
+  let createCalls = 0
   try {
     const client = {
       session: {
         async create() {
+          createCalls += 1
           throw new Error("verifier provider unavailable")
         },
         async prompt() {
@@ -44,6 +46,7 @@ test("verifier infrastructure failure pauses the Goal and prevents idle retry lo
     )
     assert.match(first, /Completion not verified:/)
     assert.match(first, /Goal paused to prevent repeated verifier retries/)
+    assert.equal(createCalls, 1, "non-timeout verifier infrastructure failures must not be retried automatically")
 
     const paused = await stateFor(root)
     assert.equal(paused.status, "paused")
@@ -59,6 +62,45 @@ test("verifier infrastructure failure pauses the Goal and prevents idle retry lo
     await hooks.event({ event: { type: "session.idle", properties: { sessionID: "parent" } } })
     await new Promise((resolve) => setTimeout(resolve, 10))
     assert.equal(parentPromptCalls, 0, "paused verifier failure must not dispatch a fresh continuation on idle")
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("semantic verifier timeout gets exactly one fresh retry before the circuit breaker pauses", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-verifier-timeout-retry-"))
+  let createCalls = 0
+  try {
+    const client = {
+      session: {
+        async create() {
+          createCalls += 1
+          return await new Promise(() => {})
+        },
+        async prompt() { return {} },
+        async abort() { return true },
+        async delete() { return true },
+      },
+    }
+    const hooks = await OpenCodeGoalPlugin(
+      { client, directory: root },
+      { verifierTimeoutMs: 15 },
+    )
+    await createGoal(hooks, "finish the requested work")
+
+    const result = await hooks.tool.opencode_goal_complete.execute(
+      { summary: "done" },
+      { sessionID: "parent", messageID: "executor-current", agent: "build" },
+    )
+
+    assert.match(result, /Completion not verified:/)
+    assert.match(result, /after one automatic timeout retry/)
+    assert.equal(createCalls, 2, "a verifier timeout should get one fresh session attempt, never an unbounded retry loop")
+
+    const paused = await stateFor(root)
+    assert.equal(paused.status, "paused")
+    assert.match(paused.stopReason, /after one automatic timeout retry/)
+    assert.match(paused.stopReason, /timed out after 15ms/)
   } finally {
     await rm(root, { recursive: true, force: true })
   }

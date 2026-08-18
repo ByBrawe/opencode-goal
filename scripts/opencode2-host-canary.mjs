@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const pluginID = "bybrawe.open-code-goals.v2-experimental"
 const sentinelID = "bybrawe.open-code-goals.v2-canary-sentinel"
+const probeID = "bybrawe.open-code-goals.v2-api-probe"
 const PLUGIN_READY_ATTEMPTS = 10
 const PLUGIN_READY_DELAY_MS = 500
 
@@ -93,8 +94,10 @@ async function main() {
   const pluginDirectory = path.join(opencodeDirectory, "plugins")
   const pluginFile = path.join(root, "dist", "opencode2", "experimental.js")
   const sentinelMarkerFile = path.join(temp, "v2-sentinel-setup-loaded")
+  const probeMarkerFile = path.join(temp, "v2-api-surface-probe.json")
   const adapterBridge = path.join(pluginDirectory, "opencode-goals-v2-canary.js")
   const sentinelFile = path.join(pluginDirectory, "00-opencode-goals-v2-sentinel.js")
+  const probeFile = path.join(pluginDirectory, "01-opencode-goals-v2-api-probe.js")
 
   await Promise.all([
     mkdir(pluginDirectory, { recursive: true }),
@@ -109,6 +112,57 @@ async function main() {
       'import { writeFile } from "node:fs/promises"',
       `export default { id: ${JSON.stringify(sentinelID)}, setup: async () => {`,
       `  await writeFile(${JSON.stringify(sentinelMarkerFile)}, "loaded\\n", "utf8")`,
+      "} }",
+      "",
+    ].join("\n"),
+  )
+  await writeFile(
+    probeFile,
+    [
+      'import { writeFile } from "node:fs/promises"',
+      `const markerFile = ${JSON.stringify(probeMarkerFile)}`,
+      "function commandSnapshot(value) {",
+      "  if (!value || typeof value !== 'object') return null",
+      "  return {",
+      "    name: typeof value.name === 'string' ? value.name : null,",
+      "    description: typeof value.description === 'string' ? value.description : null,",
+      "    template: typeof value.template === 'string' ? value.template : null,",
+      "  }",
+      "}",
+      "async function save(value) {",
+      "  await writeFile(markerFile, `${JSON.stringify(value, null, 2)}\\n`, 'utf8')",
+      "}",
+      `export default { id: ${JSON.stringify(probeID)}, setup: async (ctx) => {`,
+      "  const result = {",
+      "    contextKeys: Object.keys(ctx ?? {}).sort(),",
+      "    commandType: typeof ctx?.command,",
+      "    commandTransformType: typeof ctx?.command?.transform,",
+      "    toolType: typeof ctx?.tool,",
+      "    sessionType: typeof ctx?.session,",
+      "  }",
+      "  try {",
+      "    if (typeof ctx?.command?.transform !== 'function') {",
+      "      result.commandTransform = 'unavailable'",
+      "    } else {",
+      "      await ctx.command.transform((commands) => {",
+      "        result.commandDraftKeys = Object.keys(commands ?? {}).sort()",
+      "        result.commandGetType = typeof commands?.get",
+      "        result.commandUpdateType = typeof commands?.update",
+      "        result.goalBefore = typeof commands?.get === 'function' ? commandSnapshot(commands.get('goal')) : null",
+      "        if (typeof commands?.update !== 'function') throw new TypeError('command draft update() unavailable')",
+      "        commands.update('goal', (command) => {",
+      "          command.description = 'OpenCode Goals V2 API surface probe'",
+      "          command.template = 'PROBE_ONLY'",
+      "        })",
+      "        result.goalAfter = typeof commands?.get === 'function' ? commandSnapshot(commands.get('goal')) : null",
+      "      })",
+      "      result.commandTransform = 'success'",
+      "    }",
+      "  } catch (error) {",
+      "    result.commandTransform = 'error'",
+      "    result.commandError = error instanceof Error ? `${error.name}: ${error.message}` : String(error)",
+      "  }",
+      "  await save(result)",
       "} }",
       "",
     ].join("\n"),
@@ -154,6 +208,7 @@ async function main() {
     let response = null
     let ids = []
     let sentinelMarker = null
+    let probeMarker = null
     const activationAttempts = []
 
     for (let attempt = 1; attempt <= PLUGIN_READY_ATTEMPTS; attempt += 1) {
@@ -172,26 +227,34 @@ async function main() {
 
       ids = [...new Set(collectPluginIDs(response))]
       sentinelMarker = await fileTextIfPresent(sentinelMarkerFile)
+      probeMarker = await fileTextIfPresent(probeMarkerFile)
       const sentinelListed = ids.includes(sentinelID)
       const sentinelSetup = sentinelMarker === "loaded\n"
+      const probeListed = ids.includes(probeID)
+      const probeSetup = Boolean(probeMarker)
       const adapterListed = ids.includes(pluginID)
       activationAttempts.push({
         attempt,
         activePluginCount: ids.length,
         sentinelListed,
         sentinelSetup,
+        probeListed,
+        probeSetup,
         adapterListed,
       })
 
-      if (sentinelListed && sentinelSetup && adapterListed) break
+      if (sentinelListed && sentinelSetup && probeListed && probeSetup && adapterListed) break
       if (attempt < PLUGIN_READY_ATTEMPTS) await sleep(PLUGIN_READY_DELAY_MS)
     }
+
+    const probeEvidence = probeMarker?.trim() || "<probe marker unavailable>"
 
     if (!ids.includes(sentinelID)) {
       throw new Error([
         `OpenCode 2 did not activate the minimal V2 { id, setup } plugin after ${PLUGIN_READY_ATTEMPTS} bounded project-scoped readiness checks.`,
         "The first /api/plugin response may legitimately precede project plugin activation; the canary retries the same service instead of treating that transient empty registry as a permanent incompatibility.",
         `V2 sentinel setup marker written: ${sentinelMarker === "loaded\n"}`,
+        `V2 API probe: ${probeEvidence}`,
         `Active V2 IDs: ${JSON.stringify(ids)}`,
         `Activation attempts: ${JSON.stringify(activationAttempts)}`,
         `Last raw response: ${String(pluginResult?.stdout ?? "")}`,
@@ -201,14 +264,24 @@ async function main() {
       throw new Error([
         `OpenCode 2 listed ${sentinelID}, but its setup() side effect did not run after the bounded readiness window.`,
         "Discovery/registry visibility exists, but V2 setup activation is not proven for this beta host.",
+        `V2 API probe: ${probeEvidence}`,
         `Active V2 IDs: ${JSON.stringify(ids)}`,
         `Activation attempts: ${JSON.stringify(activationAttempts)}`,
         `Last raw response: ${String(pluginResult?.stdout ?? "")}`,
       ].join("\n"))
     }
+    if (!ids.includes(probeID) || !probeMarker) {
+      throw new Error([
+        `OpenCode 2 did not activate the Promise V2 API-surface probe ${probeID}.`,
+        `Probe marker: ${probeEvidence}`,
+        `Active V2 IDs: ${JSON.stringify(ids)}`,
+        `Activation attempts: ${JSON.stringify(activationAttempts)}`,
+      ].join("\n"))
+    }
     if (!ids.includes(pluginID)) {
       throw new Error([
-        `OpenCode 2 activated the V2 sentinel but not ${pluginID}; the Goals adapter module/setup is incompatible with this beta host.`,
+        `OpenCode 2 activated the V2 sentinel and API probe but not ${pluginID}; the Goals adapter module/setup is incompatible with this beta host.`,
+        `V2 API probe: ${probeEvidence}`,
         `Active IDs: ${JSON.stringify(ids)}`,
         `Activation attempts: ${JSON.stringify(activationAttempts)}`,
         `Last raw response: ${String(pluginResult?.stdout ?? "")}`,
@@ -224,12 +297,16 @@ async function main() {
       projectDirectory: response.location.directory,
       projectID: response.location.project.id,
       v2SentinelSetupExecuted: true,
+      probeID,
+      probe: JSON.parse(probeMarker),
       sentinelID,
       pluginID,
       activePluginIDs: ids,
       activationAttempts,
     }, null, 2))
   } catch (error) {
+    const probeMarker = await fileTextIfPresent(probeMarkerFile)
+    if (probeMarker) console.error(`OpenCode 2 Promise API surface probe:\n${probeMarker}`)
     const logs = await failureLog(env)
     if (logs) console.error(`OpenCode 2 server log tail:\n${logs}`)
     throw error

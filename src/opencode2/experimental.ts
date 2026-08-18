@@ -23,6 +23,7 @@ const V2_UNSUPPORTED_ACTIONS = new Set([
   "queue_clear",
   "next",
 ])
+const MAX_CONSUMED_COMMAND_MESSAGES = 512
 
 type UnknownRecord = Record<string, unknown>
 
@@ -49,6 +50,12 @@ export interface OpenCode2ExperimentalToolContext {
 
 interface PendingControl {
   arguments: string
+  messageKey: string
+}
+
+interface UserMessageSnapshot {
+  id?: string
+  text: string
 }
 
 function record(value: unknown): UnknownRecord | undefined {
@@ -64,6 +71,19 @@ function firstString(...values: unknown[]): string | undefined {
     if (typeof value === "string" && value.trim()) return value.trim()
   }
   return undefined
+}
+
+function opaqueID(value: unknown): string | undefined {
+  if (typeof value === "string" && value.trim()) return value.trim()
+  const item = record(value)
+  return firstString(item?.id, item?.value)
+}
+
+function messageID(value: unknown): string | undefined {
+  const item = record(value)
+  return opaqueID(item?.id)
+    ?? opaqueID(nestedRecord(value, "info")?.id)
+    ?? opaqueID(nestedRecord(value, "message")?.id)
 }
 
 function isPlanAgent(value: unknown): boolean {
@@ -82,7 +102,7 @@ function sessionIDFromEvent(event: unknown): string | undefined {
 
 function roleOfMessage(value: unknown): string | undefined {
   const item = record(value)
-  return firstString(item?.role, nestedRecord(value, "info")?.role)
+  return firstString(item?.role, nestedRecord(value, "info")?.role, item?.type, nestedRecord(value, "info")?.type)
 }
 
 function collectText(value: unknown, depth = 0): string {
@@ -99,14 +119,16 @@ function collectText(value: unknown, depth = 0): string {
   return ""
 }
 
-function latestUserText(messages: unknown): string | undefined {
+function latestUserMessage(messages: unknown): UserMessageSnapshot | undefined {
   if (!Array.isArray(messages)) return undefined
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index]
     const role = roleOfMessage(message)
     if (role && role.toLowerCase() !== "user") continue
     const text = collectText(message)
-    if (text) return text
+    if (!text) continue
+    const id = messageID(message)
+    return id ? { text, id } : { text }
   }
   return undefined
 }
@@ -331,6 +353,18 @@ export const OpenCode2GoalsExperimental = {
   setup: async (ctx: OpenCode2ExperimentalContext) => {
     const capabilityMarker = `__OPENCODE_GOALS_V2_COMMAND_${randomUUID()}__`
     const pendingControls = new Map<string, PendingControl>()
+    const consumedCommandMessages = new Set<string>()
+    const consumedOrder: string[] = []
+
+    const consumeMessage = (messageKey: string) => {
+      if (consumedCommandMessages.has(messageKey)) return
+      consumedCommandMessages.add(messageKey)
+      consumedOrder.push(messageKey)
+      while (consumedOrder.length > MAX_CONSUMED_COMMAND_MESSAGES) {
+        const stale = consumedOrder.shift()
+        if (stale) consumedCommandMessages.delete(stale)
+      }
+    }
 
     await ctx.command.transform((commands) => {
       commands.update("goal", (command: any) => {
@@ -348,6 +382,7 @@ export const OpenCode2GoalsExperimental = {
         execute: async (input: { arguments: string }, toolContext: OpenCode2ExperimentalToolContext) => {
           const pending = pendingControls.get(toolContext.sessionID)
           pendingControls.delete(toolContext.sessionID)
+          if (pending) consumeMessage(pending.messageKey)
           if (!pending || input.arguments !== pending.arguments) {
             throw new Error("OpenCode Goals V2 control rejected: no matching single-use /goal command capability. No Goal state was read or changed.")
           }
@@ -374,17 +409,20 @@ export const OpenCode2GoalsExperimental = {
         return
       }
 
-      const rawArguments = commandArguments(latestUserText(event?.messages), capabilityMarker)
-      if (rawArguments === undefined) {
+      const latestUser = latestUserMessage(event?.messages)
+      const rawArguments = commandArguments(latestUser?.text, capabilityMarker)
+      const messageKey = latestUser?.id ? `${sessionID}\u0000${latestUser.id}` : undefined
+      if (rawArguments === undefined || !messageKey || consumedCommandMessages.has(messageKey)) {
         pendingControls.delete(sessionID)
         removeControlTool(event)
       } else {
-        pendingControls.set(sessionID, { arguments: rawArguments })
+        pendingControls.set(sessionID, { arguments: rawArguments, messageKey })
       }
 
-      // Context injection is best-effort presentation for an already persisted
-      // Goal. Control operations themselves resolve the workspace again and
-      // fail closed before storage access if V2 cannot provide location.directory.
+      // Request-context injection is best-effort presentation for an already
+      // persisted Goal. Control operations themselves resolve the workspace
+      // again and fail closed before storage access if V2 cannot provide
+      // location.directory.
       let directory: string
       try {
         directory = await resolveSessionDirectory(ctx, sessionID)
@@ -406,15 +444,21 @@ export const OpenCode2GoalsExperimental = {
       appendSystemContext(event, experimentalContext(goal))
     }
 
-    await ctx.session.hook("request", handleRequest)
+    let requestHookRegistered = false
     try {
-      await ctx.session.hook("context", handleRequest)
+      await ctx.session.hook("request", handleRequest)
+      requestHookRegistered = true
     } catch {
-      // Some earlier V2 prototypes exposed this hook name. Keep it best-effort
-      // without making it part of the current-host activation requirement.
+      // Current V2 documents the request hook. Keep the older experimental
+      // context hook only as a registration fallback while V2 remains beta.
     }
+    if (!requestHookRegistered) await ctx.session.hook("context", handleRequest)
 
-    return () => pendingControls.clear()
+    return () => {
+      pendingControls.clear()
+      consumedCommandMessages.clear()
+      consumedOrder.splice(0, consumedOrder.length)
+    }
   },
 }
 

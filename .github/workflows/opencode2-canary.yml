@@ -9,12 +9,14 @@ on:
     paths:
       - "src/opencode2/**"
       - "scripts/opencode2-host-canary.mjs"
+      - "scripts/opencode2-goal-behavior-canary.mjs"
       - "scripts/run-opencode2-host-ci.mjs"
       - ".github/workflows/opencode2-canary.yml"
   pull_request:
     paths:
       - "src/opencode2/**"
       - "scripts/opencode2-host-canary.mjs"
+      - "scripts/opencode2-goal-behavior-canary.mjs"
       - "scripts/run-opencode2-host-ci.mjs"
       - ".github/workflows/opencode2-canary.yml"
 
@@ -28,7 +30,7 @@ permissions:
 jobs:
   plugin-host:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v6
         with:

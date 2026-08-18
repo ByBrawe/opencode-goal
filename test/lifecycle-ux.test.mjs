@@ -38,6 +38,13 @@ async function command(hooks, argumentsText, sessionID = "session-ux") {
   return output
 }
 
+async function bindCommandChat(hooks, output, messageID, sessionID = "session-ux") {
+  await hooks["chat.message"](
+    { sessionID, messageID, agent: "build" },
+    { message: { id: messageID }, parts: output.parts },
+  )
+}
+
 async function foregroundChat(hooks, text, messageID, sessionID = "session-ux") {
   const output = { message: { id: messageID }, parts: [{ type: "text", text }] }
   await hooks["chat.message"](
@@ -130,16 +137,14 @@ test("foreground chat on an automatically paused Goal warns once without silentl
     assert.equal(warnings.length, 1, "the same paused snapshot should not spam repeated foreground-chat warnings")
 
     const status = await command(hooks, "status")
-    await hooks["chat.message"](
-      { sessionID: "session-ux", messageID: "status-owned", agent: "build" },
-      status,
-    )
+    await bindCommandChat(hooks, status, "status-owned")
     warnings = fake.toasts.filter((item) => item?.body?.variant === "warning" && /Goal remains paused/.test(item?.body?.message ?? ""))
     assert.equal(warnings.length, 1, "read-only Goal commands must not be mistaken for foreground chat")
 
-    await command(hooks, "resume")
+    const resume = await command(hooks, "resume")
     persisted = await readOnlyGoal(root)
     assert.equal(persisted.status, "active")
+    await bindCommandChat(hooks, resume, "resume-owned")
 
     const resumed = await store.load("session-ux")
     assert.ok(resumed)

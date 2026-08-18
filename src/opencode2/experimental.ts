@@ -326,6 +326,23 @@ const controlOutputSchema = {
   additionalProperties: false,
 } as const
 
+function addExperimentalTool(tools: any, name: string, definition: any): void {
+  const add = tools?.add
+  if (typeof add !== "function") {
+    throw new Error("OpenCode Goals V2 experimental adapter requires a tool draft with add().")
+  }
+
+  // beta-17498 exposes add(definition) and validates definition.name after the
+  // transform callback returns. Earlier local prototypes used
+  // add(name, definition, options), so retain that shape only when the host
+  // explicitly exposes a multi-argument function.
+  if (add.length === 1) {
+    add.call(tools, { ...definition, name, codemode: false })
+    return
+  }
+  add.call(tools, name, definition, { codemode: false })
+}
+
 export const OpenCode2GoalsExperimental = {
   id: OPENCODE2_EXPERIMENTAL_PLUGIN_ID,
   setup: async (ctx: OpenCode2ExperimentalContext) => {
@@ -341,7 +358,7 @@ export const OpenCode2GoalsExperimental = {
     })
 
     await ctx.tool.transform((tools) => {
-      tools.add(V2_CONTROL_TOOL, {
+      addExperimentalTool(tools, V2_CONTROL_TOOL, {
         description: "Request-scoped OpenCode Goals V2 lifecycle control. It is available only to an authorized /goal command turn and accepts only that command's exact raw arguments.",
         input: controlInputSchema,
         output: controlOutputSchema,
@@ -353,9 +370,9 @@ export const OpenCode2GoalsExperimental = {
           }
           return await executeOpenCode2GoalControl(ctx, input.arguments, toolContext)
         },
-      }, { codemode: false })
+      })
 
-      tools.add(V2_GET_TOOL, {
+      addExperimentalTool(tools, V2_GET_TOOL, {
         description: "Read the current persisted OpenCode Goal through the experimental V2 adapter.",
         input: { type: "object", properties: {}, additionalProperties: false },
         output: controlOutputSchema,
@@ -364,7 +381,7 @@ export const OpenCode2GoalsExperimental = {
           const goal = await new GoalStore(directory).load(toolContext.sessionID)
           return toolResponse(formatStatus(goal), goal)
         },
-      }, { codemode: false })
+      })
     })
 
     const handleRequest = async (event: any) => {

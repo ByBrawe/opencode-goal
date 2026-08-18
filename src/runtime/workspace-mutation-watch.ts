@@ -41,7 +41,9 @@ function ignored(relative: string): boolean {
   const [first, second] = relative.split("/")
   if (!first) return true
   if (IGNORED_TOP_LEVEL.has(first)) return true
-  return first === ".opencode" && Boolean(second && IGNORED_OPENCODE_DIRS.has(second))
+  if (first !== ".opencode") return false
+  if (!second) return true
+  return IGNORED_OPENCODE_DIRS.has(second)
 }
 
 async function safeExistingAncestor(root: string, realRoot: string, candidate: string): Promise<boolean> {
@@ -101,15 +103,10 @@ async function pathState(root: string, realRoot: string, relative: string): Prom
     return `deleted:${relative}`
   }
 
-  if (stat.isSymbolicLink()) {
-    if (!(await safeExistingAncestor(root, realRoot, candidate))) return null
-    try {
-      const target = await fs.readlink(candidate)
-      return `symlink:${relative}:${createHash("sha256").update(target).digest("hex")}`
-    } catch {
-      return null
-    }
-  }
+  // Recursive fs.watch may surface an event for a project symlink when only its
+  // external target changed. Do not use symlink events as shell progress at all;
+  // this keeps external filesystem activity outside the project trust boundary.
+  if (stat.isSymbolicLink()) return null
 
   let real: string
   try {

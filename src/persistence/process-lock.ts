@@ -44,7 +44,7 @@ export interface GoalStoreProcessLockInput {
 
 const POLL_MS = 20
 const SAFE_PATH_RACE_RETRIES = 3
-const LOCK_READ_ACCESS_RETRIES = 5
+const LOCK_ACCESS_RETRIES = 5
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -76,7 +76,7 @@ function validOwner(value: unknown): value is LockOwner {
     && path.basename(owner.candidateName) === owner.candidateName
 }
 
-function transientLockReadAccessError(error: unknown): boolean {
+function transientLockAccessError(error: unknown): boolean {
   const code = String((error as NodeJS.ErrnoException)?.code ?? "")
   return process.platform === "win32" && ["EPERM", "EACCES", "EBUSY"].includes(code)
 }
@@ -94,7 +94,7 @@ async function readOwner(file: string): Promise<LockOwner | null> {
       // process is publishing/removing the lock. Retry only access/share errors
       // for a small bounded window. Persistent permission failures still escape
       // unchanged, and malformed owner bytes remain fail-closed below.
-      if (!transientLockReadAccessError(error) || attempt >= LOCK_READ_ACCESS_RETRIES) throw error
+      if (!transientLockAccessError(error) || attempt >= LOCK_ACCESS_RETRIES) throw error
       await sleep(10 * (attempt + 1))
     }
   }
@@ -155,6 +155,22 @@ async function assertSafeWithRaceRetry(target: string, assertSafe: (target: stri
   }
 }
 
+async function lstatLockFile(file: string) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await fs.lstat(file)
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (code === "ENOENT") return null
+      // Windows may briefly deny metadata access to a canonical hard-link while
+      // another process publishes/removes it. Bound retries to the same narrow
+      // access/share errors as owner reads; persistent denials still fail closed.
+      if (!transientLockAccessError(error) || attempt >= LOCK_ACCESS_RETRIES) throw error
+      await sleep(10 * (attempt + 1))
+    }
+  }
+}
+
 /**
  * Canonical lock files are hard links to private candidate files by design.
  * On Windows, realpath() for a hard link may report a different equivalent
@@ -165,13 +181,8 @@ async function assertSafeWithRaceRetry(target: string, assertSafe: (target: stri
  */
 async function assertSafeLockFile(target: string, assertSafe: (target: string) => Promise<void>): Promise<void> {
   await assertSafeWithRaceRetry(path.dirname(target), assertSafe)
-  let stat
-  try {
-    stat = await fs.lstat(target)
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return
-    throw error
-  }
+  const stat = await lstatLockFile(target)
+  if (!stat) return
   if (stat.isSymbolicLink()) await assertSafeWithRaceRetry(target, assertSafe)
 }
 

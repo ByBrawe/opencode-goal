@@ -9,6 +9,8 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 import { GoalStore } from "../dist/persistence/store.js"
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
+const V2_PLUGIN_ID = "bybrawe.open-code-goals.v2-experimental"
+const SENTINEL_ID = "bybrawe.open-code-goals.v2-behavior-sentinel"
 const CONTROL_TOOL = "opencode_goals_v2_control"
 const GET_TOOL = "opencode_goals_v2_get"
 const MODEL = { providerID: "canary", id: "canary" }
@@ -16,9 +18,15 @@ const MISMATCH_ARGUMENTS = "mismatch objective must never persist"
 const EXACT_ARGUMENTS = 'real v2 goal behavior --success "exact args persist" --constraint "no unrelated mutation"'
 const PLAN_ARGUMENTS = 'plan safety canary --success "saved but paused"'
 const ORDINARY_TEXT = "ordinary follow-up must not receive Goal lifecycle control"
+const PLUGIN_READY_ATTEMPTS = 10
+const PLUGIN_READY_DELAY_MS = 500
 
 function appendLog(current, chunk, limit = 80_000) {
   return (current + String(chunk)).slice(-limit)
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 async function run(command, args, { cwd, env, allowFailure = false, timeout = 60_000 } = {}) {
@@ -57,6 +65,24 @@ function parseJSONOutput(result, label) {
     return JSON.parse(text)
   } catch {
     throw new Error(`${label} did not return JSON on stdout.\nstdout:\n${text}\nstderr:\n${String(result.stderr ?? "")}`)
+  }
+}
+
+function collectPluginIDs(value) {
+  if (Array.isArray(value)) return value.flatMap(collectPluginIDs)
+  if (typeof value === "string") return [value]
+  if (!value || typeof value !== "object") return []
+  const direct = [value.id, value.pluginID, value.name].filter((item) => typeof item === "string")
+  const nested = [value.data, value.plugins, value.items].flatMap((item) => collectPluginIDs(item))
+  return [...direct, ...nested]
+}
+
+async function fileTextIfPresent(file) {
+  try {
+    return await readFile(file, "utf8")
+  } catch (error) {
+    if (error?.code === "ENOENT") return null
+    throw error
   }
 }
 
@@ -289,6 +315,8 @@ async function main() {
   const pluginDirectory = path.join(project, ".opencode", "plugins")
   const pluginFile = path.join(root, "dist", "opencode2", "experimental.js")
   const adapterBridge = path.join(pluginDirectory, "opencode-goals-v2-behavior.js")
+  const sentinelFile = path.join(pluginDirectory, "00-opencode-goals-v2-behavior-sentinel.js")
+  const sentinelMarkerFile = path.join(temp, "v2-behavior-sentinel-loaded")
   const provider = startProvider()
   const providerPort = await provider.listen()
 
@@ -299,6 +327,16 @@ async function main() {
     mkdir(state, { recursive: true }),
   ])
 
+  await writeFile(
+    sentinelFile,
+    [
+      'import { writeFile } from "node:fs/promises"',
+      `export default { id: ${JSON.stringify(SENTINEL_ID)}, setup: async () => {`,
+      `  await writeFile(${JSON.stringify(sentinelMarkerFile)}, "loaded\\n", "utf8")`,
+      "} }",
+      "",
+    ].join("\n"),
+  )
   await writeFile(adapterBridge, `export { default } from ${JSON.stringify(pathToFileURL(pluginFile).href)}\n`)
   await writeFile(path.join(project, "README.md"), "# OpenCode 2 Goal behavior canary\n")
   await writeFile(path.join(project, "opencode.json"), `${JSON.stringify({
@@ -334,6 +372,7 @@ async function main() {
     XDG_STATE_HOME: state,
     OPENCODE_DB: path.join(data, "opencode", "opencode-v2-behavior.db"),
     OPENCODE_LOG_LEVEL: "DEBUG",
+    OPENCODE_DISABLE_AUTOUPDATE: "true",
     CI: "true",
   }
 
@@ -350,6 +389,31 @@ async function main() {
     const text = String(result.stdout ?? "").trim()
     if (!text) return null
     return parseJSONOutput(result, `${method.toUpperCase()} ${pathname}`)
+  }
+
+  const waitForProjectPluginsReady = async () => {
+    const pluginPath = `/api/plugin?location%5Bdirectory%5D=${encodeURIComponent(project)}`
+    const attempts = []
+    for (let attempt = 1; attempt <= PLUGIN_READY_ATTEMPTS; attempt += 1) {
+      const response = await api("get", pluginPath)
+      if (response?._tag) throw new Error(`behavior canary project Location was rejected: ${JSON.stringify(response)}`)
+      if (path.resolve(response?.location?.directory ?? "") !== path.resolve(project)) {
+        throw new Error(`behavior canary resolved the wrong project Location: expected ${project}, got ${String(response?.location?.directory)}`)
+      }
+      if (response?.location?.project?.id === "global") {
+        throw new Error(`behavior canary project was classified as global: ${JSON.stringify(response.location)}`)
+      }
+
+      const ids = [...new Set(collectPluginIDs(response))]
+      const marker = await fileTextIfPresent(sentinelMarkerFile)
+      const sentinelListed = ids.includes(SENTINEL_ID)
+      const sentinelSetup = marker === "loaded\n"
+      const adapterListed = ids.includes(V2_PLUGIN_ID)
+      attempts.push({ attempt, activePluginCount: ids.length, sentinelListed, sentinelSetup, adapterListed })
+      if (sentinelListed && sentinelSetup && adapterListed) return { attempt, attempts }
+      if (attempt < PLUGIN_READY_ATTEMPTS) await sleep(PLUGIN_READY_DELAY_MS)
+    }
+    throw new Error(`behavior canary V2 plugins were not ready after ${PLUGIN_READY_ATTEMPTS} bounded project-scoped checks: ${JSON.stringify(attempts)}`)
   }
 
   const createSession = async ({ title, agent }) => {
@@ -386,12 +450,14 @@ async function main() {
     await api("post", `/api/session/${encodeURIComponent(sessionID)}/wait`)
   }
 
+  let pluginReadiness = null
   try {
     await run("opencode2", ["service", "stop"], { cwd: project, env, allowFailure: true, timeout: 20_000 })
     const version = String((await run("opencode2", ["--version"], { cwd: project, env, timeout: 30_000 })).stdout ?? "").trim()
     assert.ok(version, "opencode2 --version returned no output")
     const health = await api("get", "/api/health")
     assert.ok(health, "OpenCode 2 health API returned no payload")
+    pluginReadiness = await waitForProjectPluginsReady()
 
     const buildSession = await createSession({ title: "OpenCode Goals V2 behavior", agent: "build" })
     const store = new GoalStore(project)
@@ -435,6 +501,8 @@ async function main() {
       platform: process.platform,
       node: process.version,
       opencode2Version: version,
+      pluginReadyAttempt: pluginReadiness.attempt,
+      pluginReadinessAttempts: pluginReadiness.attempts,
       buildSession,
       planSession,
       exactGoalID: exactGoal.id,
@@ -456,6 +524,7 @@ async function main() {
       }
     }
     if (logTail) console.error(`OpenCode 2 server log tail:\n${logTail}`)
+    console.error(`Plugin readiness:\n${JSON.stringify(pluginReadiness, null, 2)}`)
     console.error(`Provider observations:\n${JSON.stringify(provider.stats, null, 2)}`)
     throw error
   } finally {

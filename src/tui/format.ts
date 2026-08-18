@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto"
 import { lstatSync, readFileSync, realpathSync } from "node:fs"
 import path from "node:path"
+import { translateCoreText } from "../i18n.js"
 
 function shard(value: string): string {
   return createHash("sha256").update(value).digest("hex").slice(0, 32)
@@ -93,7 +94,7 @@ export function formatGoalSidebar(root: string, sessionID: string): string {
 
   if (sequenceRead.state === "invalid" || (sequenceRead.state === "valid" && !sequence)) {
     lines.push("! Queue storage unavailable")
-    return lines.join("\n")
+    return translateCoreText(lines.join("\n"))
   }
 
   const items = sequence?.items ?? []
@@ -102,5 +103,5 @@ export function formatGoalSidebar(root: string, sessionID: string): string {
     lines.push(`${index + 1}. ${item.activating ? "↻ " : ""}${truncate(item.objective, 42)}`)
   }
   if (items.length > 3) lines.push(`… +${items.length - 3} more`)
-  return lines.join("\n")
+  return translateCoreText(lines.join("\n"))
 }

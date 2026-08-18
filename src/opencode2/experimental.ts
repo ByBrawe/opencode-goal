@@ -100,15 +100,15 @@ function collectText(value: unknown, depth = 0): string {
 }
 
 function latestUserText(messages: unknown): string | undefined {
-  if (!Array.isArray(messages)) return undefined
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index]
-    const role = roleOfMessage(message)
-    if (role && role.toLowerCase() !== "user") continue
-    const text = collectText(message)
-    if (text) return text
-  }
-  return undefined
+  if (!Array.isArray(messages) || messages.length === 0) return undefined
+  const message = messages[messages.length - 1]
+  const role = roleOfMessage(message)
+  // The control capability belongs only to the initial model dispatch whose
+  // terminal message is the transformed /goal user command. Provider tool-loop
+  // follow-ups retain that user message in history, but must not re-authorize it.
+  if (!role || role.toLowerCase() !== "user") return undefined
+  const text = collectText(message)
+  return text || undefined
 }
 
 function commandArguments(text: string | undefined, marker: string): string | undefined {

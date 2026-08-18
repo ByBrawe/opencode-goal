@@ -1,0 +1,69 @@
+name: Verify npm 1.3.19 publication
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/verify-npm-1.3.19.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  registry:
+    name: Registry publication proof
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - name: Verify exact version, latest, bin, and clean installer
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED="1.3.19"
+          VERSION=""
+          LATEST=""
+          BIN=""
+          INSTALLER=""
+          for attempt in $(seq 1 24); do
+            VERSION="$(npm view "@bybrawe/opencode-goal@$EXPECTED" version --registry=https://registry.npmjs.org 2>/dev/null || true)"
+            LATEST="$(npm view "@bybrawe/opencode-goal" dist-tags.latest --registry=https://registry.npmjs.org 2>/dev/null || true)"
+            BIN="$(npm view "@bybrawe/opencode-goal@$EXPECTED" bin.opencode-goal --registry=https://registry.npmjs.org 2>/dev/null || true)"
+            if [ "$VERSION" = "$EXPECTED" ] && [ "$LATEST" = "$EXPECTED" ] && { [ "$BIN" = "bin/opencode-goal.js" ] || [ "$BIN" = "./bin/opencode-goal.js" ]; }; then
+              echo "Registry manifest ready on attempt $attempt: version=$VERSION latest=$LATEST bin=$BIN"
+              break
+            fi
+            echo "Registry not ready on attempt $attempt: version=$VERSION latest=$LATEST bin=$BIN"
+            sleep 10
+          done
+          if [ "$VERSION" != "$EXPECTED" ] || [ "$LATEST" != "$EXPECTED" ]; then
+            echo "Registry version/latest mismatch: version=$VERSION latest=$LATEST expected=$EXPECTED"
+            exit 1
+          fi
+          if [ "$BIN" != "bin/opencode-goal.js" ] && [ "$BIN" != "./bin/opencode-goal.js" ]; then
+            echo "Registry bin mismatch: $BIN"
+            exit 1
+          fi
+
+          VERIFY_DIR="$(mktemp -d)"
+          trap 'rm -rf "$VERIFY_DIR"' EXIT
+          pushd "$VERIFY_DIR" >/dev/null
+          for attempt in $(seq 1 12); do
+            INSTALLER="$(npm exec --yes --package="@bybrawe/opencode-goal@$EXPECTED" -- opencode-goal --version 2>installer-error.log || true)"
+            if [ "$INSTALLER" = "$EXPECTED" ]; then
+              echo "Clean installer verified on attempt $attempt: $INSTALLER"
+              break
+            fi
+            echo "Clean installer not ready on attempt $attempt: $INSTALLER"
+            cat installer-error.log || true
+            sleep 10
+          done
+          popd >/dev/null
+          if [ "$INSTALLER" != "$EXPECTED" ]; then
+            echo "Clean installer mismatch: $INSTALLER expected=$EXPECTED"
+            exit 1
+          fi
+
+          echo "npm publication verified: version=$VERSION latest=$LATEST bin=$BIN installer=$INSTALLER"

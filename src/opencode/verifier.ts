@@ -9,6 +9,7 @@ import { applySemanticVerifierResults, type SemanticEvidenceRef, type SemanticRe
 export const DEFAULT_VERIFIER_AGENT = "opencode-goal-verifier"
 export const DEFAULT_VERIFIER_TIMEOUT_MS = 60_000
 const VERIFIER_CLEANUP_TIMEOUT_MS = 1_500
+const VERIFIER_TIMEOUT_RETRY_MAX_MS = 60_000
 const VERIFIER_DESCRIPTION = "Independently verify semantic goal requirements without modifying the workspace."
 const VERIFIER_AGENT_PROMPT = "Act only as an independent completion verifier. Inspect current workspace evidence, preserve scope, fail closed on uncertainty, never modify files or execute commands, and submit verdicts only through opencode_goal_verifier_result."
 
@@ -296,12 +297,21 @@ export function createSemanticVerifierRuntime(client: any, root: string, options
     },
   })
 
-  async function verify(parentSessionID: string, goal: GoalState, verifyOptions: { currentMessageID?: string } = {}): Promise<GoalState> {
+  async function verify(
+    parentSessionID: string,
+    goal: GoalState,
+    verifyOptions: { currentMessageID?: string; timeoutMs?: number; allowTimeoutRetry?: boolean } = {},
+  ): Promise<GoalState> {
     const semantic = goal.requirements.filter((item) => item.required && item.verification === "semantic")
     if (semantic.length === 0) return goal
+    const deadlineMs = Number.isFinite(verifyOptions.timeoutMs) && Number(verifyOptions.timeoutMs) > 0
+      ? Number(verifyOptions.timeoutMs)
+      : timeoutMs
+    const allowTimeoutRetry = verifyOptions.allowTimeoutRetry !== false
     const auditToken = randomUUID()
     const hostEvidenceRecords = verifierHostEvidence(goal, verifyOptions.currentMessageID)
     let childID = ""
+    let retryAfterTimeout = false
     try {
       let created: any
       try {
@@ -309,7 +319,7 @@ export function createSemanticVerifierRuntime(client: any, root: string, options
           client,
           "",
           Promise.resolve().then(() => client.session.create({ body: { parentID: parentSessionID, title: "Goal verification" } })),
-          timeoutMs,
+          deadlineMs,
         ))
       } catch (error) {
         throw new SemanticVerifierUnavailableError(`semantic verifier session creation failed: ${errorText(error)}`)
@@ -342,7 +352,7 @@ export function createSemanticVerifierRuntime(client: any, root: string, options
             client,
             childID,
             Promise.resolve().then(() => client.session.promptAsync({ path: { id: childID }, body })),
-            timeoutMs,
+            deadlineMs,
           )
         } catch (error) {
           if (error instanceof SemanticVerifierUnavailableError) throw error
@@ -354,7 +364,7 @@ export function createSemanticVerifierRuntime(client: any, root: string, options
           await abortVerifier(client, childID)
           throw new SemanticVerifierUnavailableError(`semantic verifier async dispatch failed: ${dispatchError}`)
         }
-        await withinVerifierDeadline(client, childID, resultSignal, timeoutMs)
+        await withinVerifierDeadline(client, childID, resultSignal, deadlineMs)
       } else {
         try {
           await withinVerifierDeadline(
@@ -364,7 +374,7 @@ export function createSemanticVerifierRuntime(client: any, root: string, options
               const dispatchError = sdkResponseError(response)
               if (dispatchError) throw new Error(dispatchError)
             }),
-            timeoutMs,
+            deadlineMs,
           )
         } catch (error) {
           if (error instanceof SemanticVerifierUnavailableError) throw error
@@ -380,6 +390,11 @@ export function createSemanticVerifierRuntime(client: any, root: string, options
       const corroborated = await corroborateEvidence(root, goal, result.results, hostEvidenceRecords)
       const processGuarded = guardSemanticProcessResults(goal, corroborated, hostEvidenceRecords)
       return applySemanticVerifierResults(goal, processGuarded)
+    } catch (error) {
+      retryAfterTimeout = allowTimeoutRetry
+        && error instanceof SemanticVerifierUnavailableError
+        && /semantic verifier timed out after \d+ms/.test(error.message)
+      if (!retryAfterTimeout) throw error
     } finally {
       if (childID) {
         pending.delete(childID)
@@ -389,6 +404,20 @@ export function createSemanticVerifierRuntime(client: any, root: string, options
           ? () => client.session.delete({ path: { id: childID } })
           : undefined)
       }
+    }
+
+    const retryTimeoutMs = Math.min(deadlineMs, VERIFIER_TIMEOUT_RETRY_MAX_MS)
+    try {
+      return await verify(parentSessionID, goal, {
+        ...(verifyOptions.currentMessageID ? { currentMessageID: verifyOptions.currentMessageID } : {}),
+        timeoutMs: retryTimeoutMs,
+        allowTimeoutRetry: false,
+      })
+    } catch (error) {
+      if (error instanceof SemanticVerifierUnavailableError) {
+        throw new SemanticVerifierUnavailableError(`semantic verifier unavailable after one automatic timeout retry: ${error.message}`)
+      }
+      throw error
     }
   }
 

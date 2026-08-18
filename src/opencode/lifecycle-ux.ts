@@ -46,6 +46,14 @@ function pausedMessage(goal: GoalState): string {
   ].join("\n")
 }
 
+function pausedNoticeKey(goal: GoalState): string {
+  return `${goal.id}:${goal.revision}:${goal.stopReason ?? ""}`
+}
+
+function isSyntheticHostMessage(parts: any[]): boolean {
+  return parts.some((part) => part?.synthetic === true)
+}
+
 export function installGoalLifecycleUX(input: PluginInput, hooks: PluginHooks): void {
   const commandHook = hooks["command.execute.before"]
   const chatHook = hooks["chat.message"]
@@ -53,6 +61,7 @@ export function installGoalLifecycleUX(input: PluginInput, hooks: PluginHooks): 
 
   const store = new GoalStore(input.directory)
   const translations = new Map<string, PromptTranslation>()
+  const pausedChatNotices = new Map<string, string>()
 
   hooks["command.execute.before"] = async (event: any, output: any) => {
     if (event.command !== "goal") {
@@ -87,6 +96,7 @@ export function installGoalLifecycleUX(input: PluginInput, hooks: PluginHooks): 
     }
 
     if (parsed.action === "pause") {
+      pausedChatNotices.delete(event.sessionID)
       await commandHook(event, output)
       const goal = await store.load(event.sessionID)
       if (!goal || goal.status !== "paused") return
@@ -100,20 +110,40 @@ export function installGoalLifecycleUX(input: PluginInput, hooks: PluginHooks): 
     }
 
     await commandHook(event, output)
+    if (["create", "edit", "resume", "clear"].includes(parsed.action)) pausedChatNotices.delete(event.sessionID)
   }
 
   hooks["chat.message"] = async (event: any, output: any) => {
     const shown = textFromParts(output?.parts ?? [])
     const translation = translations.get(event.sessionID)
-    if (!translation || shown !== translation.shown) {
-      await chatHook(event, output)
+    if (translation && shown === translation.shown) {
+      translations.delete(event.sessionID)
+      await chatHook(event, {
+        ...output,
+        parts: [{ type: "text", text: translation.owned }],
+      })
       return
     }
 
-    translations.delete(event.sessionID)
-    await chatHook(event, {
-      ...output,
-      parts: [{ type: "text", text: translation.owned }],
-    })
+    await chatHook(event, output)
+
+    // Read-only/status commands and host-generated synthetic task notifications
+    // are not foreground user steering. Do not nag on those internal messages.
+    if ((output as any)?.noReply === true || isSyntheticHostMessage(output?.parts ?? [])) return
+
+    const goal = await store.load(event.sessionID)
+    if (!goal || goal.status !== "paused") {
+      pausedChatNotices.delete(event.sessionID)
+      return
+    }
+
+    const key = pausedNoticeKey(goal)
+    if (pausedChatNotices.get(event.sessionID) === key) return
+    pausedChatNotices.set(event.sessionID, key)
+    await showGoalToast(
+      input.client,
+      "Goal remains paused. This chat turn does not resume autonomous Goal work. Use /goal resume to continue the persisted Goal.",
+      "warning",
+    )
   }
 }

@@ -318,12 +318,13 @@ async function main() {
       title: "OpenCode Goals V2 current-beta behavior",
       agent: "build",
       model: { id: "canary", providerID: "canary" },
+      location: { directory: project },
     })
     const session = createdPayload?.data ?? createdPayload
     const sessionID = String(session?.id ?? "")
     assert.ok(sessionID, `OpenCode 2 did not create a session: ${JSON.stringify(createdPayload)}`)
     const sessionDirectory = session?.location?.directory ?? session?.directory
-    if (sessionDirectory) assert.equal(path.resolve(sessionDirectory), path.resolve(project))
+    assert.equal(path.resolve(sessionDirectory), path.resolve(project), `OpenCode 2 created the behavior session outside the project Location: ${JSON.stringify(createdPayload)}`)
 
     const commandPromise = api("post", `/api/session/${encodeURIComponent(sessionID)}/command`, {
       command: "goal",

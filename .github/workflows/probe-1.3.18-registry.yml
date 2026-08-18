@@ -1,41 +1,56 @@
 name: Probe npm 1.3.18 ordering gate
 
 on:
-  push:
-    branches: [release/1.3.19]
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/probe-1.3.18-registry.yml"
+      - ".github/workflows/publish-npm.yml"
+      - "package.json"
+      - "CHANGELOG.md"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   probe:
+    name: npm 1.3.18 ordering probe
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: release/1.3.19
+          persist-credentials: false
       - uses: actions/setup-node@v6
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
-      - name: Query exact published version and latest dist-tag
+          package-manager-cache: false
+      - name: Query exact version and latest dist-tag
         shell: bash
         run: |
+          set -euo pipefail
+          KNOWN="$(npm view '@bybrawe/opencode-goal@1.3.17' version --registry=https://registry.npmjs.org)"
+          if [ "$KNOWN" != "1.3.17" ]; then
+            echo "Registry connectivity control failed: expected 1.3.17, got '$KNOWN'"
+            exit 1
+          fi
+
           VERSION="$(npm view '@bybrawe/opencode-goal@1.3.18' version --registry=https://registry.npmjs.org 2>/dev/null || true)"
-          LATEST="$(npm view '@bybrawe/opencode-goal' dist-tags.latest --registry=https://registry.npmjs.org 2>/dev/null || true)"
-          node -e 'const fs=require("fs"); fs.writeFileSync(".release-probe-1.3.18.json", JSON.stringify({checkedAt:new Date().toISOString(), requested:"1.3.18", version:process.env.VERSION||"", latest:process.env.LATEST||"", published:process.env.VERSION==="1.3.18"}, null, 2)+"\n")' 
-        env:
-          VERSION: ${{ env.VERSION }}
-          LATEST: ${{ env.LATEST }}
-      - name: Persist probe result and remove helper
-        shell: bash
-        run: |
-          VERSION="$(npm view '@bybrawe/opencode-goal@1.3.18' version --registry=https://registry.npmjs.org 2>/dev/null || true)"
-          LATEST="$(npm view '@bybrawe/opencode-goal' dist-tags.latest --registry=https://registry.npmjs.org 2>/dev/null || true)"
-          VERSION="$VERSION" LATEST="$LATEST" node -e 'const fs=require("fs"); fs.writeFileSync(".release-probe-1.3.18.json", JSON.stringify({checkedAt:new Date().toISOString(), requested:"1.3.18", version:process.env.VERSION||"", latest:process.env.LATEST||"", published:process.env.VERSION==="1.3.18"}, null, 2)+"\n")'
-          rm .github/workflows/probe-1.3.18-registry.yml
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add .release-probe-1.3.18.json .github/workflows/probe-1.3.18-registry.yml
-          git commit -m "chore: record npm 1.3.18 ordering probe"
-          git push origin HEAD:release/1.3.19
+          LATEST="$(npm view '@bybrawe/opencode-goal' dist-tags.latest --registry=https://registry.npmjs.org)"
+
+          echo "NPM_PROBE_KNOWN=$KNOWN"
+          echo "NPM_PROBE_1_3_18=${VERSION:-UNPUBLISHED}"
+          echo "NPM_PROBE_LATEST=$LATEST"
+
+          {
+            echo "## npm release ordering probe"
+            echo "- known control: \`$KNOWN\`"
+            echo "- 1.3.18: \`${VERSION:-UNPUBLISHED}\`"
+            echo "- latest: \`$LATEST\`"
+          } >> "$GITHUB_STEP_SUMMARY"

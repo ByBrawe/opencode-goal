@@ -366,10 +366,13 @@ export const OpenCode2GoalsExperimental = {
         output: controlOutputSchema,
         execute: async (input: { arguments: string }, toolContext: OpenCode2ExperimentalToolContext) => {
           const pending = pendingControls.get(toolContext.sessionID)
-          if (!pending || pending.consumed || input.arguments !== pending.arguments) {
+          if (!pending || pending.consumed) {
             throw new Error("OpenCode Goals V2 control rejected: no matching single-use /goal command capability. No Goal state was read or changed.")
           }
           pendingControls.set(toolContext.sessionID, { ...pending, consumed: true })
+          if (input.arguments !== pending.arguments) {
+            throw new Error("OpenCode Goals V2 control rejected: no matching single-use /goal command capability. No Goal state was read or changed.")
+          }
           return await executeOpenCode2GoalControl(ctx, input.arguments, toolContext)
         },
       }, { codemode: false })

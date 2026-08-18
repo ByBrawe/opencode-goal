@@ -198,7 +198,7 @@ Kolaylık için `devam et`, `continue`, `kaldığın yerden devam et` veya `resu
 
 Diğer foreground chat mesajları normal konuşma olarak kalır ve Goal'ı **sessizce yeniden aktive etmez**. Böylece rastgele chat lifecycle control'e dönüşmezken açık bir “devam et” isteği beklenen davranışı verir.
 
-Aynı resume yolu fail-closed verifier kesintisi sonrasında da kullanılabilir. Completion verification timeout olur ve Goal `paused` olarak kalıcılaştırılırsa verifier/provider kullanılabilir olduğunda `/goal resume` veya kısa ve açık bir devam mesajıyla completion yeniden denenebilir.
+Aynı resume yolu fail-closed verifier kesintisi sonrasında da kullanılabilir. Timeout sınıfındaki bir verifier hatası önce taze bir verifier session'ında tek ve bounded bir otomatik retry alır; bu retry de başarısız olur ve Goal `paused` olarak kalıcılaştırılırsa verifier/provider kullanılabilir olduğunda `/goal resume` veya kısa ve açık bir devam mesajıyla completion yeniden denenebilir.
 
 ## Goal Contracts
 
@@ -263,11 +263,11 @@ Completion bir audit pipeline'ıdır:
 
 Verification kullanılamıyorsa, eksikse, stale/ambiguous ise veya lifecycle değişikliğiyle race oluşursa completion **fail closed** olur.
 
-### Verifier timeout / Goal paused kalıyor
+### Verifier timeout / bounded retry / Goal paused kalıyor
 
-Executor işi bitirmiş olsa bile semantic verification timeout olursa Goal otomatik olarak sonsuza kadar retry etmek yerine `paused` olarak kalıcılaştırılır.
+Executor işi bitirmiş olsa bile bağımsız semantic verification timeout sınıfındaki bir altyapı hatasına ulaşırsa plugin timeout olan verifier child'ını abort edip temizler ve **bir kez** taze verifier session'ıyla otomatik retry yapar. Bu retry en fazla 60 saniyedir; yapılandırılmış verifier timeout daha düşükse o düşük değer kullanılır. Üçüncü bir otomatik verifier denemesi yoktur.
 
-Bu, sonsuz completion retry döngüsünün sonraki komutları `QUEUED` durumunda kilitlemesini önler. Mevcut host evidence korunur.
+Timeout dışındaki provider veya transport hataları otomatik retry edilmez. Bounded timeout retry da başarısız olursa Goal sonsuz completion retry döngüsüne girmek yerine `paused` olarak kalıcılaştırılır. Mevcut host evidence korunur.
 
 Verifier/provider tekrar sağlıklı olduğunda:
 
@@ -322,7 +322,7 @@ Installer kullanıcıya ait bir `commands/goal.md` dosyasının üzerine yazmaz.
 /goal audit
 ```
 
-Stop reason verifier infrastructure/timeout ise ve workspace zaten doğruysa istenen mutation'ları elle tekrar etmeyin. Completion yolunu yeniden denemek için `/goal resume` veya kısa ve açık bir devam mesajı kullanın.
+Stop reason bounded otomatik retry sonrasında verifier infrastructure/timeout ise ve workspace zaten doğruysa istenen mutation'ları elle tekrar etmeyin. Completion yolunu yeniden denemek için `/goal resume` veya kısa ve açık bir devam mesajı kullanın.
 
 ### Aynı session'da başka Goal başlatamıyorum
 

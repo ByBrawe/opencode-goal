@@ -22,13 +22,7 @@
   "bin": {
     "opencode-goal": "bin/opencode-goal.js"
   },
-  "files": [
-    "dist",
-    "bin",
-    "README.md",
-    "CHANGELOG.md",
-    "LICENSE"
-  ],
+  "files": ["dist", "bin", "README.md", "CHANGELOG.md", "LICENSE"],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/ByBrawe/opencode-goal.git"

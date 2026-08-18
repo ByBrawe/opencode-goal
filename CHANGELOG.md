@@ -153,7 +153,7 @@ OpenCode npm-plugin loading hotfix.
 - Fixed the published plugin failing to load while the managed `/goal` command bridge was still discoverable.
 - Moved `@opencode-ai/plugin`, which is imported by the compiled plugin at runtime, into production `dependencies` so OpenCode's isolated npm-plugin cache installs it with the package.
 - Hardened package smoke so the tarball must import successfully in a production-only clean consumer without pre-installing the OpenCode SDK as a separate peer fixture.
-- The managed command bridge remains a fail-visible diagnostic: if the plugin cannot intercept `/goal`, it tells the user the plugin did not load instead of silently executing the requested Goal as a normal prompt.
+- The managed command bridge remains a fail-visible diagnostic: if the plugin cannot intercept it, it tells the user the plugin did not load instead of silently executing the requested Goal as a normal prompt.
 
 ## 1.3.3 — 2026-08-11
 
@@ -246,6 +246,7 @@ Compatible feature release adding ordered multi-Goal workflows and a read-only T
 - Promoted Goals start at a fresh revision with fresh evidence, usage, progress, and blocker accounting; proof from the preceding Goal never carries forward.
 - Added crash-recoverable activation markers and reused the existing per-session process lease so competing processes cannot consume more than one queue head.
 - Added a one-shot activation continuation marker that skips only the pre-turn activation idle; once a real turn exists, normal no-progress accounting resumes.
+
 ### TUI sidebar and diagnostics
 
 - Added target-exclusive `@bybrawe/opencode-goal/tui` package export using the official OpenCode `sidebar_content` slot.
@@ -332,7 +333,5 @@ First stable release.
 - Post-1.0 breaking public-interface changes require a new major version.
 
 ## 0.1.0-beta.1 / 0.1.0-beta.2
-
-Public prerelease line used to harden verification, persistence, restart recovery, storage integrity/concurrency, Goal Contracts, Plan safety, delegated-task coordination, and release gates before 1.0.0-beta.1 / 0.1.0-beta.2
 
 Public prerelease line used to harden verification, persistence, restart recovery, storage integrity/concurrency, Goal Contracts, Plan safety, delegated-task coordination, and release gates before 1.0.0.

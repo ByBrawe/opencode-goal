@@ -70,7 +70,9 @@ async function request(host, sessionID, messages, agent = "build") {
     tools: requestTools(),
     messages,
   }
-  await host.hooks.get("request")(event)
+  const hook = host.hooks.get("context") ?? host.hooks.get("request")
+  assert.equal(typeof hook, "function")
+  await hook(event)
   return event
 }
 

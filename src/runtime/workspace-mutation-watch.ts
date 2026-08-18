@@ -61,26 +61,28 @@ async function safeExistingAncestor(root: string, realRoot: string, candidate: s
   return false
 }
 
-async function sampledFileState(file: string, size: number, mtimeMs: number): Promise<string> {
+async function sampledFileState(file: string, size: number): Promise<string> {
   if (size <= FULL_HASH_BYTES) {
     const bytes = await fs.readFile(file)
     return `file:full:${size}:${createHash("sha256").update(bytes).digest("hex")}`
   }
 
+  const length = Math.min(SAMPLE_BYTES, size)
+  const positions = [...new Set([
+    0,
+    Math.max(0, Math.floor((size - length) / 2)),
+    Math.max(0, size - length),
+  ])]
   const handle = await fs.open(file, "r")
   try {
-    const first = Buffer.alloc(Math.min(SAMPLE_BYTES, size))
-    const last = Buffer.alloc(Math.min(SAMPLE_BYTES, size))
-    const firstRead = await handle.read(first, 0, first.length, 0)
-    const lastPosition = Math.max(0, size - last.length)
-    const lastRead = await handle.read(last, 0, last.length, lastPosition)
     const digest = createHash("sha256")
-      .update(first.subarray(0, firstRead.bytesRead))
-      .update(last.subarray(0, lastRead.bytesRead))
-      .digest("hex")
-    // mtime is included only for large sampled files so a middle-only rewrite is
-    // still observable without hashing multi-gigabyte capture/build artifacts.
-    return `file:sample:${size}:${mtimeMs}:${digest}`
+    for (const position of positions) {
+      const buffer = Buffer.alloc(length)
+      const read = await handle.read(buffer, 0, buffer.length, position)
+      digest.update(String(position)).update("\0")
+      digest.update(buffer.subarray(0, read.bytesRead)).update("\0")
+    }
+    return `file:sample:${size}:${digest.digest("hex")}`
   } finally {
     await handle.close()
   }
@@ -118,10 +120,10 @@ async function pathState(root: string, realRoot: string, relative: string): Prom
   if (!inside(realRoot, real)) return null
 
   if (stat.isDirectory()) return `directory:${relative}`
-  if (!stat.isFile()) return `other:${relative}:${stat.size}:${stat.mtimeMs}`
+  if (!stat.isFile()) return `other:${relative}:${stat.mode}:${stat.size}`
 
   try {
-    return `${relative}:${await sampledFileState(real, stat.size, stat.mtimeMs)}`
+    return `${relative}:${await sampledFileState(real, stat.size)}`
   } catch {
     return null
   }
@@ -133,6 +135,9 @@ async function pathState(root: string, realRoot: string, relative: string): Prom
  * This is advisory stall/progress telemetry only. It deliberately ignores Goal
  * persistence internals, git metadata, and node_modules; never follows a project
  * symlink outside the project; and never lets watcher failures break the shell.
+ * Small files are fully hashed. Large files use deterministic first/middle/last
+ * content samples plus size so identical rewrites deduplicate without hashing
+ * multi-gigabyte capture/build artifacts.
  */
 export async function beginWorkspaceMutationWatch(rootInput: string): Promise<WorkspaceMutationWatch | null> {
   const root = path.resolve(rootInput)

@@ -149,7 +149,16 @@ export function installGoalLifecycleUX(input: PluginInput, hooks: PluginHooks): 
     // ownership above does not rely on it crossing the host hook boundary.
     if ((output as any)?.noReply === true || isSyntheticHostMessage(output?.parts ?? [])) return
 
-    const goal = await store.load(event.sessionID)
+    let goal: GoalState | null
+    try {
+      goal = await store.load(event.sessionID)
+    } catch {
+      // This wrapper is advisory UX only. Doctor and other underlying Goal
+      // behavior must remain available even when live storage is corrupt or
+      // uses a newer unsupported schema, so a toast lookup can never rethrow a
+      // persistence integrity error after the inner hook handled it safely.
+      return
+    }
     if (!goal || goal.status !== "paused") {
       pausedChatNotices.delete(event.sessionID)
       return

@@ -100,7 +100,7 @@ async function readPluginActivation({ project, env, pluginPath, sentinelMarkerFi
     const sentinelMarker = await fileTextIfPresent(sentinelMarkerFile)
     last = { attempt, pluginResult, response, ids, sentinelMarker }
 
-    if (ids.includes(sentinelID) && sentinelMarker === "loaded\n") return last
+    if (ids.includes(sentinelID) && sentinelMarker === "loaded\n" && ids.includes(pluginID)) return last
     if (attempt < PLUGIN_READINESS_ATTEMPTS) {
       console.error([
         `OpenCode 2 project plugin registry was not ready on attempt ${attempt}/${PLUGIN_READINESS_ATTEMPTS}; retrying once after ${PLUGIN_READINESS_RETRY_MS}ms.`,

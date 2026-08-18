@@ -35,7 +35,14 @@ function fakeClient() {
 function pausedChatGuidance(fake) {
   return fake.toasts.filter((item) =>
     item?.body?.variant === "warning"
-      && /This chat turn does not resume autonomous Goal work/.test(item?.body?.message ?? ""),
+      && /Goal remains paused/.test(item?.body?.message ?? ""),
+  )
+}
+
+function naturalResumeToasts(fake) {
+  return fake.toasts.filter((item) =>
+    item?.body?.variant === "success"
+      && /resumed from your continuation message/.test(item?.body?.message ?? ""),
   )
 }
 
@@ -89,7 +96,7 @@ test("creating a second live Goal shows actionable guidance instead of throwing 
   }
 })
 
-test("paused Goal create-conflict and pause output tell the user to use /goal resume", async () => {
+test("paused Goal create-conflict and pause output explain both explicit and natural resume", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-pause-ux-"))
   try {
     const fake = fakeClient()
@@ -101,7 +108,7 @@ test("paused Goal create-conflict and pause output tell the user to use /goal re
     assert.match(paused.parts[0].text, /Goal paused\. Autonomous Goal continuation is now off\./)
     assert.match(paused.parts[0].text, /\/goal resume/)
     assert.match(paused.parts[0].text, /devam et/)
-    assert.match(paused.parts[0].text, /normal foreground user message/)
+    assert.match(paused.parts[0].text, /short explicit continuation message/)
 
     const conflict = await command(hooks, "start a different target")
     assert.equal(conflict.noReply, true)
@@ -116,7 +123,7 @@ test("paused Goal create-conflict and pause output tell the user to use /goal re
   }
 })
 
-test("foreground chat on an automatically paused Goal warns once without silently resuming it", async () => {
+test("ordinary foreground chat keeps an automatically paused Goal paused and warns once", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-paused-chat-ux-"))
   try {
     const fake = fakeClient()
@@ -130,16 +137,16 @@ test("foreground chat on an automatically paused Goal warns once without silentl
     await store.save(pauseGoal(active, reason))
     fake.toasts.length = 0
 
-    await foregroundChat(hooks, "devam et", "human-1")
+    await foregroundChat(hooks, "what happened here?", "human-1")
     let persisted = await readOnlyGoal(root)
     assert.equal(persisted.status, "paused")
     assert.equal(persisted.stopReason, reason)
 
     let warnings = pausedChatGuidance(fake)
     assert.equal(warnings.length, 1)
-    assert.match(warnings[0].body.message, /\/goal resume/)
+    assert.match(warnings[0].body.message, /devam et/)
 
-    await foregroundChat(hooks, "continue", "human-2")
+    await foregroundChat(hooks, "show me the status first", "human-2")
     warnings = pausedChatGuidance(fake)
     assert.equal(warnings.length, 1, "the same paused snapshot should not spam repeated foreground-chat warnings")
 
@@ -148,22 +155,44 @@ test("foreground chat on an automatically paused Goal warns once without silentl
     warnings = pausedChatGuidance(fake)
     assert.equal(warnings.length, 1, "read-only Goal commands must not be mistaken for foreground chat")
 
-    const resume = await command(hooks, "resume")
+    persisted = await readOnlyGoal(root)
+    assert.equal(persisted.status, "paused")
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("short continuation chat resumes an automatically paused Goal through the normal resume chain", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-natural-resume-"))
+  try {
+    const fake = fakeClient()
+    const hooks = await OpenCodeGoalPlugin({ client: fake.client, directory: root })
+    const store = new GoalStore(root)
+    const reason = "Paused after 3 continuation turns without host-observed progress."
+
+    await command(hooks, "keep researching until the canonical dataset is complete")
+    let goal = await store.load("session-ux")
+    assert.ok(goal)
+    await store.save(pauseGoal(goal, reason))
+    fake.toasts.length = 0
+
+    const turkish = await foregroundChat(hooks, "devam et", "human-resume-tr")
+    let persisted = await readOnlyGoal(root)
+    assert.equal(persisted.status, "active")
+    assert.equal(persisted.stalledTurns, 0)
+    assert.match(turkish.parts[0].text, /Continue working toward the active OpenCode goal/)
+    assert.equal(naturalResumeToasts(fake).length, 1)
+    assert.equal(pausedChatGuidance(fake).length, 0)
+
+    goal = await store.load("session-ux")
+    assert.ok(goal)
+    await store.save(pauseGoal(goal, reason))
+
+    const english = await foregroundChat(hooks, "Continue!", "human-resume-en")
     persisted = await readOnlyGoal(root)
     assert.equal(persisted.status, "active")
-    await bindCommandChat(hooks, resume, "resume-owned")
-    warnings = pausedChatGuidance(fake)
-    assert.equal(warnings.length, 1, "the explicit /goal resume command chat must not be classified as paused foreground chat")
-
-    const resumed = await store.load("session-ux")
-    assert.ok(resumed)
-    await store.save(pauseGoal(resumed, reason))
-    warnings = pausedChatGuidance(fake)
-    assert.equal(warnings.length, 1, "persisting a new paused snapshot must not emit UI by itself")
-
-    await foregroundChat(hooks, "devam et yine", "human-3")
-    warnings = pausedChatGuidance(fake)
-    assert.equal(warnings.length, 2, "a new pause after explicit resume should be allowed to warn again")
+    assert.match(english.parts[0].text, /Continue working toward the active OpenCode goal/)
+    assert.equal(naturalResumeToasts(fake).length, 2)
   } finally {
     await rm(root, { recursive: true, force: true })
   }

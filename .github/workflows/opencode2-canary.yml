@@ -4,11 +4,17 @@ on:
   workflow_dispatch:
   schedule:
     - cron: "43 5 * * *"
+  pull_request:
+    paths:
+      - "src/opencode2/**"
+      - "scripts/opencode2-*.mjs"
+      - "scripts/run-opencode2-host-ci.mjs"
+      - ".github/workflows/opencode2-canary.yml"
   push:
     branches: [main]
     paths:
       - "src/opencode2/**"
-      - "scripts/opencode2-host-canary.mjs"
+      - "scripts/opencode2-*.mjs"
       - "scripts/run-opencode2-host-ci.mjs"
       - ".github/workflows/opencode2-canary.yml"
 

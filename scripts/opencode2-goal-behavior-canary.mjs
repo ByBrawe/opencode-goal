@@ -15,7 +15,7 @@ const EXACT_ARGUMENTS = 'real v2 goal behavior --success "exact args persist" --
 const DECLARED_COMMAND_TEMPLATE = "UNTRANSFORMED_V2_GOAL_CANARY\n$ARGUMENTS"
 const COMMAND_WRAPPER_TEXT = "OpenCode Goals V2 command wrapper"
 
-function appendLog(current, chunk, limit = 100_000) {
+function appendLog(current, chunk, limit = 120_000) {
   return (current + String(chunk)).slice(-limit)
 }
 
@@ -55,6 +55,15 @@ function parseJSONOutput(result, label) {
     return JSON.parse(text)
   } catch {
     throw new Error(`${label} did not return JSON on stdout.\nstdout:\n${text}\nstderr:\n${String(result.stderr ?? "")}`)
+  }
+}
+
+async function textIfPresent(file) {
+  try {
+    return await readFile(file, "utf8")
+  } catch (error) {
+    if (error?.code === "ENOENT") return null
+    throw error
   }
 }
 
@@ -215,6 +224,130 @@ function startProvider() {
   }
 }
 
+function diagnosticBridgeSource(pluginHref, traceFile) {
+  return [
+    'import { appendFileSync } from "node:fs"',
+    `import target from ${JSON.stringify(pluginHref)}`,
+    `const traceFile = ${JSON.stringify(traceFile)}`,
+    'function trace(event) { appendFileSync(traceFile, `${JSON.stringify({ at: Date.now(), ...event })}\\n`, "utf8") }',
+    'function err(error) { return { name: error?.name ?? typeof error, message: error?.message ?? String(error) } }',
+    'function keys(value) { return value && (typeof value === "object" || typeof value === "function") ? Reflect.ownKeys(value).map(String).slice(0, 40) : [] }',
+    'function template(value) { return typeof value?.template === "string" ? value.template.slice(0, 240) : undefined }',
+    'function eventShape(value) {',
+    '  const request = value?.request && typeof value.request === "object" ? value.request : undefined',
+    '  return {',
+    '    keys: keys(value),',
+    '    requestKeys: keys(request),',
+    '    sessionID: value?.sessionID ?? request?.sessionID ?? request?.session?.id,',
+    '    agent: value?.agent ?? value?.agentID ?? request?.agent ?? request?.agent?.id,',
+    '    messagesType: Array.isArray(value?.messages) ? `array:${value.messages.length}` : typeof value?.messages,',
+    '    toolsType: value?.tools && typeof value.tools === "object" ? `object:${Object.keys(value.tools).slice(0, 30).join(",")}` : typeof value?.tools,',
+    '    systemType: Array.isArray(value?.system) ? `array:${value.system.length}` : typeof value?.system,',
+    '  }',
+    '}',
+    'function wrapCommandDraft(draft) {',
+    '  if (!draft || (typeof draft !== "object" && typeof draft !== "function")) return draft',
+    '  return new Proxy(draft, {',
+    '    get(targetDraft, prop, receiver) {',
+    '      const original = Reflect.get(targetDraft, prop, receiver)',
+    '      if (prop !== "update" || typeof original !== "function") return original',
+    '      return function (...args) {',
+    '        trace({ phase: "command.update.before", name: args[0], updateLength: original.length, updateSource: Function.prototype.toString.call(original).slice(0, 500) })',
+    '        const mutate = args[1]',
+    '        const callArgs = typeof mutate === "function" ? [args[0], function (command, ...rest) {',
+    '          trace({ phase: "command.mutate.enter", commandKeys: keys(command), template: template(command), description: command?.description, agent: command?.agent, subtask: command?.subtask })',
+    '          try {',
+    '            const result = Reflect.apply(mutate, this, [command, ...rest])',
+    '            trace({ phase: "command.mutate.after", commandKeys: keys(command), template: template(command), description: command?.description, agent: command?.agent, subtask: command?.subtask, returnType: typeof result })',
+    '            return result',
+    '          } catch (error) { trace({ phase: "command.mutate.error", error: err(error) }); throw error }',
+    '        }, ...args.slice(2)] : args',
+    '        try {',
+    '          const result = Reflect.apply(original, targetDraft, callArgs)',
+    '          trace({ phase: "command.update.after", name: args[0], returnType: typeof result })',
+    '          return result',
+    '        } catch (error) { trace({ phase: "command.update.error", name: args[0], error: err(error) }); throw error }',
+    '      }',
+    '    },',
+    '  })',
+    '}',
+    'function wrapToolDraft(draft) {',
+    '  if (!draft || (typeof draft !== "object" && typeof draft !== "function")) return draft',
+    '  return new Proxy(draft, {',
+    '    get(targetDraft, prop, receiver) {',
+    '      const original = Reflect.get(targetDraft, prop, receiver)',
+    '      if (prop !== "add" || typeof original !== "function") return original',
+    '      return function (...args) {',
+    '        const first = args[0]',
+    '        trace({ phase: "tool.add.before", addLength: original.length, argCount: args.length, firstType: typeof first, firstName: first?.name ?? (typeof first === "string" ? first : undefined), firstKeys: keys(first), codemode: first?.codemode })',
+    '        try { const result = Reflect.apply(original, targetDraft, args); trace({ phase: "tool.add.after", firstName: first?.name ?? first, returnType: typeof result }); return result }',
+    '        catch (error) { trace({ phase: "tool.add.error", error: err(error) }); throw error }',
+    '      }',
+    '    },',
+    '  })',
+    '}',
+    'function wrapTransform(domainName, domain, original) {',
+    '  return async function (callback, ...rest) {',
+    '    trace({ phase: `${domainName}.transform.register.before`, callbackType: typeof callback })',
+    '    const wrapped = function (draft, ...callbackRest) {',
+    '      trace({ phase: `${domainName}.transform.callback.enter`, draftKeys: keys(draft) })',
+    '      const wrappedDraft = domainName === "command" ? wrapCommandDraft(draft) : wrapToolDraft(draft)',
+    '      try {',
+    '        const result = Reflect.apply(callback, this, [wrappedDraft, ...callbackRest])',
+    '        if (result && typeof result.then === "function") return result.then((value) => { trace({ phase: `${domainName}.transform.callback.after`, async: true }); return value }, (error) => { trace({ phase: `${domainName}.transform.callback.error`, error: err(error) }); throw error })',
+    '        trace({ phase: `${domainName}.transform.callback.after`, async: false })',
+    '        return result',
+    '      } catch (error) { trace({ phase: `${domainName}.transform.callback.error`, error: err(error) }); throw error }',
+    '    }',
+    '    try { const result = await Reflect.apply(original, domain, [wrapped, ...rest]); trace({ phase: `${domainName}.transform.register.after` }); return result }',
+    '    catch (error) { trace({ phase: `${domainName}.transform.register.error`, error: err(error) }); throw error }',
+    '  }',
+    '}',
+    'function wrapSession(domain) {',
+    '  return new Proxy(domain, {',
+    '    get(targetDomain, prop, receiver) {',
+    '      const original = Reflect.get(targetDomain, prop, receiver)',
+    '      if (prop !== "hook" || typeof original !== "function") return original',
+    '      return async function (name, callback, ...rest) {',
+    '        trace({ phase: "session.hook.register.before", hook: name, callbackType: typeof callback })',
+    '        const wrapped = function (event, ...callbackRest) {',
+    '          trace({ phase: "session.hook.callback.enter", hook: name, event: eventShape(event) })',
+    '          try {',
+    '            const result = Reflect.apply(callback, this, [event, ...callbackRest])',
+    '            if (result && typeof result.then === "function") return result.then((value) => { trace({ phase: "session.hook.callback.after", hook: name, event: eventShape(event), async: true }); return value }, (error) => { trace({ phase: "session.hook.callback.error", hook: name, error: err(error) }); throw error })',
+    '            trace({ phase: "session.hook.callback.after", hook: name, event: eventShape(event), async: false })',
+    '            return result',
+    '          } catch (error) { trace({ phase: "session.hook.callback.error", hook: name, error: err(error) }); throw error }',
+    '        }',
+    '        try { const result = await Reflect.apply(original, targetDomain, [name, wrapped, ...rest]); trace({ phase: "session.hook.register.after", hook: name }); return result }',
+    '        catch (error) { trace({ phase: "session.hook.register.error", hook: name, error: err(error) }); throw error }',
+    '      }',
+    '    },',
+    '  })',
+    '}',
+    'const diagnostic = {',
+    '  id: target.id,',
+    '  async setup(ctx) {',
+    '    trace({ phase: "setup.enter", ctxKeys: keys(ctx), domains: { command: keys(ctx?.command), tool: keys(ctx?.tool), session: keys(ctx?.session) } })',
+    '    const wrappedCtx = new Proxy(ctx, {',
+    '      get(targetCtx, prop, receiver) {',
+    '        const value = Reflect.get(targetCtx, prop, receiver)',
+    '        if ((prop === "command" || prop === "tool") && value && typeof value === "object") {',
+    '          return new Proxy(value, { get(domain, method, domainReceiver) { const original = Reflect.get(domain, method, domainReceiver); return method === "transform" && typeof original === "function" ? wrapTransform(String(prop), domain, original) : original } })',
+    '        }',
+    '        if (prop === "session" && value && typeof value === "object") return wrapSession(value)',
+    '        return value',
+    '      },',
+    '    })',
+    '    try { const cleanup = await target.setup(wrappedCtx); trace({ phase: "setup.after" }); return cleanup }',
+    '    catch (error) { trace({ phase: "setup.error", error: err(error) }); throw error }',
+    '  },',
+    '}',
+    'export default diagnostic',
+    '',
+  ].join("\n")
+}
+
 async function readFailureLog(env) {
   for (const file of [
     path.join(env.XDG_DATA_HOME, "opencode", "log", "opencode.log"),
@@ -244,6 +377,7 @@ async function main() {
   const state = path.join(home, ".local", "state")
   const pluginDirectory = path.join(project, ".opencode", "plugins")
   const pluginFile = path.join(root, "dist", "opencode2", "experimental.js")
+  const traceFile = path.join(temp, "v2-runtime-callback-trace.jsonl")
   const provider = startProvider()
   const providerPort = await provider.listen()
 
@@ -253,7 +387,10 @@ async function main() {
     mkdir(data, { recursive: true }),
     mkdir(state, { recursive: true }),
   ])
-  await writeFile(path.join(pluginDirectory, "opencode-goals-v2-behavior.js"), `export { default } from ${JSON.stringify(pathToFileURL(pluginFile).href)}\n`)
+  await writeFile(
+    path.join(pluginDirectory, "opencode-goals-v2-behavior.js"),
+    diagnosticBridgeSource(pathToFileURL(pluginFile).href, traceFile),
+  )
   await writeFile(path.join(project, "README.md"), "# OpenCode 2 Goal behavior canary\n")
   await writeFile(path.join(project, "opencode.json"), `${JSON.stringify({
     $schema: "https://opencode.ai/config.json",
@@ -333,21 +470,18 @@ async function main() {
       model: { id: "canary", providerID: "canary" },
     })
 
-    const store = new GoalStore(project)
-    const goal = await waitFor(async () => {
-      const current = await store.load(sessionID)
-      return current?.objective === "real v2 goal behavior" ? current : null
-    }, "exact /goal control to persist its Goal", 30_000)
-
+    await waitFor(() => provider.stats.chatRequests >= 2 ? true : null, "post-tool provider request", 20_000)
     await commandPromise
-    await waitFor(() => provider.stats.chatRequests >= 2 ? true : null, "post-tool provider request", 10_000)
 
-    assert.equal(provider.stats.firstControlExposed, true, "authorized real /goal request did not expose the request-scoped control tool")
-    assert.equal(provider.stats.firstGetExposed, true, "registered V2 read tool was absent from the real provider request")
-    assert.equal(provider.stats.transformedWrapperSeen, true, "real command.transform path did not deliver the V2 command wrapper")
+    const goal = await new GoalStore(project).load(sessionID)
+    const runtimeTrace = await textIfPresent(traceFile)
+
+    assert.equal(provider.stats.firstControlExposed, true, `authorized real /goal request did not expose the request-scoped control tool; trace:\n${runtimeTrace ?? "<none>"}`)
+    assert.equal(provider.stats.firstGetExposed, true, `registered V2 read tool was absent from the real provider request; trace:\n${runtimeTrace ?? "<none>"}`)
+    assert.equal(provider.stats.transformedWrapperSeen, true, `real command.transform path did not deliver the V2 command wrapper; trace:\n${runtimeTrace ?? "<none>"}`)
     assert.equal(provider.stats.exactArgumentsSeen, true, "real command transport did not preserve the exact raw /goal arguments")
-    assert.equal(goal.objective, "real v2 goal behavior")
-    assert.deepEqual(goal.constraints, ["no unrelated mutation"])
+    assert.equal(goal?.objective, "real v2 goal behavior", `exact V2 control did not persist the Goal; trace:\n${runtimeTrace ?? "<none>"}`)
+    assert.deepEqual(goal?.constraints, ["no unrelated mutation"])
     assert.equal(provider.stats.postToolControlExposed, false, `consumed V2 control capability was re-exposed after the tool call: ${JSON.stringify(provider.stats.observations)}`)
 
     console.log(JSON.stringify({
@@ -356,14 +490,17 @@ async function main() {
       node: process.version,
       opencode2Version: version,
       sessionID,
-      goalID: goal.id,
+      goalID: goal?.id ?? null,
       commandCatalog: {
         name: commandCatalog?.name ?? commandCatalog?.id ?? "goal",
         catalogShowsDeclaredTemplate: commandCatalog?.template === DECLARED_COMMAND_TEMPLATE,
       },
       provider: provider.stats,
+      runtimeTrace,
     }, null, 2))
   } catch (error) {
+    const runtimeTrace = await textIfPresent(traceFile)
+    if (runtimeTrace) console.error(`OpenCode 2 runtime callback trace:\n${runtimeTrace}`)
     const logTail = await readFailureLog(env)
     if (logTail) console.error(`OpenCode 2 server log tail:\n${logTail}`)
     console.error(`V2 behavior provider observations:\n${JSON.stringify(provider.stats, null, 2)}`)

@@ -2,6 +2,15 @@
 
 All notable changes to **OpenCode Goals** are documented here.
 
+## 1.3.24 — 2026-08-21
+
+Final smoke-test edge-case hardening release.
+
+- Let `opencode_goal_evidence_file` resolve the same 1-based requirement number shown by Goal status/get in addition to the exact UUID, while still requiring that the selected requirement is a current file-verification contract.
+- Permit narrowly classified read-only shell verification after the one allowed cadence mutation in a distinct-turn Goal; chained commands, pipes, redirection, substitutions, unknown shell forms, and any second workspace mutation remain blocked.
+- Keep the dedicated repeated-blocker circuit breaker authoritative by preventing the generic no-progress pause from preempting the third matching blocker report, while changing blocker fingerprints receives no stall exemption.
+- Add regressions for numbered file evidence, read-only cadence verification, mutating-shell rejection, repeated-blocker transition to `blocked`, and blocker-key churn.
+
 ## 1.3.23 — 2026-08-18
 
 Multilingual core UX and semantic-verifier evidence resilience release.

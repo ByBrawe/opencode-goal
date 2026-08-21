@@ -11,7 +11,6 @@ export type EvidenceKind = "command" | "file" | "diff" | "artifact" | "runtime" 
 export type EvidenceTrust = "host" | "verifier" | "user" | "agent"
 export type VerificationKind = "semantic" | "command" | "file"
 export type GoalRequirementSource = "objective" | "acceptance" | "constraint" | "check" | "file"
-export type GoalBudgetTokenMode = "auto" | "manual"
 
 export interface EvidenceRecord {
   id: string
@@ -134,12 +133,6 @@ export interface GoalState {
   /** Completed-turn counter captured when the current revision started. Older snapshots default to 0. */
   revisionTurnBaseline?: number
   budget: GoalBudget
-  /**
-   * Whether maxTokens follows observed model context automatically or was set
-   * explicitly by the user. Older snapshots omit this and remain manual for
-   * backward-compatible budget behavior.
-   */
-  budgetTokenMode?: GoalBudgetTokenMode
   progressRevision: number
   observedProgressRevision: number
   /** Stable host-observed change fingerprints for this goal revision. */

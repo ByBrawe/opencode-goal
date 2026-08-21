@@ -3,6 +3,7 @@ import type { GoalBudget, GoalRequirement, GoalState } from "../domain/types.js"
 import { diagnoseGoalStorage, type GoalStorageDiagnosticReport } from "../persistence/diagnostics.js"
 import { GoalStore, type GoalArchiveRecord, type GoalHistoryPruneResult, type GoalRestoreResult } from "../persistence/store.js"
 import { applyGoalBudget, budgetLimitHits, formatGoalBudget } from "../runtime/accounting.js"
+import { formatModelContext } from "../runtime/model-context.js"
 import { parseGoalCommand } from "./command.js"
 import { continuationPrompt } from "./prompt.js"
 
@@ -23,7 +24,7 @@ export function formatDetailedGoalStatus(goal: GoalState | null): string {
   if (!goal) return "No active goal."
   const req = goal.requirements.map((item, i) => `${i + 1}. [${item.status}] ${item.text}`).join("\n")
   const stop = goal.stopReason ? `\nStop reason: ${goal.stopReason}` : ""
-  return `Goal: ${goal.objective}\nStatus: ${goal.status}\nRevision: ${goal.revision}\nBudget: ${formatGoalBudget(goal)}${stop}\nRequirements:\n${req}`
+  return `Goal: ${goal.objective}\nStatus: ${goal.status}\nRevision: ${goal.revision}\nBudget: ${formatGoalBudget(goal)}\nModel context: ${formatModelContext(goal)}${stop}\nRequirements:\n${req}`
 }
 
 function acceptanceRequirements(goal: GoalState): GoalRequirement[] {

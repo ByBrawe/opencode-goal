@@ -3,7 +3,7 @@ import type { FileRequirementInput, GoalBudget, GoalExecutionContext, GoalRequir
 
 const DEFAULT_BUDGET: GoalBudget = {
   maxTurns: 30,
-  maxTokens: 400_000,
+  maxTokens: 0,
   maxCost: 0,
   maxRuntimeMs: 60 * 60_000,
 }

@@ -2,6 +2,7 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import { createGoal } from "../dist/domain/goal.js"
 import { formatModelContext, observeModelContextLimits, observeModelContextUsage } from "../dist/runtime/model-context.js"
+import { formatDetailedGoalStatus } from "../dist/opencode/controls.js"
 import { compactionContext } from "../dist/opencode/prompt.js"
 
 test("model context telemetry stays separate from cumulative Goal token usage", () => {
@@ -53,6 +54,8 @@ test("explicit model input pressure is not diluted by a larger context window", 
   const text = formatModelContext(goal)
   assert.match(text, /230,000 \/ 1,000,000 context \(23\.0%\)/)
   assert.match(text, /220,000 \/ 272,000 input limit \(80\.9%\)/)
+  assert.match(formatDetailedGoalStatus(goal), /Model context: provider\/1m-model/)
+  assert.match(formatDetailedGoalStatus(goal), /220,000 \/ 272,000 input limit \(80\.9%\)/)
 })
 
 test("compaction context preserves Goal host progress and model-window telemetry", () => {

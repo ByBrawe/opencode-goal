@@ -4,6 +4,7 @@ import { installGoalAuditUX } from "./opencode/audit-ux.js"
 import { installProjectGoalIndex } from "./opencode/project-index.js"
 import { installGoalContractUX } from "./opencode/contract-ux.js"
 import { installGoalTodoOrchestration } from "./opencode/todo-orchestration.js"
+import { installGoalCompactionContinuation } from "./opencode/compaction-continuation.js"
 import { installGoalSequence } from "./opencode/sequence.js"
 import { installTaskDeferral } from "./opencode/task-deferral.js"
 import { installShellProgress } from "./opencode/shell-progress.js"
@@ -36,6 +37,10 @@ export default async function OpenCodeGoalPlugin(
   // only current-revision aggregate telemetry and never turns Todo status into
   // Goal completion evidence.
   installGoalTodoOrchestration(input, hooks)
+  // Own successful post-compaction wake-up before the sequence/task/safety
+  // wrappers are installed. The coordinator routes its one-shot synthetic idle
+  // through those outer wrappers, so their deferral/boundary rules still win.
+  installGoalCompactionContinuation(input, hooks)
   // Ordered Goals stay below task/Plan wrappers. Parent task deferral and the
   // restricted-agent boundary therefore win before a sequence idle can advance.
   installGoalSequence(input, hooks)
@@ -78,6 +83,7 @@ export * from "./opencode/shell-progress.js"
 export * from "./opencode/project-index.js"
 export * from "./opencode/sequence.js"
 export * from "./opencode/todo-orchestration.js"
+export * from "./opencode/compaction-continuation.js"
 export * from "./opencode/client-compat.js"
 export * from "./opencode/lifecycle-ux.js"
 export * from "./opencode/i18n-ux.js"

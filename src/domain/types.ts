@@ -104,6 +104,8 @@ export interface GoalModelContext {
   inputLimit?: number
   outputLimit?: number
   lastRequestTokens?: number
+  /** Input-side request tokens (input + cache), kept separate from generated output. */
+  lastInputTokens?: number
   autoCompaction?: boolean
   compactionReserved?: number
   observedAt: number

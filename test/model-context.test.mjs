@@ -27,9 +27,32 @@ test("model context telemetry stays separate from cumulative Goal token usage", 
   assert.equal(goal.usage.tokens, 400_000, "cumulative Goal budget must not be rewritten by model-window telemetry")
   assert.equal(goal.execution.modelContext.contextLimit, 200_000)
   assert.equal(goal.execution.modelContext.lastRequestTokens, 38_000)
+  assert.equal(goal.execution.modelContext.lastInputTokens, 36_000)
   assert.equal(goal.execution.modelContext.autoCompaction, true)
   assert.match(formatModelContext(goal), /38,000 \/ 200,000 context \(19\.0%\)/)
+  assert.match(formatModelContext(goal), /36,000 \/ 180,000 input limit \(20\.0%\)/)
+  assert.match(formatModelContext(goal), /compaction reserve 16,000/)
   assert.match(formatModelContext(goal), /OpenCode auto-compaction on/)
+})
+
+test("explicit model input pressure is not diluted by a larger context window", () => {
+  let goal = createGoal({
+    sessionID: "large-context",
+    objective: "keep working",
+    execution: { model: { providerID: "provider", modelID: "1m-model" } },
+  })
+  goal = observeModelContextLimits(goal, {
+    model: { limit: { context: 1_000_000, input: 272_000, output: 131_072 } },
+    autoCompaction: true,
+  })
+  goal = observeModelContextUsage(goal, {
+    input: 220_000,
+    output: 10_000,
+  })
+
+  const text = formatModelContext(goal)
+  assert.match(text, /230,000 \/ 1,000,000 context \(23\.0%\)/)
+  assert.match(text, /220,000 \/ 272,000 input limit \(80\.9%\)/)
 })
 
 test("compaction context preserves Goal host progress and model-window telemetry", () => {

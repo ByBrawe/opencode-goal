@@ -1,4 +1,4 @@
-import type { GoalBudget, GoalState, GoalUsage } from "../domain/types.js"
+import type { GoalBudget, GoalBudgetTokenMode, GoalState, GoalUsage } from "../domain/types.js"
 
 export interface AssistantUsageSample {
   messageID: string
@@ -63,17 +63,23 @@ function budgetValue(kind: BudgetLimitKind, value: number): string {
   return limitValue(kind, value)
 }
 
-export function formatGoalBudget(goal: Pick<GoalState, "usage" | "budget">): string {
+export function formatGoalBudget(goal: Pick<GoalState, "usage" | "budget" | "budgetTokenMode">): string {
   const { usage, budget } = goal
+  const tokenMode = goal.budgetTokenMode === "auto" ? " (auto)" : ""
   return [
     `${limitValue("turns", usage.turns)} / ${budgetValue("turns", budget.maxTurns)} turns`,
-    `${limitValue("tokens", usage.tokens)} / ${budgetValue("tokens", budget.maxTokens)} tokens`,
+    `${limitValue("tokens", usage.tokens)} / ${budgetValue("tokens", budget.maxTokens)} tokens${tokenMode}`,
     `cost ${limitValue("cost", usage.cost)} / ${budgetValue("cost", budget.maxCost)}`,
     `runtime ${limitValue("runtime", usage.runtimeMs)} / ${budgetValue("runtime", budget.maxRuntimeMs)}`,
   ].join(" | ")
 }
 
-export function applyGoalBudget(goal: GoalState, patch: Partial<GoalBudget>, now = Date.now()): GoalState {
+export function applyGoalBudget(
+  goal: GoalState,
+  patch: Partial<GoalBudget>,
+  now = Date.now(),
+  tokenMode?: GoalBudgetTokenMode,
+): GoalState {
   const budget = { ...goal.budget, ...patch }
   const reason = budgetStopReason(goal.usage, budget)
   let status = goal.status
@@ -92,9 +98,11 @@ export function applyGoalBudget(goal: GoalState, patch: Partial<GoalBudget>, now
   }
 
   const { stopReason: _previousStopReason, ...rest } = goal
+  const nextTokenMode = tokenMode ?? (patch.maxTokens !== undefined ? "manual" : goal.budgetTokenMode)
   return {
     ...rest,
     budget,
+    ...(nextTokenMode ? { budgetTokenMode: nextTokenMode } : {}),
     status,
     ...(stopReason ? { stopReason } : {}),
     updatedAt: now,

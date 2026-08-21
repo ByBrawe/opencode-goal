@@ -2,6 +2,15 @@
 
 All notable changes to **OpenCode Goals** are documented here.
 
+## 1.3.25 — 2026-08-22
+
+Long-running context-budget and compaction-continuation reliability release.
+
+- Make cumulative Goal token caps opt-in for newly created Goals: the default is now unlimited (`maxTokens: 0`), while explicit `--max-tokens` / `/goal budget --max-tokens` limits and persisted legacy budgets remain hard runaway guards. Turn, runtime, cost, no-progress, provider-limit, and completion guards remain unchanged.
+- Keep OpenCode's generic post-compaction synthetic continue disabled while an active Goal owns the session, but guarantee exactly one Goal-owned continuation after successful compaction through the normal guarded idle path. Real host idle may claim the same pending continuation, late duplicate idles are suppressed, user steering still wins, and delegated-task/restricted-agent/budget safety gates remain authoritative.
+- Separate model input pressure from full context-window pressure in persisted telemetry and detailed `/goal status`: track input-side request tokens independently, report explicit input limits and compaction reserve, and make cases such as a 1M context window with a 272k input ceiling visible without deriving any cumulative Goal budget from those model limits.
+- Add regressions for unlimited/default and explicit/legacy token budgets, single-owner post-compaction continuation including delegated-task deferral, and independent context/input-pressure reporting.
+
 ## 1.3.24 — 2026-08-21
 
 Final smoke-test edge-case hardening release.
@@ -271,33 +280,6 @@ Compatible feature release adding revision-bound coordination with OpenCode's na
 - Added deterministic regression/adversarial coverage for Todo telemetry, ownership races, edit/pause/restore invalidation, compaction guidance, audit visibility, and unfinished-plan completion veto behavior.
 - Added real-host native Todo canaries on Ubuntu and Windows using an actual OpenCode host while proving Todo activity creates neither Goal progress nor evidence.
 - Added a disposable real-model benchmark fixture and hidden external oracle for weak/free-model testing of Todo discipline, repository correctness, verifier-backed completion, and false-completion resistance.
-- Existing CI, Actions Security Gate, Release Readiness, Real Host Progress, and Real Restart Recovery gates remain required for the exact release head.
-
-## 1.2.0 — 2026-08-10
-
-Compatible feature release adding ordered multi-Goal workflows and a read-only TUI sidebar while preserving the one-unfinished-live-Goal/session safety model and persisted schema-v1 compatibility.
-
-### Ordered Goal sequences
-
-- Added inert future Goal Contracts with `/goal add`, ordered inspection/reordering/removal/clear controls under `/goal queue`, and explicit `/goal next` promotion.
-- Kept exactly one unfinished live Goal per session; queued Goals cannot execute, verify, mutate the worktree, or inherit proof before promotion.
-- Verified completion may auto-promote exactly one queue head at the idle boundary only when execution is bound to a known non-Plan agent.
-- Promoted Goals start at a fresh revision with fresh evidence, usage, progress, and blocker accounting; proof from the preceding Goal never carries forward.
-- Added crash-recoverable activation markers and reused the existing per-session process lease so competing processes cannot consume more than one queue head.
-- Added a one-shot activation continuation marker that skips only the pre-turn activation idle; once a real turn exists, normal no-progress accounting resumes.
-
-### TUI sidebar and diagnostics
-
-- Added target-exclusive `@bybrawe/opencode-goal/tui` package export using the official OpenCode `sidebar_content` slot.
-- The read-only sidebar shows live status, proven/required count, objective, budget usage, and the ordered queue without participating in mutation or completion policy.
-- `/goal doctor` now diagnoses live, archive, and ordered-queue storage, including corrupt JSON/state/session binding and unsafe paths, without rewriting bytes.
-- Queue/sidebar presentation fails visible when storage is corrupt or unsafe rather than silently treating unknown state as empty.
-
-### Persistence and cross-platform hardening
-
-- Live Goal snapshots are now explicitly bound to the requested session shard; a mismatched stored `sessionID` fails closed instead of being adopted or listed.
-- Hardened Windows process-lease handling for legitimate hard-linked lock files whose `realpath()` may use an equivalent 8.3 path alias, while continuing to reject symlink/junction lock-root escapes before any external write.
-- Added adversarial coverage for sequence crash recovery, cross-process single consumption, lock-root path escape, queue diagnostics, TUI read-only safety, and session-shard binding.
 
 ### Compatibility and release validation
 

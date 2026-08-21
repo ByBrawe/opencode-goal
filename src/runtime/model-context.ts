@@ -1,8 +1,4 @@
 import type { GoalModelContext, GoalState } from "../domain/types.js"
-import { applyGoalBudget } from "./accounting.js"
-
-const DEFAULT_GOAL_TOKEN_BUDGET = 400_000
-const CONTEXT_BUDGET_MULTIPLIER = 3
 
 function nonNegative(value: unknown): number | undefined {
   const number = Number(value)
@@ -36,18 +32,6 @@ function updateContext(goal: GoalState, patch: Partial<GoalModelContext>, now: n
   }
 }
 
-export function automaticGoalTokenBudget(contextLimit: number | undefined): number | undefined {
-  if (contextLimit === undefined || contextLimit <= 0) return undefined
-  return Math.max(DEFAULT_GOAL_TOKEN_BUDGET, Math.round(contextLimit * CONTEXT_BUDGET_MULTIPLIER))
-}
-
-function adaptAutomaticTokenBudget(goal: GoalState, contextLimit: number | undefined, now: number): GoalState {
-  if (goal.budgetTokenMode !== "auto") return goal
-  const maxTokens = automaticGoalTokenBudget(contextLimit)
-  if (maxTokens === undefined || maxTokens === goal.budget.maxTokens) return goal
-  return applyGoalBudget(goal, { maxTokens }, now, "auto")
-}
-
 export function observeModelContextLimits(goal: GoalState, input: {
   model?: any
   autoCompaction?: boolean
@@ -60,14 +44,13 @@ export function observeModelContextLimits(goal: GoalState, input: {
   const outputLimit = nonNegative(limit?.output)
   if (contextLimit === undefined && inputLimit === undefined && outputLimit === undefined && input.autoCompaction === undefined) return goal
   const now = input.now ?? Date.now()
-  const withContext = updateContext(goal, {
+  return updateContext(goal, {
     ...(contextLimit !== undefined ? { contextLimit } : {}),
     ...(inputLimit !== undefined ? { inputLimit } : {}),
     ...(outputLimit !== undefined ? { outputLimit } : {}),
     ...(input.autoCompaction !== undefined ? { autoCompaction: input.autoCompaction } : {}),
     ...(input.compactionReserved !== undefined ? { compactionReserved: input.compactionReserved } : {}),
   }, now)
-  return adaptAutomaticTokenBudget(withContext, contextLimit ?? withContext.execution?.modelContext?.contextLimit, now)
 }
 
 export function observeModelContextUsage(goal: GoalState, tokens: any, now = Date.now()): GoalState {

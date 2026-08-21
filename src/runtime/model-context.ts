@@ -6,6 +6,14 @@ function nonNegative(value: unknown): number | undefined {
   return number
 }
 
+function inputTokenCount(tokens: any): number | undefined {
+  const input = nonNegative(tokens?.input)
+  const cacheRead = nonNegative(tokens?.cache?.read)
+  const cacheWrite = nonNegative(tokens?.cache?.write)
+  if (input === undefined && cacheRead === undefined && cacheWrite === undefined) return undefined
+  return (input ?? 0) + (cacheRead ?? 0) + (cacheWrite ?? 0)
+}
+
 function tokenCount(tokens: any): number | undefined {
   const explicit = nonNegative(tokens?.total)
   if (explicit !== undefined && explicit > 0) return explicit
@@ -55,12 +63,20 @@ export function observeModelContextLimits(goal: GoalState, input: {
 
 export function observeModelContextUsage(goal: GoalState, tokens: any, now = Date.now()): GoalState {
   const lastRequestTokens = tokenCount(tokens)
-  if (lastRequestTokens === undefined) return goal
-  return updateContext(goal, { lastRequestTokens }, now)
+  const lastInputTokens = inputTokenCount(tokens)
+  if (lastRequestTokens === undefined && lastInputTokens === undefined) return goal
+  return updateContext(goal, {
+    ...(lastRequestTokens !== undefined ? { lastRequestTokens } : {}),
+    ...(lastInputTokens !== undefined ? { lastInputTokens } : {}),
+  }, now)
 }
 
 function formatNumber(value: number): string {
   return Math.round(value).toLocaleString("en-US")
+}
+
+function percent(used: number, limit: number): string {
+  return Math.min(999, Math.max(0, (used / limit) * 100)).toFixed(1)
 }
 
 export function formatModelContext(goal: Pick<GoalState, "execution">): string {
@@ -73,16 +89,26 @@ export function formatModelContext(goal: Pick<GoalState, "execution">): string {
   if (context.contextLimit && context.contextLimit > 0) {
     const usage = context.lastRequestTokens
     if (usage !== undefined) {
-      const percent = Math.min(999, Math.max(0, (usage / context.contextLimit) * 100))
-      parts.push(`last request ${formatNumber(usage)} / ${formatNumber(context.contextLimit)} context (${percent.toFixed(1)}%)`)
+      parts.push(`last request ${formatNumber(usage)} / ${formatNumber(context.contextLimit)} context (${percent(usage, context.contextLimit)}%)`)
     } else {
       parts.push(`context window ${formatNumber(context.contextLimit)}`)
     }
   } else if (context.lastRequestTokens !== undefined) {
     parts.push(`last request ${formatNumber(context.lastRequestTokens)} tokens`)
   }
-  if (context.inputLimit !== undefined) parts.push(`input limit ${formatNumber(context.inputLimit)}`)
+
+  if (context.inputLimit !== undefined) {
+    if (context.inputLimit > 0 && context.lastInputTokens !== undefined) {
+      parts.push(`last input ${formatNumber(context.lastInputTokens)} / ${formatNumber(context.inputLimit)} input limit (${percent(context.lastInputTokens, context.inputLimit)}%)`)
+    } else {
+      parts.push(`input limit ${formatNumber(context.inputLimit)}`)
+    }
+  } else if (context.lastInputTokens !== undefined) {
+    parts.push(`last input ${formatNumber(context.lastInputTokens)} tokens`)
+  }
+
   if (context.outputLimit !== undefined) parts.push(`output limit ${formatNumber(context.outputLimit)}`)
+  if (context.compactionReserved !== undefined) parts.push(`compaction reserve ${formatNumber(context.compactionReserved)}`)
   if (context.autoCompaction !== undefined) parts.push(`OpenCode auto-compaction ${context.autoCompaction ? "on" : "off"}`)
   return parts.join(" | ")
 }

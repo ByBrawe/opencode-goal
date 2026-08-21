@@ -217,6 +217,8 @@ Repeatable contract flags define success and hard boundaries:
 --max-cost <amount>
 ```
 
+New Goals have no cumulative token cap by default (`maxTokens: 0`). Use `--max-tokens` or `/goal budget --max-tokens` only when you want an explicit total-work runaway guard; this cumulative budget is separate from the selected model's current context/input window.
+
 The full objective always remains a required semantic requirement. Narrow checks add proof obligations; they never replace the broader outcome.
 
 `/goal edit` creates a new revision. Evidence from an older revision cannot silently prove the edited Goal.
@@ -291,7 +293,9 @@ Project-local state:
 
 The runtime includes atomic writes, optimistic generation/CAS protection, per-session ownership, process leases, path/symlink escape protection, corrupt-state fail-closed handling, and process-restart recovery.
 
-Goal cumulative token/runtime budgets are intentionally separate from the selected model's current context window. OpenCode remains responsible for its own model-context compaction.
+Goal cumulative token/runtime budgets are intentionally separate from the selected model's current context window. `/goal status` reports the host-observed full context pressure and, when the model exposes a smaller input limit, input-side pressure separately. OpenCode remains responsible for deciding when to compact.
+
+While an active Goal owns a session, the plugin keeps OpenCode's generic post-compaction synthetic continue disabled and resumes through exactly one Goal-owned guarded continuation path instead, so compaction does not require a manual `continue` and does not create two competing continuation owners.
 
 ## Troubleshooting
 

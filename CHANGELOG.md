@@ -2,6 +2,15 @@
 
 All notable changes to **OpenCode Goals** are documented here.
 
+## 1.3.25 — 2026-08-22
+
+Long-running context-budget and compaction-continuation reliability release.
+
+- Make cumulative Goal token caps opt-in for newly created Goals: the default is now unlimited (`maxTokens: 0`), while explicit `--max-tokens` / `/goal budget --max-tokens` limits and persisted legacy budgets remain hard runaway guards. Turn, runtime, cost, no-progress, provider-limit, and completion guards remain unchanged.
+- Keep OpenCode's generic post-compaction synthetic continue disabled while an active Goal owns the session, but guarantee exactly one Goal-owned continuation after successful compaction through the normal guarded idle path. Real host idle may claim the same pending continuation, late duplicate idles are suppressed, user steering still wins, and delegated-task/restricted-agent/budget safety gates remain authoritative.
+- Separate model input pressure from full context-window pressure in persisted telemetry and detailed `/goal status`: track input-side request tokens independently, report explicit input limits and compaction reserve, and make cases such as a 1M context window with a 272k input ceiling visible without deriving any cumulative Goal budget from those model limits.
+- Add regressions for unlimited/default and explicit/legacy token budgets, single-owner post-compaction continuation including delegated-task deferral, and independent context/input-pressure reporting.
+
 ## 1.3.24 — 2026-08-21
 
 Final smoke-test edge-case hardening release.

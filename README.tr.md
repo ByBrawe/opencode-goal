@@ -217,6 +217,8 @@ Tekrarlanabilir contract flag'leri success ve hard boundary'leri tanımlar:
 --max-cost <amount>
 ```
 
+Yeni Goal'larda cumulative token limiti varsayılan olarak yoktur (`maxTokens: 0`). Toplam çalışma için açık bir runaway guard istediğinizde `--max-tokens` veya `/goal budget --max-tokens` kullanın; bu cumulative budget seçilen modelin güncel context/input penceresinden ayrıdır.
+
 Tam objective her zaman gerekli bir semantic requirement olarak kalır. Dar kapsamlı kontroller ek proof obligations oluşturur; geniş sonucu asla değiştirmez veya yerine geçmez.
 
 `/goal edit` yeni bir revision oluşturur. Eski revision'a ait kanıtlar düzenlenmiş Goal'ı sessizce kanıtlayamaz.
@@ -291,7 +293,9 @@ Project-local state:
 
 Runtime; atomic writes, optimistic generation/CAS protection, per-session ownership, process leases, path/symlink escape protection, corrupt-state fail-closed handling ve process-restart recovery içerir.
 
-Goal cumulative token/runtime budget'ları seçilen modelin mevcut context penceresinden bilinçli olarak ayrıdır. Model context compaction yönetimi OpenCode'da kalır.
+Goal cumulative token/runtime budget'ları seçilen modelin mevcut context penceresinden bilinçli olarak ayrıdır. `/goal status`, host tarafından gözlenen full context pressure bilgisini ve model daha küçük bir input limiti sunuyorsa input-side pressure bilgisini ayrı gösterir. Ne zaman compact yapılacağına OpenCode karar vermeye devam eder.
+
+Aktif bir Goal session'ı sahiplenmişken plugin, OpenCode'un generic post-compaction synthetic continue davranışını kapalı tutar ve tam bir kez Goal-owned guarded continuation yolundan devam eder. Böylece compaction sonrasında elle `continue` yazmak gerekmez ve iki ayrı continuation owner birbiriyle yarışmaz.
 
 ## Sorun giderme
 

@@ -11,6 +11,7 @@ import {
 import {
   infrastructureRetryDelayMs,
   isTransientInfrastructureError,
+  legacyInfrastructureRecovery,
 } from "../dist/runtime/infrastructure-recovery.js"
 
 async function stateFor(root) {
@@ -52,6 +53,29 @@ async function recoveryPlugin(root, client, options = {}) {
   return hooks
 }
 
+function legacyState(status, stopReason) {
+  return {
+    schemaVersion: 1,
+    id: "legacy-goal",
+    sessionID: "legacy-session",
+    objective: "finish work",
+    revision: 1,
+    status,
+    requirements: [],
+    evidence: [],
+    checks: [],
+    usage: { turns: 3, tokens: 1000, cost: 0, runtimeMs: 1000, seenMessageIDs: [] },
+    budget: { maxTurns: 30, maxTokens: 0, maxCost: 0, maxRuntimeMs: 3600000 },
+    progressRevision: 2,
+    observedProgressRevision: 2,
+    stalledTurns: 0,
+    progressNotes: [],
+    createdAt: 1,
+    updatedAt: 2,
+    stopReason,
+  }
+}
+
 test("transient error classifier covers the network failures OpenCode retries upstream", () => {
   for (const value of [
     "fetch failed",
@@ -66,6 +90,25 @@ test("transient error classifier covers the network failures OpenCode retries up
   assert.equal(infrastructureRetryDelayMs(1, 10, 80), 10)
   assert.equal(infrastructureRetryDelayMs(2, 10, 80), 20)
   assert.equal(infrastructureRetryDelayMs(8, 10, 80), 80)
+})
+
+test("legacy 1.3.25 verifier dead-ends migrate narrowly while real pauses/blockers stay untouched", () => {
+  const pausedVerifier = legacyInfrastructureRecovery(legacyState(
+    "paused",
+    "Independent semantic verification unavailable: semantic verifier unavailable after one automatic timeout retry: semantic verifier timed out after 60000ms",
+  ))
+  assert.equal(pausedVerifier?.kind, "semantic_verifier")
+
+  const blockedVerifier = legacyInfrastructureRecovery(legacyState(
+    "blocked",
+    "Fourth consecutive completion-audit infrastructure failure across four distinct goal turns; only the host semantic verifier keeps timing out; provider recovery is needed.",
+  ))
+  assert.equal(blockedVerifier?.kind, "semantic_verifier")
+
+  const pausedUser = legacyInfrastructureRecovery(legacyState("paused", "Paused by user."))
+  assert.equal(pausedUser, undefined)
+  const blockedProject = legacyInfrastructureRecovery(legacyState("blocked", "Project API contract is missing and must be implemented."))
+  assert.equal(blockedProject, undefined)
 })
 
 test("verifier outage stays active, suppresses immediate idle, and wakes automatically after cooldown", async () => {

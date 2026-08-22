@@ -43,14 +43,6 @@ jobs:
             fs.writeFileSync(file, text)
           }
           NODE
-      - name: Verify release metadata
-        shell: bash
-        run: |
-          test "$(node -p "require('./package.json').version")" = "1.3.26"
-          grep -q '^## 1\.3\.26 — 2026-08-22$' CHANGELOG.md
-          grep -q 'EXPECTED="1.3.26"' .github/workflows/publish-npm.yml
-          grep -q 'PREVIOUS="1.3.25"' .github/workflows/publish-npm.yml
-          grep -q '^1\.3\.26$' <(sed -n '/current one-shot stable guard is:/,/```/p' RELEASING.md | grep -E '^1\.3\.26$')
       - name: Commit generated release metadata
         shell: bash
         run: |

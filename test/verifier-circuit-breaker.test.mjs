@@ -28,7 +28,7 @@ function verificationRequest(body) {
   return JSON.parse(text.slice(start + prefix.length, end))
 }
 
-test("verifier infrastructure failure pauses the Goal and prevents idle retry loops", async () => {
+test("verifier infrastructure failure enters bounded automatic recovery instead of a permanent pause", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-verifier-circuit-"))
   let parentPromptCalls = 0
   let createCalls = 0
@@ -43,6 +43,7 @@ test("verifier infrastructure failure pauses the Goal and prevents idle retry lo
           parentPromptCalls += 1
           return {}
         },
+        async status() { return { data: { parent: { type: "idle" } } } },
         async abort() { return true },
         async delete() { return true },
       },
@@ -54,30 +55,25 @@ test("verifier infrastructure failure pauses the Goal and prevents idle retry lo
       { summary: "done" },
       { sessionID: "parent", messageID: "executor-current", agent: "build" },
     )
-    assert.match(first, /Completion not verified:/)
-    assert.match(first, /Goal paused to prevent repeated verifier retries/)
-    assert.equal(createCalls, 1, "non-timeout verifier infrastructure failures must not be retried automatically")
+    assert.match(first, /Goal remains active and will retry automatically/)
+    assert.equal(createCalls, 1, "non-timeout verifier infrastructure failure still gets only one verifier attempt per completion audit")
 
-    const paused = await stateFor(root)
-    assert.equal(paused.status, "paused")
-    assert.match(paused.stopReason, /Independent semantic verification unavailable/)
-    assert.match(paused.stopReason, /verifier provider unavailable/)
-
-    const second = await hooks.tool.opencode_goal_complete.execute(
-      { summary: "retry" },
-      { sessionID: "parent", messageID: "executor-current", agent: "build" },
-    )
-    assert.match(second, /goal status is paused/)
+    const recovering = await stateFor(root)
+    assert.equal(recovering.status, "active")
+    assert.equal(recovering.infrastructureRecovery?.kind, "semantic_verifier")
+    assert.ok(recovering.infrastructureRecovery?.nextRetryAt > Date.now())
+    assert.match(recovering.stopReason, /Recovering from semantic_verifier infrastructure failure/)
+    assert.match(recovering.stopReason, /verifier provider unavailable/)
 
     await hooks.event({ event: { type: "session.idle", properties: { sessionID: "parent" } } })
     await new Promise((resolve) => setTimeout(resolve, 10))
-    assert.equal(parentPromptCalls, 0, "paused verifier failure must not dispatch a fresh continuation on idle")
+    assert.equal(parentPromptCalls, 0, "host idle immediately after failure must not bypass the recovery cooldown")
   } finally {
     await rm(root, { recursive: true, force: true })
   }
 })
 
-test("semantic verifier timeout gets exactly one fresh retry before the circuit breaker pauses", async () => {
+test("semantic verifier timeout gets exactly one fresh verifier retry before Goal backoff", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-verifier-timeout-retry-"))
   let createCalls = 0
   try {
@@ -88,6 +84,7 @@ test("semantic verifier timeout gets exactly one fresh retry before the circuit 
           return await new Promise(() => {})
         },
         async prompt() { return {} },
+        async status() { return { data: { parent: { type: "idle" } } } },
         async abort() { return true },
         async delete() { return true },
       },
@@ -103,14 +100,15 @@ test("semantic verifier timeout gets exactly one fresh retry before the circuit 
       { sessionID: "parent", messageID: "executor-current", agent: "build" },
     )
 
-    assert.match(result, /Completion not verified:/)
-    assert.match(result, /after one automatic timeout retry/)
-    assert.equal(createCalls, 2, "a verifier timeout should get one fresh session attempt, never an unbounded retry loop")
+    assert.match(result, /Goal remains active and will retry automatically/)
+    assert.equal(createCalls, 2, "a verifier timeout should get one fresh session attempt, never an immediate unbounded retry loop")
 
-    const paused = await stateFor(root)
-    assert.equal(paused.status, "paused")
-    assert.match(paused.stopReason, /after one automatic timeout retry/)
-    assert.match(paused.stopReason, /timed out after 15ms/)
+    const recovering = await stateFor(root)
+    assert.equal(recovering.status, "active")
+    assert.equal(recovering.infrastructureRecovery?.kind, "semantic_verifier")
+    assert.ok(recovering.infrastructureRecovery?.nextRetryAt > Date.now())
+    assert.match(recovering.infrastructureRecovery?.reason ?? "", /after one automatic timeout retry/)
+    assert.match(recovering.infrastructureRecovery?.reason ?? "", /timed out after 15ms/)
   } finally {
     await rm(root, { recursive: true, force: true })
   }

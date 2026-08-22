@@ -1,0 +1,45 @@
+name: One-shot npm 1.3.25 verification
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/verify-npm-1.3.25-once.yml
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
+      - name: Verify exact version, latest tag, and installer bin
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED="1.3.25"
+          VERSION="$(npm view "@bybrawe/opencode-goal@$EXPECTED" version --registry=https://registry.npmjs.org)"
+          LATEST="$(npm view "@bybrawe/opencode-goal@latest" version --registry=https://registry.npmjs.org)"
+          BIN="$(npm view "@bybrawe/opencode-goal@$EXPECTED" bin.opencode-goal --registry=https://registry.npmjs.org)"
+          echo "version=$VERSION"
+          echo "latest=$LATEST"
+          echo "bin=$BIN"
+          test "$VERSION" = "$EXPECTED"
+          test "$LATEST" = "$EXPECTED"
+          { test "$BIN" = "bin/opencode-goal.js" || test "$BIN" = "./bin/opencode-goal.js"; }
+      - name: Verify clean consumer installer
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERIFY_DIR="$(mktemp -d)"
+          trap 'rm -rf "$VERIFY_DIR"' EXIT
+          cd "$VERIFY_DIR"
+          INSTALLED="$(npm exec --yes --package="@bybrawe/opencode-goal@1.3.25" -- opencode-goal --version)"
+          echo "installer=$INSTALLED"
+          test "$INSTALLED" = "1.3.25"

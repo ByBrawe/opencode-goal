@@ -17,6 +17,7 @@ type TransientListener = (sessionID: string, error: unknown) => void
 const INFRA_EVENT_MARKER = "__opencodeGoalInfrastructureRecovery"
 const DEFAULT_RETRY_POLL_MS = 5_000
 const DEFAULT_RETRY_WATCHDOG_MS = 2 * 60_000
+const MAX_PERSIST_RETRIES = 4
 
 function sessionIDFromPromptArgs(args: any[]): string | undefined {
   const first = args[0] ?? {}
@@ -55,12 +56,7 @@ async function saveWithReload(store: GoalStore, goal: GoalState): Promise<GoalSt
   }
 }
 
-/**
- * Observe transient failures from session.prompt without changing SDK behavior.
- * The stable core still sees the rejection and performs its normal cleanup;
- * the recovery coordinator then converts only known transient pauses back into
- * a persisted, backoff-controlled active recovery state.
- */
+/** Observe transient failures without changing SDK behavior. */
 export function createGoalInfrastructureTransport(client: any) {
   const listeners = new Set<TransientListener>()
   const session = client?.session
@@ -125,6 +121,15 @@ export function installGoalInfrastructureRecovery(
     timers.delete(sessionID)
   }
 
+  function armTimer(sessionID: string, delay: number) {
+    cancelTimer(sessionID)
+    const timer = setTimeout(() => {
+      void wake(sessionID).catch(() => cancelTimer(sessionID))
+    }, Math.max(0, delay))
+    ;(timer as any).unref?.()
+    timers.set(sessionID, timer)
+  }
+
   async function liveSessionStatus(sessionID: string): Promise<string | undefined> {
     const status = input.client?.session?.status
     if (typeof status !== "function") return undefined
@@ -139,8 +144,7 @@ export function installGoalInfrastructureRecovery(
         const type = entry && typeof entry === "object" ? entry.type : undefined
         return typeof type === "string" ? type : "idle"
       } catch {
-        // A status read can fail for the same transient outage. Preserve that as
-        // unknown rather than turning uncertainty into permission to dispatch.
+        // Same outage can make status unreadable; unknown never authorizes dispatch.
       }
     }
     return attempted ? "unknown" : undefined
@@ -151,7 +155,7 @@ export function installGoalInfrastructureRecovery(
     try {
       await input.client.session.abort({ path: { id: sessionID } })
     } catch {
-      // Recovery state remains authoritative even if the host already ended it.
+      // Host may already have released the failed turn.
     }
   }
 
@@ -159,9 +163,7 @@ export function installGoalInfrastructureRecovery(
     cancelTimer(sessionID)
     const goal = await store.load(sessionID)
     if (!goal || !isInfrastructureWaiting(goal)) return
-    const delay = Math.max(0, goal.infrastructureRecovery!.nextRetryAt - Date.now())
-    const timer = setTimeout(() => { void wake(sessionID) }, delay)
-    timers.set(sessionID, timer)
+    armTimer(sessionID, goal.infrastructureRecovery!.nextRetryAt - Date.now())
   }
 
   async function postponeWhileHostRetries(sessionID: string, goal: GoalState): Promise<boolean> {
@@ -175,25 +177,21 @@ export function installGoalInfrastructureRecovery(
     const since = retrySeenAt.get(sessionID) ?? now
     retrySeenAt.set(sessionID, since)
     if (live === "retry" && now - since >= retryWatchdogMs) {
-      // The host has owned this retry for too long. Abort once so older OpenCode
-      // builds with unbounded retry loops can release the Goal back to the
-      // plugin's persisted backoff state. Unknown status is never force-aborted.
       await abortRetryingGoalTurn(sessionID)
       retrySeenAt.delete(sessionID)
+      const recovery = goal.infrastructureRecovery
+      if (!recovery) return true
       const delayed: GoalState = {
         ...goal,
-        infrastructureRecovery: goal.infrastructureRecovery
-          ? { ...goal.infrastructureRecovery, nextRetryAt: now + retryPollMs }
-          : undefined,
+        infrastructureRecovery: { ...recovery, nextRetryAt: now + retryPollMs },
         updatedAt: now,
       }
-      await saveWithReload(store, delayed)
-      await schedule(sessionID)
+      const saved = await saveWithReload(store, delayed)
+      if (saved.status === "active" && saved.infrastructureRecovery?.nextRetryAt) await schedule(sessionID)
       return true
     }
 
-    cancelTimer(sessionID)
-    timers.set(sessionID, setTimeout(() => { void wake(sessionID) }, retryPollMs))
+    armTimer(sessionID, retryPollMs)
     return true
   }
 
@@ -209,7 +207,8 @@ export function installGoalInfrastructureRecovery(
     if (await postponeWhileHostRetries(sessionID, goal)) return
 
     goal = markInfrastructureRecoveryDispatched(goal, now)
-    await saveWithReload(store, goal)
+    const saved = await saveWithReload(store, goal)
+    if (saved.status !== "active" || saved.infrastructureRecovery?.nextRetryAt !== 0) return
     const hook = hooks.event
     if (typeof hook !== "function") return
     await hook({
@@ -226,17 +225,24 @@ export function installGoalInfrastructureRecovery(
     reason: string,
     allowStatuses: GoalState["status"][] = ["active", "paused", "blocked"],
   ): Promise<GoalState | undefined> {
-    const latest = await store.load(sessionID)
-    if (!latest || !allowStatuses.includes(latest.status) || latest.status === "completed") return undefined
-    const next = enterInfrastructureRecovery(latest, {
-      kind,
-      reason,
-      ...(retryBaseMs === undefined ? {} : { baseMs: retryBaseMs }),
-      ...(retryMaxMs === undefined ? {} : { maxMs: retryMaxMs }),
-    })
-    const saved = await saveWithReload(store, next)
-    if (saved.id === next.id && saved.revision === next.revision && saved.status === "active") await schedule(sessionID)
-    return saved
+    for (let attempt = 0; attempt < MAX_PERSIST_RETRIES; attempt += 1) {
+      const latest = await store.load(sessionID)
+      if (!latest || !allowStatuses.includes(latest.status) || latest.status === "completed") return undefined
+      const next = enterInfrastructureRecovery(latest, {
+        kind,
+        reason,
+        ...(retryBaseMs === undefined ? {} : { baseMs: retryBaseMs }),
+        ...(retryMaxMs === undefined ? {} : { maxMs: retryMaxMs }),
+      })
+      try {
+        await store.save(next)
+        await schedule(sessionID)
+        return next
+      } catch (error) {
+        if (!(error instanceof GoalStoreConcurrencyError) || attempt === MAX_PERSIST_RETRIES - 1) throw error
+      }
+    }
+    return undefined
   }
 
   async function inspectLegacyOrCorePause(sessionID: string): Promise<boolean> {
@@ -244,13 +250,9 @@ export function installGoalInfrastructureRecovery(
     if (!goal) return false
     const legacy = legacyInfrastructureRecovery(goal)
     if (!legacy) return false
-    await enter(sessionID, legacy.kind, legacy.reason)
-    return true
+    return Boolean(await enter(sessionID, legacy.kind, legacy.reason))
   }
 
-  // The core completion tool intentionally paused on verifier infrastructure
-  // failure in <=1.3.25. Keep the core verifier fail-closed, but convert only
-  // that infrastructure pause into a backoff-controlled active recovery state.
   const completeTool: any = (hooks as any).tool?.opencode_goal_complete
   if (completeTool && typeof completeTool.execute === "function") {
     const originalComplete = completeTool.execute.bind(completeTool)
@@ -267,24 +269,25 @@ export function installGoalInfrastructureRecovery(
     }
   }
 
-  // Observe transient prompt transport rejection. Let the core finish its
-  // cleanup/pause first, then repair only a matching transient dispatch pause.
   transport?.subscribe((sessionID, error) => {
-    setTimeout(() => {
+    const timer = setTimeout(() => {
       void (async () => {
         const goal = await store.load(sessionID)
         if (!goal) return
-        if (goal.status === "paused" && String(goal.stopReason ?? "").startsWith("Continuation dispatch failed:")) {
-          await enter(sessionID, "continuation_dispatch", String(goal.stopReason), ["paused"])
+        const stopReason = String(goal.stopReason ?? "")
+        if (goal.status === "paused" && (
+          stopReason.startsWith("Continuation dispatch failed:")
+          || stopReason.startsWith("Restart recovery prompt failed:")
+        )) {
+          await enter(sessionID, "continuation_dispatch", stopReason, ["paused"])
           return
         }
-        // A retryable provider error can reject before a host session.error is
-        // delivered. If the Goal is still active, put it behind the same gate.
         if (goal.status === "active" && isTransientInfrastructureError(error)) {
           await enter(sessionID, "continuation_dispatch", String(error), ["active"])
         }
       })().catch(() => undefined)
     }, 0)
+    ;(timer as any).unref?.()
   })
 
   const originalEvent = hooks.event
@@ -304,9 +307,6 @@ export function installGoalInfrastructureRecovery(
         await enter(sessionID, "provider_retry", JSON.stringify(eventError(eventInput)), ["active"])
       }
 
-      // A host idle immediately after a verifier/provider failure is just the
-      // failed turn settling; it must not bypass the persisted cooldown. Only
-      // the coordinator's marked one-shot idle may wake a waiting recovery.
       if (sessionID && type === "session.idle" && !marked) {
         retrySeenAt.delete(sessionID)
         const goal = await store.load(sessionID)
@@ -319,11 +319,9 @@ export function installGoalInfrastructureRecovery(
       if (sessionID && type === "session.idle") retrySeenAt.delete(sessionID)
       await originalEvent(eventInput)
 
-      // A normal host idle can trigger a Goal-owned prompt whose promise rejects
-      // asynchronously. Give the stable core a chance to persist its pause, then
-      // repair it if and only if it is a recognized transient dispatch failure.
       if (sessionID && type === "session.idle" && !marked) {
-        setTimeout(() => { void inspectLegacyOrCorePause(sessionID).catch(() => undefined) }, 0)
+        const timer = setTimeout(() => { void inspectLegacyOrCorePause(sessionID).catch(() => undefined) }, 0)
+        ;(timer as any).unref?.()
       }
 
       if (sessionID && type === "message.updated") {
@@ -343,9 +341,6 @@ export function installGoalInfrastructureRecovery(
     }
   }
 
-  // Migrate recoverable 1.3.25-era pause/block records and restore timers after
-  // a process restart. This is deliberately narrow: genuine user pauses and
-  // project blockers do not match legacyInfrastructureRecovery().
   const originalConfig = hooks.config
   let startupScheduled = false
   hooks.config = async (config: any) => {

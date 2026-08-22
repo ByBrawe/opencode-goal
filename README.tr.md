@@ -84,7 +84,7 @@ Temel özellikler:
 - **False-completion koruması** — eksik, eski, dolaylı veya uydurulmuş kanıt fail-closed davranışıyla reddedilir.
 - **Multi-turn cadence koruması** — “10 ayrı turda her seferinde tam +1 yap” gibi hedefler yalnızca final dosya değerine bakılarak kanıtlanmaz.
 - **Restart recovery** — proje içindeki state, OpenCode/süreç yeniden başlatmalarından sonra korunur.
-- **Compaction persistence** — Goal context korunurken model context penceresini OpenCode yönetmeye devam eder.
+- **Compaction persistence** — Goal context korunurken model context penceresini OpenCode yönetmeye devam eder. Aktif otomatik/manuel compaction ownership ve paused-resume ayrımı için [compaction & continuation sözleşmesine](./docs/COMPACTION-CONTINUATION.md) bakın.
 - **Budget'lar** — turn, token, runtime ve isteğe bağlı cost limitleri autonomous çalışmayı sınırlar.
 - **Goal queue** — tek bir canlı Goal korunurken gelecekteki Goal'lar inert sıralı queue içinde hazırlanabilir.
 - **Windows / macOS / Linux paketleme** — installer ve package smoke coverage çapraz platformdur.

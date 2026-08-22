@@ -108,6 +108,9 @@ export function legacyInfrastructureRecovery(goal: GoalState): {
   if (goal.status === "paused" && stopReason.startsWith("Continuation dispatch failed:") && isTransientInfrastructureError(stopReason)) {
     return { kind: "continuation_dispatch", reason: stopReason }
   }
+  if (goal.status === "paused" && stopReason.startsWith("Restart recovery prompt failed:") && isTransientInfrastructureError(stopReason)) {
+    return { kind: "continuation_dispatch", reason: stopReason }
+  }
   if (
     goal.status === "blocked"
     && /completion-audit infrastructure failure/i.test(stopReason)

@@ -69,7 +69,7 @@ test("explicit host retry is persisted and a completed assistant turn cancels re
     const recovering = await stateFor(root)
     assert.equal(recovering.status, "active")
     assert.equal(recovering.infrastructureRecovery?.kind, "provider_retry")
-    assert.ok(recovering.infrastructureRecovery?.nextRetryAt > Date.now())
+    assert.ok(recovering.infrastructureRecovery?.nextRetryAt > recovering.updatedAt, "provider retry must persist a future deadline relative to its own state write")
 
     await hooks.event({
       event: {

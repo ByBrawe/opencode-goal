@@ -2,6 +2,16 @@
 
 All notable changes to **OpenCode Goals** are documented here.
 
+## 1.3.26 — 2026-08-22
+
+Transient infrastructure recovery release.
+
+- Persist bounded infrastructure-recovery state for semantic-verifier outages, provider retry, and continuation-dispatch transport failures, with exponential cooldown from 15 seconds up to a five-minute cap.
+- Keep OpenCode session ownership authoritative during provider retry/busy/unknown states so Goal never injects a duplicate autonomous prompt over a host-owned turn; add a bounded watchdog for older hosts that can remain in retry indefinitely.
+- Recover transient fetch/network/ECONNRESET/ENOTFOUND/EAI_AGAIN/ETIMEDOUT and retryable provider failures without converting a temporary outage into a permanent Goal pause or spending the three-turn no-progress budget.
+- Migrate narrowly matching legacy 1.3.25 semantic-verifier timeout pause/block states into automatic recovery while leaving real user pauses, project blockers, authentication failures, and semantic completion proof requirements fail-closed.
+- Harden restart and completion races so successful assistant completion cancels pending provider fallback before it can wake late, recovery timers survive persisted state safely, and status output explains infrastructure recovery instead of appearing stuck.
+
 ## 1.3.25 — 2026-08-22
 
 Long-running context-budget and compaction-continuation reliability release.

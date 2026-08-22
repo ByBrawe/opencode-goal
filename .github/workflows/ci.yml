@@ -134,7 +134,7 @@ jobs:
         env:
           OPENCODE_PRINT_LOGS: "1"
           OPENCODE_LOG_LEVEL: DEBUG
-      - name: Run real-host manual compaction continuation canary
+      - name: Run real-host manual and automatic compaction continuation canaries
         run: npm run canary:compaction
         env:
           OPENCODE_PRINT_LOGS: "1"

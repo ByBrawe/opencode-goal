@@ -51,9 +51,16 @@ The Goal-owned assistant request before compaction and the Goal-owned continuati
 
 ## Real-host regression
 
-The repository contains `scripts/host-compaction-canary.mjs` and runs it on both Ubuntu and Windows against the current OpenCode CLI.
+The repository runs a shared real-host compaction harness on both Ubuntu and Windows against the current OpenCode CLI. It covers **both manual and automatic compaction**.
 
-The canary deliberately creates this race:
+The shared harness lives in `scripts/host-compaction-canary-core.mjs`, with small entrypoints for the two trigger modes:
+
+- `scripts/host-compaction-canary.mjs` — manual `POST /session/:id/summarize` compaction;
+- `scripts/host-auto-compaction-canary.mjs` — OpenCode's own automatic overflow-triggered compaction.
+
+### Manual mode
+
+The manual canary deliberately creates this race:
 
 1. start a real `/goal` with `--max-turns 2`;
 2. hold the first provider request open;
@@ -61,7 +68,19 @@ The canary deliberately creates this race:
 4. release the first turn so OpenCode performs manual compaction at the safe boundary;
 5. observe the compaction request and the next autonomous request.
 
-The expected provider sequence is exactly:
+### Automatic mode
+
+The automatic canary calls **no summarize endpoint**. Instead it exercises OpenCode's real overflow detector:
+
+1. start the same two-turn real Goal on a deterministic canary model with a deliberately small context/output budget;
+2. hold the first Goal-owned provider request open;
+3. return a deliberately high provider token-usage report for that completed turn;
+4. release the turn and require OpenCode itself to detect overflow and persist an `auto: true` compaction part;
+5. observe the automatically generated compaction request and the next autonomous request.
+
+This makes the automatic test exercise OpenCode's own `isOverflow -> compaction.create({ auto: true })` path rather than approximating it with a manual `/compact` or summarize call.
+
+For **both modes**, the expected provider sequence is exactly:
 
 ```text
 1. Goal-owned executor turn
@@ -69,21 +88,23 @@ The expected provider sequence is exactly:
 3. one Goal-owned continuation
 ```
 
-The canary fails if:
+The canaries fail if:
 
 - the persisted Goal context/objective is missing from compaction;
+- automatic mode does not persist an `auto: true` compaction marker;
 - OpenCode's generic `Continue if you have next steps...` continuation leaks through;
 - more than one post-compaction continuation is dispatched;
 - the compaction summary is counted as a Goal turn;
 - the two Goal-owned turns do not stop cleanly at `--max-turns 2`.
 
-This test is intentionally a real-host test rather than only a mocked plugin test. It protects the integration boundary where OpenCode event ordering, compaction, idle delivery, and Goal ownership meet.
+These tests are intentionally real-host tests rather than only mocked plugin tests. They protect the integration boundary where OpenCode overflow detection, manual summarization, event ordering, compaction, idle delivery, and Goal ownership meet.
 
 ## Troubleshooting decision table
 
 | Situation | Expected behavior | User action |
 | --- | --- | --- |
-| Goal is active and OpenCode compacts | Goal context survives; exactly one Goal-owned continuation starts | None |
+| Goal is active and OpenCode auto-compacts near its usable context limit | Goal context survives; exactly one Goal-owned continuation starts | None |
+| Goal is active and compaction is triggered manually | Goal context survives; exactly one Goal-owned continuation starts | None |
 | Goal is active and normal turn becomes idle | Normal guarded Goal continuation starts | None |
 | Goal is explicitly paused | No autonomous continuation | `/goal resume` or a short explicit continuation message |
 | Verifier timeout exhausts its bounded retry and Goal becomes paused | Goal stays paused; evidence is preserved | Fix/wait for provider, then `/goal resume` or a short explicit continuation message |
@@ -92,10 +113,10 @@ This test is intentionally a real-host test rather than only a mocked plugin tes
 
 ## Türkçe özet
 
-Aktif bir Goal sırasında OpenCode context compaction yaparsa kullanıcıdan ayrıca `devam et` yazması beklenmez. Goal state compaction isteğine taşınır, OpenCode'un generic post-compaction continue mekanizması o aktif Goal için kapalı tutulur ve normal Goal guard'larından geçen **tek bir Goal-owned continuation** başlatılır.
+Aktif bir Goal sırasında OpenCode ister otomatik context sınırı nedeniyle ister manuel compaction isteğiyle compact yapsın, kullanıcıdan ayrıca `devam et` yazması beklenmez. Goal state compaction isteğine taşınır, OpenCode'un generic post-compaction continue mekanizması o aktif Goal için kapalı tutulur ve normal Goal guard'larından geçen **tek bir Goal-owned continuation** başlatılır.
 
 Buna karşılık Goal gerçekten `paused` durumundaysa autonomous continuation yapılmaz. `/goal resume` açık lifecycle komutudur; `devam et`, `continue`, `kaldığın yerden devam et` veya `resume` gibi kısa ve açık devam mesajları da aynı resume/ownership zincirine yönlendirilir.
 
 Compaction model context'ini yönetir; geçmiş Goal token kullanımını silmez. Yeni Goal'larda cumulative token limiti varsayılan olarak yoktur (`maxTokens: 0`). `--max-tokens` yalnız kullanıcı açıkça toplam çalışma için runaway guard istediğinde kullanılır.
 
-Ubuntu ve Windows real-host canary'si gerçek OpenCode `summarize` akışında şu diziyi zorunlu tutar: ilk Goal turnü -> Goal context'li compaction summary -> tam bir Goal-owned continuation. Generic duplicate continue, fazla provider request veya compaction summary'nin Goal turnü sayılması testi kırar.
+Ubuntu ve Windows real-host canary'leri iki ayrı yolu korur: gerçek OpenCode `summarize` akışı ve OpenCode'un kendi overflow detector'ünün oluşturduğu `auto: true` compaction. İkisinde de zorunlu sıra ilk Goal turnü -> Goal context'li compaction summary -> tam bir Goal-owned continuation'dır. Generic duplicate continue, fazla provider request, eksik auto marker veya compaction summary'nin Goal turnü sayılması testi kırar.

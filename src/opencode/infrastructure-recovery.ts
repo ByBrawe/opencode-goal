@@ -175,29 +175,35 @@ export function installGoalInfrastructureRecovery(
     armTimer(sessionID, goal.infrastructureRecovery!.nextRetryAt - Date.now())
   }
 
-  async function postponeWhileHostRetries(sessionID: string, goal: GoalState): Promise<boolean> {
+  async function postponeWhileHostOwnsSession(sessionID: string, goal: GoalState): Promise<boolean> {
     const live = await liveSessionStatus(sessionID)
-    if (live !== "retry" && live !== "unknown") {
+    if (live !== "retry" && live !== "busy" && live !== "unknown") {
       retrySeenAt.delete(sessionID)
       return false
     }
 
     const now = Date.now()
-    const since = retrySeenAt.get(sessionID) ?? now
-    retrySeenAt.set(sessionID, since)
-    if (live === "retry" && now - since >= retryWatchdogMs) {
-      await abortRetryingGoalTurn(sessionID)
-      retrySeenAt.delete(sessionID)
-      const recovery = goal.infrastructureRecovery
-      if (!recovery) return true
-      const delayed: GoalState = {
-        ...goal,
-        infrastructureRecovery: { ...recovery, nextRetryAt: now + retryPollMs },
-        updatedAt: now,
+    if (live === "retry") {
+      const since = retrySeenAt.get(sessionID) ?? now
+      retrySeenAt.set(sessionID, since)
+      if (now - since >= retryWatchdogMs) {
+        await abortRetryingGoalTurn(sessionID)
+        retrySeenAt.delete(sessionID)
+        const recovery = goal.infrastructureRecovery
+        if (!recovery) return true
+        const delayed: GoalState = {
+          ...goal,
+          infrastructureRecovery: { ...recovery, nextRetryAt: now + retryPollMs },
+          updatedAt: now,
+        }
+        const saved = await saveWithReload(store, delayed)
+        if (saved.status === "active" && saved.infrastructureRecovery?.nextRetryAt) await schedule(sessionID)
+        return true
       }
-      const saved = await saveWithReload(store, delayed)
-      if (saved.status === "active" && saved.infrastructureRecovery?.nextRetryAt) await schedule(sessionID)
-      return true
+    } else if (live === "busy") {
+      // Busy means an actual host/user/model turn owns the session. Never use
+      // the retry watchdog to abort it; simply keep polling until idle/completed.
+      retrySeenAt.delete(sessionID)
     }
 
     armTimer(sessionID, retryPollMs)
@@ -213,7 +219,7 @@ export function installGoalInfrastructureRecovery(
       await schedule(sessionID)
       return
     }
-    if (await postponeWhileHostRetries(sessionID, goal)) return
+    if (await postponeWhileHostOwnsSession(sessionID, goal)) return
 
     goal = markInfrastructureRecoveryDispatched(goal, now)
     const saved = await saveWithReload(store, goal)
@@ -260,6 +266,12 @@ export function installGoalInfrastructureRecovery(
     const legacy = legacyInfrastructureRecovery(goal)
     if (!legacy) return false
     return Boolean(await enter(sessionID, legacy.kind, legacy.reason))
+  }
+
+  async function ensureProviderRetryRecovery(sessionID: string): Promise<void> {
+    const goal = await store.load(sessionID)
+    if (!goal || goal.status !== "active" || goal.infrastructureRecovery) return
+    await enter(sessionID, "provider_retry", "OpenCode reported session.status=retry for an active Goal turn.", ["active"])
   }
 
   async function recoverTransientPromptAfterCoreCleanup(sessionID: string): Promise<void> {
@@ -312,12 +324,19 @@ export function installGoalInfrastructureRecovery(
 
       if (sessionID && type === "session.status") {
         const status = eventStatusType(eventInput)
-        if (status === "retry") retrySeenAt.set(sessionID, retrySeenAt.get(sessionID) ?? Date.now())
-        else if (status === "idle" || status === "busy") retrySeenAt.delete(sessionID)
+        if (status === "retry") {
+          retrySeenAt.set(sessionID, retrySeenAt.get(sessionID) ?? Date.now())
+          await ensureProviderRetryRecovery(sessionID)
+        } else if (status === "idle" || status === "busy") {
+          retrySeenAt.delete(sessionID)
+        }
       }
 
       if (sessionID && type === "session.error" && isTransientInfrastructureError(eventError(eventInput))) {
-        await enter(sessionID, "provider_retry", JSON.stringify(eventError(eventInput)), ["active"])
+        const goal = await store.load(sessionID)
+        if (goal?.status === "active" && !goal.infrastructureRecovery) {
+          await enter(sessionID, "provider_retry", JSON.stringify(eventError(eventInput)), ["active"])
+        }
       }
 
       if (sessionID && type === "session.idle" && !marked) {
@@ -341,7 +360,13 @@ export function installGoalInfrastructureRecovery(
         const info = eventInput?.event?.properties?.info
         if (info?.role === "assistant" && info?.time?.completed) {
           const goal = await store.load(sessionID)
-          if (goal?.status === "active" && goal.infrastructureRecovery?.nextRetryAt === 0) {
+          if (
+            goal?.status === "active"
+            && goal.infrastructureRecovery
+            && (goal.infrastructureRecovery.kind === "provider_retry" || goal.infrastructureRecovery.nextRetryAt === 0)
+          ) {
+            cancelTimer(sessionID)
+            retrySeenAt.delete(sessionID)
             await saveWithReload(store, clearInfrastructureRecovery(goal))
           }
         }

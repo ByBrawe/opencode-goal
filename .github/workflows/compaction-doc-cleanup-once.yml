@@ -1,0 +1,72 @@
+name: One-shot compaction docs cleanup
+
+on:
+  push:
+    branches:
+      - docs/compaction-discovery-cleanup
+    paths:
+      - .github/workflows/compaction-doc-cleanup-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    if: github.repository == 'ByBrawe/opencode-goal' && github.ref == 'refs/heads/docs/compaction-discovery-cleanup'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: true
+      - name: Update README discovery and CI label
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('fs')
+
+          function replaceExactly(path, from, to) {
+            let text = fs.readFileSync(path, 'utf8')
+            const count = text.split(from).length - 1
+            if (count !== 1) throw new Error(`${path}: expected exactly one match, found ${count}`)
+            text = text.replace(from, to)
+            fs.writeFileSync(path, text)
+          }
+
+          replaceExactly(
+            'README.md',
+            '- **Compaction persistence** — Goal context is preserved while OpenCode manages its own model context window.',
+            '- **Compaction persistence** — Goal context is preserved while OpenCode manages its own model context window. See the [compaction & continuation contract](./docs/COMPACTION-CONTINUATION.md) for active auto/manual compaction ownership and paused-resume semantics.',
+          )
+
+          replaceExactly(
+            'README.tr.md',
+            '- **Compaction persistence** — Goal context korunurken model context penceresini OpenCode yönetmeye devam eder.',
+            '- **Compaction persistence** — Goal context korunurken model context penceresini OpenCode yönetmeye devam eder. Aktif otomatik/manuel compaction ownership ve paused-resume ayrımı için [compaction & continuation sözleşmesine](./docs/COMPACTION-CONTINUATION.md) bakın.',
+          )
+
+          replaceExactly(
+            '.github/workflows/ci.yml',
+            '      - name: Run real-host manual compaction continuation canary',
+            '      - name: Run real-host manual and automatic compaction continuation canaries',
+          )
+          NODE
+      - name: Require cleanup-only diff
+        shell: bash
+        run: |
+          CHANGED="$(git diff --name-only | sort)"
+          EXPECTED=".github/workflows/ci.yml
+          README.md
+          README.tr.md"
+          if [ "$CHANGED" != "$EXPECTED" ]; then
+            echo "Unexpected cleanup diff:"
+            printf '%s\n' "$CHANGED"
+            exit 1
+          fi
+      - name: Commit cleanup
+        shell: bash
+        run: |
+          git config user.name "OpenCode Goal CI"
+          git config user.email "opencode-goal-ci@example.invalid"
+          git add .github/workflows/ci.yml README.md README.tr.md
+          git commit -m "docs: make compaction continuation contract discoverable"
+          git push origin HEAD:docs/compaction-discovery-cleanup

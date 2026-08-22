@@ -44,7 +44,7 @@
     "release:check": "npm run check && npm test && npm run eval && npm run package:smoke",
     "prepublishOnly": "npm run release:check",
     "canary:host": "node --import ./scripts/host-canary-bootstrap.mjs scripts/host-canary.mjs",
-    "canary:compaction": "node --import ./scripts/host-canary-bootstrap.mjs scripts/host-compaction-canary.mjs",
+    "canary:compaction": "node --import ./scripts/host-canary-bootstrap.mjs scripts/host-compaction-canary.mjs && node --import ./scripts/host-canary-bootstrap.mjs scripts/host-auto-compaction-canary.mjs",
     "canary:semantic": "node --import ./scripts/host-canary-bootstrap.mjs scripts/host-semantic-canary.mjs",
     "canary:steering": "node --import ./scripts/host-canary-bootstrap.mjs scripts/host-steering-canary.mjs",
     "canary:progress": "node --import ./scripts/host-canary-bootstrap.mjs scripts/host-progress-canary.mjs",

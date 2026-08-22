@@ -62,7 +62,10 @@ export default async function OpenCodeGoalPlugin(
   // lifecycle/i18n UX. Its synthetic wake-up is routed through the final hook
   // stack, so task/Plan/sequence/compaction ownership still remains authoritative.
   installGoalInfrastructureRecovery(input, hooks, infrastructureTransport)
-  scheduleStartupRecovery(input, hooks, startupGoals)
+  // Startup recovery uses the observed transport too: if the first prompt after
+  // a process/network restart fails transiently, it enters the same persisted
+  // backoff path instead of becoming a manual `/goal resume` dead-end.
+  scheduleStartupRecovery({ ...input, client: infrastructureTransport.client }, hooks, startupGoals)
   // Lifecycle UX remains the outer ownership-aware wrapper. Localization is
   // installed after it and restores command-owned text before chat.message
   // reaches lifecycle logic, so translated UI never becomes authorization.

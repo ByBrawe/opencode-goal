@@ -27,6 +27,29 @@ function appendLog(current, chunk, limit = 80_000) {
   return (current + String(chunk)).slice(-limit)
 }
 
+async function seedConfigDependencies(dir) {
+  // OpenCode waits for background @opencode-ai/plugin dependency installation
+  // before loading external plugins. A fresh temp config directory would make
+  // this package-loader test depend on an unrelated Arborist/network bootstrap,
+  // which can stall on Windows runners before the package entrypoint is tested.
+  // Seed the same dependency metadata used by the other real-host canaries so
+  // Config.waitForDependencies can prove the dependency name is already locked
+  // and the canary stays focused on package ./server resolution and /goal setup.
+  await mkdir(path.join(dir, "node_modules"), { recursive: true })
+  const dependencies = { "@opencode-ai/plugin": "*" }
+  await writeFile(path.join(dir, "package.json"), `${JSON.stringify({ private: true, dependencies }, null, 2)}\n`)
+  await writeFile(
+    path.join(dir, "package-lock.json"),
+    `${JSON.stringify({
+      name: "opencode-goal-package-loader-config",
+      lockfileVersion: 3,
+      requires: true,
+      packages: { "": { dependencies } },
+    }, null, 2)}\n`,
+  )
+  await writeFile(path.join(dir, ".gitignore"), "node_modules\npackage.json\npackage-lock.json\nbun.lock\n.gitignore\n")
+}
+
 async function runCli(args, { cwd, env, timeoutMs = 45_000 }) {
   return await new Promise((resolve, reject) => {
     const child = spawn(binary, args, { cwd, env, windowsHide: true })
@@ -65,10 +88,12 @@ function parseConfig(stdout) {
 
 const workspace = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-package-loader-"))
 const home = path.join(workspace, ".home")
+const globalConfig = path.join(home, ".config", "opencode")
 const packageSpec = pathToFileURL(root).href
 
 try {
   await mkdir(home, { recursive: true })
+  await seedConfigDependencies(globalConfig)
   await writeFile(path.join(workspace, "opencode.json"), `${JSON.stringify({
     $schema: "https://opencode.ai/config.json",
     plugin: [packageSpec],

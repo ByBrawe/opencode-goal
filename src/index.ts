@@ -10,6 +10,7 @@ import { installTaskDeferral } from "./opencode/task-deferral.js"
 import { installShellProgress } from "./opencode/shell-progress.js"
 import { installRestrictedAgentSafety } from "./opencode/agent-boundary.js"
 import { installHostLimitHandling } from "./opencode/host-limits.js"
+import { createGoalInfrastructureTransport, installGoalInfrastructureRecovery } from "./opencode/infrastructure-recovery.js"
 import { preferSynchronousSessionPrompt } from "./opencode/client-compat.js"
 import { installGoalLifecycleUX } from "./opencode/lifecycle-ux.js"
 import { installGoalI18nUX } from "./opencode/i18n-ux.js"
@@ -24,9 +25,13 @@ export default async function OpenCodeGoalPlugin(
   // prevents startup recovery from racing with a brand-new /goal created by
   // the same host instance.
   const startupGoals = await captureStartupGoals(input.directory)
+  // Observe transient prompt transport failures before the core compatibility
+  // proxy is applied. The observer never swallows errors; it only gives the
+  // recovery coordinator a reliable signal after core cleanup has finished.
+  const infrastructureTransport = createGoalInfrastructureTransport(input.client)
   const coreInput = {
     ...input,
-    client: preferSynchronousSessionPrompt(input.client),
+    client: preferSynchronousSessionPrompt(infrastructureTransport.client),
   }
   const hooks = await OpenCodeGoalCorePlugin(coreInput, applySemanticVerifierTimeoutDefault(options))
   enhanceGoalControls(input, hooks)
@@ -53,6 +58,10 @@ export default async function OpenCodeGoalPlugin(
   installShellProgress(input, hooks)
   installRestrictedAgentSafety(input, hooks)
   installHostLimitHandling(input, hooks)
+  // Infrastructure recovery sits outside host-limit classification but inside
+  // lifecycle/i18n UX. Its synthetic wake-up is routed through the final hook
+  // stack, so task/Plan/sequence/compaction ownership still remains authoritative.
+  installGoalInfrastructureRecovery(input, hooks, infrastructureTransport)
   scheduleStartupRecovery(input, hooks, startupGoals)
   // Lifecycle UX remains the outer ownership-aware wrapper. Localization is
   // installed after it and restores command-owned text before chat.message
@@ -70,6 +79,7 @@ export * from "./verification/evidence.js"
 export * from "./runtime/accounting.js"
 export * from "./runtime/blocker.js"
 export * from "./runtime/limits.js"
+export * from "./runtime/infrastructure-recovery.js"
 export * from "./runtime/model-context.js"
 export * from "./runtime/progress.js"
 export * from "./runtime/todo-plan.js"
@@ -84,6 +94,7 @@ export * from "./opencode/project-index.js"
 export * from "./opencode/sequence.js"
 export * from "./opencode/todo-orchestration.js"
 export * from "./opencode/compaction-continuation.js"
+export * from "./opencode/infrastructure-recovery.js"
 export * from "./opencode/client-compat.js"
 export * from "./opencode/lifecycle-ux.js"
 export * from "./opencode/i18n-ux.js"

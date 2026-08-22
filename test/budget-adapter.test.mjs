@@ -12,6 +12,10 @@ async function readGoal(root) {
   return JSON.parse(await readFile(path.join(dir, files[0]), "utf8"))
 }
 
+async function removeTempRoot(root) {
+  await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })
+}
+
 function fakeClient() {
   const prompts = []
   let abortCount = 0
@@ -113,7 +117,7 @@ test("explicit OpenCode usage limit stops automatic goal retry while generic ret
     await hooks.event({ event: { type: "session.idle", properties: { sessionID: "s1" } } })
     assert.equal(fake.prompts.length, 0, "usage_limited goal must not auto-continue on idle")
   } finally {
-    await rm(root, { recursive: true, force: true })
+    await removeTempRoot(root)
   }
 })
 
@@ -151,7 +155,7 @@ test("fatal provider authentication error pauses the active goal but aborted err
     assert.match(goal.stopReason, /authentication failed.*invalid API key/i)
     assert.equal(fake.abortCount, 1)
   } finally {
-    await rm(root, { recursive: true, force: true })
+    await removeTempRoot(root)
   }
 })
 
@@ -198,7 +202,7 @@ test("budget-limited goal cannot resume until its budget is raised", async () =>
     goal = await readGoal(root)
     assert.equal(goal.status, "active", "budget continuation must remain command-owned")
   } finally {
-    await rm(root, { recursive: true, force: true })
+    await removeTempRoot(root)
   }
 })
 
@@ -226,6 +230,6 @@ test("budget command can clear limits and status shows used versus allowed value
     goal = await readGoal(root)
     assert.equal(goal.revision, 1)
   } finally {
-    await rm(root, { recursive: true, force: true })
+    await removeTempRoot(root)
   }
 })

@@ -18,6 +18,8 @@ const INFRA_EVENT_MARKER = "__opencodeGoalInfrastructureRecovery"
 const DEFAULT_RETRY_POLL_MS = 5_000
 const DEFAULT_RETRY_WATCHDOG_MS = 2 * 60_000
 const MAX_PERSIST_RETRIES = 4
+const CORE_CLEANUP_POLL_MS = 10
+const CORE_CLEANUP_POLLS = 30
 
 function sessionIDFromPromptArgs(args: any[]): string | undefined {
   const first = args[0] ?? {}
@@ -42,6 +44,13 @@ function eventError(input: any): unknown {
 
 function isInfrastructureWaiting(goal: GoalState): boolean {
   return goal.status === "active" && Boolean(goal.infrastructureRecovery?.nextRetryAt && goal.infrastructureRecovery.nextRetryAt > 0)
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms)
+    ;(timer as any).unref?.()
+  })
 }
 
 async function saveWithReload(store: GoalStore, goal: GoalState): Promise<GoalState> {
@@ -121,11 +130,11 @@ export function installGoalInfrastructureRecovery(
     timers.delete(sessionID)
   }
 
-  function armTimer(sessionID: string, delay: number) {
+  function armTimer(sessionID: string, delayMs: number) {
     cancelTimer(sessionID)
     const timer = setTimeout(() => {
       void wake(sessionID).catch(() => cancelTimer(sessionID))
-    }, Math.max(0, delay))
+    }, Math.max(0, delayMs))
     ;(timer as any).unref?.()
     timers.set(sessionID, timer)
   }
@@ -253,6 +262,24 @@ export function installGoalInfrastructureRecovery(
     return Boolean(await enter(sessionID, legacy.kind, legacy.reason))
   }
 
+  async function recoverTransientPromptAfterCoreCleanup(sessionID: string): Promise<void> {
+    // Transport listeners run inside the rejecting promise before the stable
+    // core's `.catch()` necessarily persists `Continuation dispatch failed`.
+    // Wait briefly for that authoritative cleanup instead of racing it with an
+    // `active -> recovery` write that the later core pause could overwrite.
+    for (let attempt = 0; attempt < CORE_CLEANUP_POLLS; attempt += 1) {
+      const goal = await store.load(sessionID)
+      if (!goal || goal.status === "completed") return
+      const legacy = legacyInfrastructureRecovery(goal)
+      if (legacy?.kind === "continuation_dispatch") {
+        await enter(sessionID, legacy.kind, legacy.reason, ["paused"])
+        return
+      }
+      if (goal.status !== "active") return
+      await delay(CORE_CLEANUP_POLL_MS)
+    }
+  }
+
   const completeTool: any = (hooks as any).tool?.opencode_goal_complete
   if (completeTool && typeof completeTool.execute === "function") {
     const originalComplete = completeTool.execute.bind(completeTool)
@@ -269,23 +296,9 @@ export function installGoalInfrastructureRecovery(
     }
   }
 
-  transport?.subscribe((sessionID, error) => {
+  transport?.subscribe((sessionID) => {
     const timer = setTimeout(() => {
-      void (async () => {
-        const goal = await store.load(sessionID)
-        if (!goal) return
-        const stopReason = String(goal.stopReason ?? "")
-        if (goal.status === "paused" && (
-          stopReason.startsWith("Continuation dispatch failed:")
-          || stopReason.startsWith("Restart recovery prompt failed:")
-        )) {
-          await enter(sessionID, "continuation_dispatch", stopReason, ["paused"])
-          return
-        }
-        if (goal.status === "active" && isTransientInfrastructureError(error)) {
-          await enter(sessionID, "continuation_dispatch", String(error), ["active"])
-        }
-      })().catch(() => undefined)
+      void recoverTransientPromptAfterCoreCleanup(sessionID).catch(() => undefined)
     }, 0)
     ;(timer as any).unref?.()
   })

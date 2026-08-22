@@ -42,6 +42,11 @@ function eventError(input: any): unknown {
   return input?.event?.properties?.error
 }
 
+function isCompletedAssistantEvent(input: any): boolean {
+  const info = input?.event?.properties?.info
+  return input?.event?.type === "message.updated" && info?.role === "assistant" && Boolean(info?.time?.completed)
+}
+
 function isInfrastructureWaiting(goal: GoalState): boolean {
   return goal.status === "active" && Boolean(goal.infrastructureRecovery?.nextRetryAt && goal.infrastructureRecovery.nextRetryAt > 0)
 }
@@ -119,6 +124,7 @@ export function installGoalInfrastructureRecovery(
   const store = new GoalStore(input.directory)
   const timers = new Map<string, ReturnType<typeof setTimeout>>()
   const retrySeenAt = new Map<string, number>()
+  const completionWins = new Set<string>()
   const retryBaseMs = options.retryBaseMs
   const retryMaxMs = options.retryMaxMs
   const retryPollMs = Math.max(10, Number(options.retryPollMs) || DEFAULT_RETRY_POLL_MS)
@@ -132,6 +138,7 @@ export function installGoalInfrastructureRecovery(
 
   function armTimer(sessionID: string, delayMs: number) {
     cancelTimer(sessionID)
+    if (completionWins.has(sessionID)) return
     const timer = setTimeout(() => {
       void wake(sessionID).catch(() => cancelTimer(sessionID))
     }, Math.max(0, delayMs))
@@ -170,13 +177,16 @@ export function installGoalInfrastructureRecovery(
 
   async function schedule(sessionID: string): Promise<void> {
     cancelTimer(sessionID)
+    if (completionWins.has(sessionID)) return
     const goal = await store.load(sessionID)
     if (!goal || !isInfrastructureWaiting(goal)) return
     armTimer(sessionID, goal.infrastructureRecovery!.nextRetryAt - Date.now())
   }
 
   async function postponeWhileHostOwnsSession(sessionID: string, goal: GoalState): Promise<boolean> {
+    if (completionWins.has(sessionID)) return true
     const live = await liveSessionStatus(sessionID)
+    if (completionWins.has(sessionID)) return true
     if (live !== "retry" && live !== "busy" && live !== "unknown") {
       retrySeenAt.delete(sessionID)
       return false
@@ -212,17 +222,20 @@ export function installGoalInfrastructureRecovery(
 
   async function wake(sessionID: string): Promise<void> {
     cancelTimer(sessionID)
+    if (completionWins.has(sessionID)) return
     let goal = await store.load(sessionID)
-    if (!goal || !isInfrastructureWaiting(goal)) return
+    if (completionWins.has(sessionID) || !goal || !isInfrastructureWaiting(goal)) return
     const now = Date.now()
     if (goal.infrastructureRecovery!.nextRetryAt > now) {
       await schedule(sessionID)
       return
     }
     if (await postponeWhileHostOwnsSession(sessionID, goal)) return
+    if (completionWins.has(sessionID)) return
 
     goal = markInfrastructureRecoveryDispatched(goal, now)
     const saved = await saveWithReload(store, goal)
+    if (completionWins.has(sessionID)) return
     if (saved.status !== "active" || saved.infrastructureRecovery?.nextRetryAt !== 0) return
     const hook = hooks.event
     if (typeof hook !== "function") return
@@ -240,7 +253,9 @@ export function installGoalInfrastructureRecovery(
     reason: string,
     allowStatuses: GoalState["status"][] = ["active", "paused", "blocked"],
   ): Promise<GoalState | undefined> {
+    if (completionWins.has(sessionID)) return undefined
     for (let attempt = 0; attempt < MAX_PERSIST_RETRIES; attempt += 1) {
+      if (completionWins.has(sessionID)) return undefined
       const latest = await store.load(sessionID)
       if (!latest || !allowStatuses.includes(latest.status) || latest.status === "completed") return undefined
       const next = enterInfrastructureRecovery(latest, {
@@ -260,6 +275,23 @@ export function installGoalInfrastructureRecovery(
     return undefined
   }
 
+  async function clearRecoveryAfterAssistantCompletion(sessionID: string): Promise<void> {
+    cancelTimer(sessionID)
+    retrySeenAt.delete(sessionID)
+    for (let attempt = 0; attempt < MAX_PERSIST_RETRIES; attempt += 1) {
+      const goal = await store.load(sessionID)
+      if (!goal || goal.status !== "active" || !goal.infrastructureRecovery) return
+      if (goal.infrastructureRecovery.kind !== "provider_retry" && goal.infrastructureRecovery.nextRetryAt !== 0) return
+      const cleared = clearInfrastructureRecovery(goal)
+      try {
+        await store.save(cleared)
+        return
+      } catch (error) {
+        if (!(error instanceof GoalStoreConcurrencyError) || attempt === MAX_PERSIST_RETRIES - 1) throw error
+      }
+    }
+  }
+
   async function inspectLegacyOrCorePause(sessionID: string): Promise<boolean> {
     const goal = await store.load(sessionID)
     if (!goal) return false
@@ -269,6 +301,7 @@ export function installGoalInfrastructureRecovery(
   }
 
   async function ensureProviderRetryRecovery(sessionID: string): Promise<void> {
+    if (completionWins.has(sessionID)) return
     const goal = await store.load(sessionID)
     if (!goal || goal.status !== "active" || goal.infrastructureRecovery) return
     await enter(sessionID, "provider_retry", "OpenCode reported session.status=retry for an active Goal turn.", ["active"])
@@ -280,6 +313,7 @@ export function installGoalInfrastructureRecovery(
     // Wait briefly for that authoritative cleanup instead of racing it with an
     // `active -> recovery` write that the later core pause could overwrite.
     for (let attempt = 0; attempt < CORE_CLEANUP_POLLS; attempt += 1) {
+      if (completionWins.has(sessionID)) return
       const goal = await store.load(sessionID)
       if (!goal || goal.status === "completed") return
       const legacy = legacyInfrastructureRecovery(goal)
@@ -321,60 +355,60 @@ export function installGoalInfrastructureRecovery(
       const sessionID = eventSessionID(eventInput)
       const type = String(eventInput?.event?.type ?? "")
       const marked = eventInput?.event?.properties?.[INFRA_EVENT_MARKER] === true
+      const completionEvent = Boolean(sessionID && isCompletedAssistantEvent(eventInput))
 
-      if (sessionID && type === "session.status") {
-        const status = eventStatusType(eventInput)
-        if (status === "retry") {
-          retrySeenAt.set(sessionID, retrySeenAt.get(sessionID) ?? Date.now())
-          await ensureProviderRetryRecovery(sessionID)
-        } else if (status === "idle" || status === "busy") {
-          retrySeenAt.delete(sessionID)
-        }
-      }
-
-      if (sessionID && type === "session.error" && isTransientInfrastructureError(eventError(eventInput))) {
-        const goal = await store.load(sessionID)
-        if (goal?.status === "active" && !goal.infrastructureRecovery) {
-          await enter(sessionID, "provider_retry", JSON.stringify(eventError(eventInput)), ["active"])
-        }
-      }
-
-      if (sessionID && type === "session.idle" && !marked) {
-        retrySeenAt.delete(sessionID)
-        const goal = await store.load(sessionID)
-        if (goal && isInfrastructureWaiting(goal)) {
-          await schedule(sessionID)
-          return
-        }
-      }
-
-      if (sessionID && type === "session.idle") retrySeenAt.delete(sessionID)
-      await originalEvent(eventInput)
-
-      if (sessionID && type === "session.idle" && !marked) {
-        const timer = setTimeout(() => { void inspectLegacyOrCorePause(sessionID).catch(() => undefined) }, 0)
-        ;(timer as any).unref?.()
-      }
-
-      if (sessionID && type === "message.updated") {
-        const info = eventInput?.event?.properties?.info
-        if (info?.role === "assistant" && info?.time?.completed) {
-          const goal = await store.load(sessionID)
-          if (
-            goal?.status === "active"
-            && goal.infrastructureRecovery
-            && (goal.infrastructureRecovery.kind === "provider_retry" || goal.infrastructureRecovery.nextRetryAt === 0)
-          ) {
-            cancelTimer(sessionID)
-            retrySeenAt.delete(sessionID)
-            await saveWithReload(store, clearInfrastructureRecovery(goal))
-          }
-        }
-      }
-
-      if (sessionID && type === "session.deleted") {
+      // Completion of the original retrying assistant turn must beat a fallback
+      // deadline even if both arrive in the same event-loop slice. Block wake()
+      // before any await, then clear the persisted fallback after core accounting.
+      if (sessionID && completionEvent) {
+        completionWins.add(sessionID)
         cancelTimer(sessionID)
         retrySeenAt.delete(sessionID)
+      }
+
+      try {
+        if (sessionID && type === "session.status") {
+          const status = eventStatusType(eventInput)
+          if (status === "retry") {
+            retrySeenAt.set(sessionID, retrySeenAt.get(sessionID) ?? Date.now())
+            await ensureProviderRetryRecovery(sessionID)
+          } else if (status === "idle" || status === "busy") {
+            retrySeenAt.delete(sessionID)
+          }
+        }
+
+        if (sessionID && type === "session.error" && isTransientInfrastructureError(eventError(eventInput))) {
+          const goal = await store.load(sessionID)
+          if (goal?.status === "active" && !goal.infrastructureRecovery) {
+            await enter(sessionID, "provider_retry", JSON.stringify(eventError(eventInput)), ["active"])
+          }
+        }
+
+        if (sessionID && type === "session.idle" && !marked) {
+          retrySeenAt.delete(sessionID)
+          const goal = await store.load(sessionID)
+          if (goal && isInfrastructureWaiting(goal)) {
+            await schedule(sessionID)
+            return
+          }
+        }
+
+        if (sessionID && type === "session.idle") retrySeenAt.delete(sessionID)
+        await originalEvent(eventInput)
+
+        if (sessionID && type === "session.idle" && !marked) {
+          const timer = setTimeout(() => { void inspectLegacyOrCorePause(sessionID).catch(() => undefined) }, 0)
+          ;(timer as any).unref?.()
+        }
+
+        if (sessionID && completionEvent) await clearRecoveryAfterAssistantCompletion(sessionID)
+
+        if (sessionID && type === "session.deleted") {
+          cancelTimer(sessionID)
+          retrySeenAt.delete(sessionID)
+        }
+      } finally {
+        if (sessionID && completionEvent) completionWins.delete(sessionID)
       }
     }
   }

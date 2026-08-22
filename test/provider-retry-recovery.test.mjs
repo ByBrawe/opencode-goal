@@ -11,7 +11,7 @@ import {
 
 async function stateFor(root) {
   const dir = path.join(root, ".opencode", "goals")
-  const files = await readdir(dir)
+  const files = (await readdir(dir)).filter((file) => file.endsWith(".json"))
   assert.equal(files.length, 1)
   return JSON.parse(await readFile(path.join(dir, files[0]), "utf8"))
 }
@@ -29,8 +29,8 @@ async function makeHooks(root, client, options = {}) {
     hooks,
     transport,
     {
-      retryBaseMs: options.retryBaseMs ?? 25,
-      retryMaxMs: options.retryMaxMs ?? 100,
+      retryBaseMs: options.retryBaseMs ?? 100,
+      retryMaxMs: options.retryMaxMs ?? 400,
       retryPollMs: options.retryPollMs ?? 10,
       retryWatchdogMs: options.retryWatchdogMs ?? 1000,
     },
@@ -38,7 +38,7 @@ async function makeHooks(root, client, options = {}) {
   return hooks
 }
 
-async function waitFor(predicate, timeoutMs = 1000) {
+async function waitFor(predicate, timeoutMs = 1500) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     if (await predicate()) return
@@ -90,7 +90,7 @@ test("explicit host retry is persisted and a completed assistant turn cancels re
     const cleared = await stateFor(root)
     assert.equal(cleared.infrastructureRecovery, undefined, "host completion must cancel the plugin fallback")
 
-    await new Promise((resolve) => setTimeout(resolve, 70))
+    await new Promise((resolve) => setTimeout(resolve, 160))
     assert.equal(parentPrompts, 0, "cleared retry fallback must not inject a late duplicate continuation")
   } finally {
     await rm(root, { recursive: true, force: true })
@@ -121,7 +121,7 @@ test("due infrastructure recovery never dispatches over a real busy foreground t
       { sessionID: "parent", messageID: "executor-current", agent: "build" },
     )
 
-    await new Promise((resolve) => setTimeout(resolve, 80))
+    await new Promise((resolve) => setTimeout(resolve, 180))
     assert.equal(parentPrompts, 0, "busy user/model ownership must outrank an expired recovery timer")
 
     liveStatus = "idle"

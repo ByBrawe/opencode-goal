@@ -138,7 +138,7 @@ test("verifier outage stays active, suppresses immediate idle, and wakes automat
     const recovering = await stateFor(root)
     assert.equal(recovering.status, "active")
     assert.equal(recovering.infrastructureRecovery.kind, "semantic_verifier")
-    assert.ok(recovering.infrastructureRecovery.nextRetryAt > Date.now())
+    assert.ok(recovering.infrastructureRecovery.nextRetryAt > recovering.updatedAt, "recovery state must persist a future deadline relative to its own write")
 
     await hooks.event({ event: { type: "session.idle", properties: { sessionID: "parent" } } })
     assert.equal(parentPrompts, 0, "host idle must not bypass verifier cooldown")

@@ -160,7 +160,7 @@ export interface GoalState {
   /** One-shot accounting exemption for a turn consumed only by infrastructure recovery/verification. */
   skipNextStallCheck?: boolean
   /** Persisted retry state for transient verifier/provider/dispatch failures. */
-  infrastructureRecovery?: GoalInfrastructureRecovery
+  infrastructureRecovery?: GoalInfrastructureRecovery | undefined
   /** Native OpenCode Todo-plan telemetry. Advisory only; never completion evidence. */
   todoPlan?: GoalTodoPlan
   blockerAudit?: BlockerAudit

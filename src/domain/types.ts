@@ -11,6 +11,7 @@ export type EvidenceKind = "command" | "file" | "diff" | "artifact" | "runtime" 
 export type EvidenceTrust = "host" | "verifier" | "user" | "agent"
 export type VerificationKind = "semantic" | "command" | "file"
 export type GoalRequirementSource = "objective" | "acceptance" | "constraint" | "check" | "file"
+export type GoalInfrastructureRecoveryKind = "semantic_verifier" | "continuation_dispatch" | "provider_retry"
 
 export interface EvidenceRecord {
   id: string
@@ -67,6 +68,20 @@ export interface ProgressNote {
   time: number
   summary: string
   next: string
+}
+
+/**
+ * A recoverable host/provider failure. This is deliberately not a Goal stop
+ * state: the task contract remains active while the plugin waits for a bounded
+ * retry window. Persisting it lets process restarts preserve the recovery
+ * deadline instead of turning a temporary outage into a manual /goal resume.
+ */
+export interface GoalInfrastructureRecovery {
+  kind: GoalInfrastructureRecoveryKind
+  reason: string
+  attempt: number
+  startedAt: number
+  nextRetryAt: number
 }
 
 /**
@@ -142,6 +157,10 @@ export interface GoalState {
   stalledTurns: number
   /** One-shot host marker: the Goal was activated at an idle boundary and still needs its first continuation dispatch. */
   pendingContinuation?: boolean
+  /** One-shot accounting exemption for a turn consumed only by infrastructure recovery/verification. */
+  skipNextStallCheck?: boolean
+  /** Persisted retry state for transient verifier/provider/dispatch failures. */
+  infrastructureRecovery?: GoalInfrastructureRecovery | undefined
   /** Native OpenCode Todo-plan telemetry. Advisory only; never completion evidence. */
   todoPlan?: GoalTodoPlan
   blockerAudit?: BlockerAudit

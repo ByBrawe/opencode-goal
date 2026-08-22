@@ -84,7 +84,7 @@ Key capabilities:
 - **False-completion protection** — missing, stale, indirect, or invented evidence fails closed.
 - **Multi-turn cadence protection** — objectives such as “do exactly +1 for 10 separate turns” are not proven by a final file value alone.
 - **Restart recovery** — project-local state survives OpenCode/process restarts.
-- **Compaction persistence** — Goal context is preserved while OpenCode manages its own model context window.
+- **Compaction persistence** — Goal context is preserved while OpenCode manages its own model context window. See the [compaction & continuation contract](./docs/COMPACTION-CONTINUATION.md) for active auto/manual compaction ownership and paused-resume semantics.
 - **Budgets** — turn, token, runtime, and optional cost limits keep autonomous work bounded.
 - **Goal queues** — keep one live Goal while preparing future Goals in an inert ordered queue.
 - **Windows / macOS / Linux packaging** — installer and package smoke coverage is cross-platform.

@@ -44,8 +44,8 @@ async function recoveryPlugin(root, client, options = {}) {
     hooks,
     transport,
     {
-      retryBaseMs: options.retryBaseMs ?? 25,
-      retryMaxMs: options.retryMaxMs ?? 100,
+      retryBaseMs: options.retryBaseMs ?? 100,
+      retryMaxMs: options.retryMaxMs ?? 400,
       retryPollMs: options.retryPollMs ?? 10,
       retryWatchdogMs: options.retryWatchdogMs ?? 500,
     },

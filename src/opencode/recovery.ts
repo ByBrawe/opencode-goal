@@ -66,6 +66,12 @@ function textFromParts(parts: any[]): string {
     .join("\n")
 }
 
+function waitingForInfrastructureRecovery(goal: GoalState, now = Date.now()): boolean {
+  return goal.status === "active"
+    && Boolean(goal.infrastructureRecovery?.nextRetryAt)
+    && Number(goal.infrastructureRecovery?.nextRetryAt) > now
+}
+
 async function sdkRecoveryPrompt(
   input: PluginInput,
   sessionID: string,
@@ -95,6 +101,10 @@ export async function captureStartupGoals(directory: string): Promise<GoalState[
       await store.save(pauseGoal(goal, restrictedAgentStopReason(agent)))
       continue
     }
+    // A persisted infrastructure cooldown has its own restart-safe timer and
+    // single-owner wake-up. Generic startup recovery must not bypass that
+    // deadline or race it with a second continuation prompt.
+    if (waitingForInfrastructureRecovery(goal)) continue
     recoverable.push(goal)
   }
   return recoverable
@@ -195,6 +205,12 @@ async function recoverStartupGoals(
 
     const current = await store.load(sessionID)
     if (!current || current.id !== startup.id || current.revision !== startup.revision || current.status !== "active") {
+      runtime.pending.delete(sessionID)
+      continue
+    }
+    // The infrastructure coordinator may have entered cooldown after the startup
+    // snapshot was captured but before the bootstrap barrier released.
+    if (waitingForInfrastructureRecovery(current)) {
       runtime.pending.delete(sessionID)
       continue
     }

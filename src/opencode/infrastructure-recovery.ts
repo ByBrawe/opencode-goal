@@ -128,7 +128,9 @@ export function installGoalInfrastructureRecovery(
   async function liveSessionStatus(sessionID: string): Promise<string | undefined> {
     const status = input.client?.session?.status
     if (typeof status !== "function") return undefined
+    let attempted = false
     for (const args of [{ query: { directory: input.directory } }, {}]) {
+      attempted = true
       try {
         const raw = await status.call(input.client.session, args)
         const data = raw && typeof raw === "object" && "data" in raw ? raw.data : raw
@@ -137,11 +139,11 @@ export function installGoalInfrastructureRecovery(
         const type = entry && typeof entry === "object" ? entry.type : undefined
         return typeof type === "string" ? type : "idle"
       } catch {
-        // A status read can fail for the same transient outage. Do not turn that
-        // uncertainty into permission to inject another assistant turn.
+        // A status read can fail for the same transient outage. Preserve that as
+        // unknown rather than turning uncertainty into permission to dispatch.
       }
     }
-    return undefined
+    return attempted ? "unknown" : undefined
   }
 
   async function abortRetryingGoalTurn(sessionID: string): Promise<void> {
@@ -164,7 +166,7 @@ export function installGoalInfrastructureRecovery(
 
   async function postponeWhileHostRetries(sessionID: string, goal: GoalState): Promise<boolean> {
     const live = await liveSessionStatus(sessionID)
-    if (live !== "retry") {
+    if (live !== "retry" && live !== "unknown") {
       retrySeenAt.delete(sessionID)
       return false
     }
@@ -172,16 +174,17 @@ export function installGoalInfrastructureRecovery(
     const now = Date.now()
     const since = retrySeenAt.get(sessionID) ?? now
     retrySeenAt.set(sessionID, since)
-    if (now - since >= retryWatchdogMs) {
-      // Only an active persisted Goal reaches this path, so this abort belongs
-      // to Goal recovery rather than an arbitrary foreground user turn.
+    if (live === "retry" && now - since >= retryWatchdogMs) {
+      // The host has owned this retry for too long. Abort once so older OpenCode
+      // builds with unbounded retry loops can release the Goal back to the
+      // plugin's persisted backoff state. Unknown status is never force-aborted.
       await abortRetryingGoalTurn(sessionID)
       retrySeenAt.delete(sessionID)
-      const delayed = {
+      const delayed: GoalState = {
         ...goal,
         infrastructureRecovery: goal.infrastructureRecovery
           ? { ...goal.infrastructureRecovery, nextRetryAt: now + retryPollMs }
-          : goal.infrastructureRecovery,
+          : undefined,
         updatedAt: now,
       }
       await saveWithReload(store, delayed)
@@ -299,6 +302,18 @@ export function installGoalInfrastructureRecovery(
 
       if (sessionID && type === "session.error" && isTransientInfrastructureError(eventError(eventInput))) {
         await enter(sessionID, "provider_retry", JSON.stringify(eventError(eventInput)), ["active"])
+      }
+
+      // A host idle immediately after a verifier/provider failure is just the
+      // failed turn settling; it must not bypass the persisted cooldown. Only
+      // the coordinator's marked one-shot idle may wake a waiting recovery.
+      if (sessionID && type === "session.idle" && !marked) {
+        retrySeenAt.delete(sessionID)
+        const goal = await store.load(sessionID)
+        if (goal && isInfrastructureWaiting(goal)) {
+          await schedule(sessionID)
+          return
+        }
       }
 
       if (sessionID && type === "session.idle") retrySeenAt.delete(sessionID)

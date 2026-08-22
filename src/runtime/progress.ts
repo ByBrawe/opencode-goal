@@ -13,13 +13,22 @@ export function addProgressNote(goal: GoalState, input: { summary: string; next?
 export function closeObservedTurn(goal: GoalState, input: { maxStalledTurns?: number; now?: number } = {}): GoalState {
   const now = input.now ?? Date.now()
   if (goal.pendingContinuation && goal.usage.turns === 0) {
-    const { pendingContinuation: _pendingContinuation, ...rest } = goal
+    const { pendingContinuation: _pendingContinuation, skipNextStallCheck: _skipNextStallCheck, ...rest } = goal
     return settleReachedGoalBudget({ ...rest, observedProgressRevision: goal.progressRevision, updatedAt: now }, now)
   }
-  const { pendingContinuation: _pendingContinuation, ...settled } = goal
+  const {
+    pendingContinuation: _pendingContinuation,
+    skipNextStallCheck,
+    ...settled
+  } = goal
   const limit = Math.max(1, input.maxStalledTurns ?? 3)
   const madeProgress = settled.progressRevision > settled.observedProgressRevision
-  const stalledTurns = madeProgress ? 0 : settled.stalledTurns + 1
+  // A verifier/provider/transport failure is not an agent no-progress turn.
+  // Consume the one-shot exemption without manufacturing a progress fingerprint
+  // or resetting legitimate stall history from real assistant turns.
+  const stalledTurns = skipNextStallCheck
+    ? settled.stalledTurns
+    : madeProgress ? 0 : settled.stalledTurns + 1
   const paused = stalledTurns >= limit && settled.status === "active"
   const closed: GoalState = {
     ...settled,

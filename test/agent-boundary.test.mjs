@@ -53,12 +53,23 @@ test("goal created from Plan is persisted paused instead of executing", async ()
 
     const output = await runGoalCommand(hooks, sessionID, 'ship safely --success "tests pass" --constraint "do not change the public API"')
     assert.match(output.parts[0].text, /Continue working toward the active OpenCode goal/)
+    const durablePart = output.parts[0]
+    Object.assign(durablePart, {
+      id: "part-plan-create",
+      sessionID,
+      messageID: "plan-create-command",
+    })
     await bindCommandMessage(hooks, sessionID, "plan-create-command", output, "plan")
 
     const goal = await store.load(sessionID)
     assert.equal(goal.status, "paused")
     assert.equal(goal.execution.agent, "plan")
     assert.match(goal.stopReason, /restricted agent "plan"/)
+    assert.equal(output.parts.length, 1)
+    assert.strictEqual(output.parts[0], durablePart, "Plan safety must rewrite the existing host-owned durable part instead of fabricating a new one")
+    assert.equal(output.parts[0].id, "part-plan-create")
+    assert.equal(output.parts[0].sessionID, sessionID)
+    assert.equal(output.parts[0].messageID, "plan-create-command")
     assert.match(output.parts[0].text, /Goal saved but paused in plan mode/)
     assert.match(output.parts[0].text, /continue analysis\/planning only/i)
     assert.equal(runtime.prompts.length, 0)

@@ -103,6 +103,10 @@ export function reviseGoalFromForegroundUser(goal: GoalState, input: {
   // counterproductive for a user-driven re-plan because models can keep visually
   // anchoring on the old checklist. Historical work/evidence remains in Goal state.
   delete next.todoPlan
+  // The foreground turn that creates the revision is intentionally a lifecycle
+  // boundary, not a workspace-progress turn. Do not spend one of the normal
+  // three no-progress strikes merely because the model correctly ends here.
+  next.skipNextStallCheck = true
   return next
 }
 
@@ -242,10 +246,11 @@ export function installGoalUserRevision(input: PluginInput, hooks: PluginHooks):
     authorizations.clear(sessionID)
 
     if (goal && goal.status !== "completed" && messageID && text.trim() && !synthetic && !ownedContinuation) {
+      const execution = executionContext(event, goal)
       authorizations.capture(goal, {
         userMessageID: messageID,
         text,
-        ...(executionContext(event, goal) ? { execution: executionContext(event, goal) } : {}),
+        ...(execution ? { execution } : {}),
       })
       if (eligibleRevisionStatus(goal.status)) appendRevisionAdvisory(output, goal)
     }

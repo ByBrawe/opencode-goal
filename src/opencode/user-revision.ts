@@ -61,22 +61,32 @@ function isSyntheticHostMessage(output: any): boolean {
   return Array.isArray(output?.parts) && output.parts.some((part: any) => part?.synthetic === true)
 }
 
+function revisionAdvisory(goal: GoalState): string {
+  return [
+    "<opencode_goal_user_revision>",
+    `A persisted OpenCode Goal exists (status=${goal.status}, revision=${goal.revision}).`,
+    "This is a foreground human message. It does not silently rewrite the Goal contract.",
+    "If this message materially ADDS required work to the existing Goal, call opencode_goal_revise_from_user with mode=extend before implementing the changed scope.",
+    "If this message intentionally REPLACES the requested outcome, call opencode_goal_revise_from_user with mode=replace before implementing the changed scope.",
+    "Do not revise for questions, status/explanation requests, or ordinary steering that already fits the current Goal. Short explicit resume messages are handled separately.",
+    "The revision tool can consume only this exact latest human message; it accepts no model-authored objective text. A successful revision creates a turn boundary, so end the current assistant turn and let the next Goal-owned turn re-plan and continue.",
+    "</opencode_goal_user_revision>",
+  ].join("\n")
+}
+
 function appendRevisionAdvisory(output: any, goal: GoalState): void {
   if (!Array.isArray(output?.parts)) return
-  output.parts.push({
-    type: "text",
-    synthetic: true,
-    text: [
-      "<opencode_goal_user_revision>",
-      `A persisted OpenCode Goal exists (status=${goal.status}, revision=${goal.revision}).`,
-      "This is a foreground human message. It does not silently rewrite the Goal contract.",
-      "If this message materially ADDS required work to the existing Goal, call opencode_goal_revise_from_user with mode=extend before implementing the changed scope.",
-      "If this message intentionally REPLACES the requested outcome, call opencode_goal_revise_from_user with mode=replace before implementing the changed scope.",
-      "Do not revise for questions, status/explanation requests, or ordinary steering that already fits the current Goal. Short explicit resume messages are handled separately.",
-      "The revision tool can consume only this exact latest human message; it accepts no model-authored objective text. A successful revision creates a turn boundary, so end the current assistant turn and let the next Goal-owned turn re-plan and continue.",
-      "</opencode_goal_user_revision>",
-    ].join("\n"),
-  })
+  // OpenCode persists chat.message parts as durable events. A newly pushed text
+  // part would need host-issued id/sessionID/messageID fields, and fabricating or
+  // cloning those identities is unsafe. Extend an existing host-owned text part
+  // in place instead. Authorization has already captured the raw human text, so
+  // the persisted Goal revision can still use that exact unmodified instruction.
+  for (let index = output.parts.length - 1; index >= 0; index -= 1) {
+    const part = output.parts[index]
+    if (part?.type !== "text" || typeof part.text !== "string") continue
+    part.text = `${part.text}\n\n${revisionAdvisory(goal)}`
+    return
+  }
 }
 
 export function reviseGoalFromForegroundUser(goal: GoalState, input: {
@@ -103,9 +113,10 @@ export function reviseGoalFromForegroundUser(goal: GoalState, input: {
   // counterproductive for a user-driven re-plan because models can keep visually
   // anchoring on the old checklist. Historical work/evidence remains in Goal state.
   delete next.todoPlan
-  // The foreground turn that creates the revision is intentionally a lifecycle
-  // boundary, not a workspace-progress turn. Do not spend one of the normal
-  // three no-progress strikes merely because the model correctly ends here.
+  // The first revised Goal turn may legitimately spend its work on fresh
+  // reconnaissance/re-planning before mutating the workspace. Give that one
+  // turn the existing one-shot stall exemption instead of treating a correct
+  // revision boundary as the first strike toward an automatic pause.
   next.skipNextStallCheck = true
   return next
 }

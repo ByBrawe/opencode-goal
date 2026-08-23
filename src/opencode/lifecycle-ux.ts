@@ -198,10 +198,12 @@ export function installGoalLifecycleUX(input: PluginInput, hooks: PluginHooks): 
 
       if (paused && isAutoStallPause(paused) && isActionablePausedSteering(shown)) {
         // An automatic no-progress pause is a safety backstop, not a user intent
-        // boundary. Resume through the normal command chain, then preserve the
-        // original human message so core Goal steering owns and executes it.
+        // boundary. Resume through the normal command chain, consume that
+        // internal command ownership, then preserve the original human message
+        // so core Goal steering owns and executes the actual instruction.
         const resumeOutput: any = { parts: [{ type: "text", text: "resume" }] }
         await commandHook({ ...event, command: "goal", arguments: "resume" }, resumeOutput)
+        await chatHook(event, resumeOutput)
         const resumed = await store.load(event.sessionID)
         pausedChatNotices.delete(event.sessionID)
         await chatHook(event, output)

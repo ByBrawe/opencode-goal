@@ -52,7 +52,7 @@
     "canary:host": "node --import ./scripts/host-canary-bootstrap.mjs scripts/host-canary.mjs",
     "canary:compaction": "node --import ./scripts/host-canary-bootstrap.mjs scripts/host-compaction-canary.mjs && node --import ./scripts/host-canary-bootstrap.mjs scripts/host-auto-compaction-canary.mjs",
     "canary:semantic": "node --import ./scripts/host-canary-bootstrap.mjs scripts/host-semantic-canary.mjs",
-    "canary:steering": "node --import ./scripts/host-canary-bootstrap.mjs scripts/host-steering-canary.mjs",
+    "canary:steering": "node --import ./scripts/host-canary-bootstrap.mjs scripts/host-steering-canary.mjs && node --import ./scripts/host-canary-bootstrap.mjs scripts/host-user-revision-canary.mjs",
     "canary:progress": "node --import ./scripts/host-canary-bootstrap.mjs scripts/host-progress-canary.mjs",
     "canary:restart": "node --import ./scripts/host-canary-bootstrap.mjs --import ./scripts/host-restart-hard-crash.mjs scripts/host-restart-canary.mjs",
     "pack:check": "npm pack --dry-run"
@@ -80,15 +80,14 @@
   ],
   "license": "MIT",
   "engines": {
-    "node": ">=20",
-    "opencode": ">=1.4.0"
+    "node": ">=20"
   },
-  "dependencies": {
-    "@opencode-ai/plugin": ">=1.4.0 <2"
+  "peerDependencies": {
+    "@opencode-ai/plugin": ">=1.4.0"
   },
   "devDependencies": {
-    "@opencode-ai/plugin": "1.18.9",
-    "@types/node": "^22.0.0",
-    "typescript": "^5.8.3"
+    "@opencode-ai/plugin": "^1.4.0",
+    "@types/node": "^24.5.2",
+    "typescript": "^5.9.2"
   }
 }

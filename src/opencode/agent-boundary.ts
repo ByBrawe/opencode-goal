@@ -36,7 +36,16 @@ function textFromParts(parts: any[]): string {
 }
 
 function replaceParts(parts: any[], text: string) {
-  parts.splice(0, parts.length, { type: "text", text })
+  // OpenCode 1.18+ persists chat.message parts as durable events. Replacing the
+  // host-owned part object with a freshly fabricated `{ type, text }` object
+  // drops its id/sessionID/messageID and makes the host reject the prompt before
+  // it can be saved. Reuse one existing durable text part and only replace its
+  // payload; discard sibling display parts without inventing new identities.
+  const durableText = parts.find((part) => part?.type === "text" && typeof part.text === "string")
+  if (!durableText) return false
+  durableText.text = text
+  parts.splice(0, parts.length, durableText)
+  return true
 }
 
 function withExecutionAgent(goal: GoalState, agent: string): GoalState {

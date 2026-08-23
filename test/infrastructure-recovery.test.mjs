@@ -119,7 +119,14 @@ test("verifier outage stays active, suppresses immediate idle, and wakes automat
       session: {
         async create() { return await new Promise(() => {}) },
         async prompt(arg) {
-          if (arg?.path?.id === "parent") parentPrompts += 1
+          if (arg?.path?.id === "parent") {
+            parentPrompts += 1
+            // Keep the synthetic recovery turn in flight. A real OpenCode
+            // prompt resolves only after the assistant turn settles; returning
+            // immediately here lets the core replay a deferred idle after this
+            // test has already deleted its temporary workspace.
+            return await new Promise(() => {})
+          }
           return {}
         },
         async status() { return { data: { parent: { type: "idle" } } } },

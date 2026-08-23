@@ -80,14 +80,15 @@
   ],
   "license": "MIT",
   "engines": {
-    "node": ">=20"
+    "node": ">=20",
+    "opencode": ">=1.4.0"
   },
-  "peerDependencies": {
-    "@opencode-ai/plugin": ">=1.4.0"
+  "dependencies": {
+    "@opencode-ai/plugin": ">=1.4.0 <2"
   },
   "devDependencies": {
-    "@opencode-ai/plugin": "^1.4.0",
-    "@types/node": "^24.5.2",
-    "typescript": "^5.9.2"
+    "@opencode-ai/plugin": "1.18.9",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.8.3"
   }
 }

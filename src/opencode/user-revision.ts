@@ -282,8 +282,8 @@ export function installGoalUserRevision(input: PluginInput, hooks: PluginHooks):
     if (typeof toolExecuteBefore === "function") await toolExecuteBefore(event)
   }
 
-  hooks.tool ||= {}
-  hooks.tool.opencode_goal_revise_from_user = tool({
+  const toolMap = hooks.tool as Record<string, any>
+  toolMap.opencode_goal_revise_from_user = tool({
     description: "Promote the exact latest foreground human message into a new revision of the current Goal. Use mode=extend when the user materially adds required work while preserving the existing objective; use mode=replace when the user intentionally replaces the requested outcome. Do not call this for questions, status/explanation requests, short resume messages, or ordinary steering already covered by the current Goal. The host accepts no model-authored objective text: only the one-shot human message that directly parented this assistant turn can be consumed. On success, end this assistant turn; the next Goal-owned turn will rebuild its plan and continue the new revision.",
     args: {
       mode: tool.schema.string(),

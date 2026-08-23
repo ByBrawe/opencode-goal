@@ -52,7 +52,7 @@
     "canary:host": "node --import ./scripts/host-canary-bootstrap.mjs scripts/host-canary.mjs",
     "canary:compaction": "node --import ./scripts/host-canary-bootstrap.mjs scripts/host-compaction-canary.mjs && node --import ./scripts/host-canary-bootstrap.mjs scripts/host-auto-compaction-canary.mjs",
     "canary:semantic": "node --import ./scripts/host-canary-bootstrap.mjs scripts/host-semantic-canary.mjs",
-    "canary:steering": "node --import ./scripts/host-canary-bootstrap.mjs scripts/host-steering-canary.mjs && node --import ./scripts/host-canary-bootstrap.mjs scripts/host-user-revision-canary.mjs",
+    "canary:steering": "node --import ./scripts/host-canary-bootstrap.mjs scripts/host-steering-canary.mjs && node --import ./scripts/host-canary-bootstrap.mjs scripts/host-user-revision-plan-canary.mjs",
     "canary:progress": "node --import ./scripts/host-canary-bootstrap.mjs scripts/host-progress-canary.mjs",
     "canary:restart": "node --import ./scripts/host-canary-bootstrap.mjs --import ./scripts/host-restart-hard-crash.mjs scripts/host-restart-canary.mjs",
     "pack:check": "npm pack --dry-run"

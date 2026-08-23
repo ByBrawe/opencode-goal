@@ -233,6 +233,7 @@ function startProvider() {
   const stats = {
     chatRequests: 0,
     paths: [],
+    planBoundaryRequests: 0,
     revisionCalls: 0,
     revisedTodoCalls: 0,
     sawRevisionTool: false,
@@ -267,6 +268,12 @@ function startProvider() {
     const tools = toolNames(body)
     const priorTools = priorToolCallNames(body)
     stats.sawRevisionTool ||= tools.has("opencode_goal_revise_from_user")
+
+    if (lastUser.includes("Goal saved but paused in plan mode") && lastUser.includes(OLD_OBJECTIVE)) {
+      stats.planBoundaryRequests += 1
+      streamText(res, { id, created, content: "PLAN_BOUNDARY_ACK" })
+      return
+    }
 
     if (lastUser.includes(USER_EXTENSION)) {
       stats.sawExactUserExtension ||= USER_EXTENSION.split("\n").every((line) => lastUser.includes(line))
@@ -457,7 +464,11 @@ async function main() {
     )
     lastState = paused
     await goalCommand
-    assert.equal(provider.stats.chatRequests, 0, "Plan Goal creation must not start autonomous model execution")
+    assert.equal(provider.stats.planBoundaryRequests, 1, "the slash-command bridge should materialize exactly one Plan boundary model turn")
+    assert.equal(provider.stats.chatRequests, 1, "paused Plan Goal must not autonomously continue after its command-owned boundary turn")
+    await new Promise((resolve) => setTimeout(resolve, 250))
+    assert.equal(provider.stats.chatRequests, 1, "paused Plan Goal emitted an unexpected autonomous continuation")
+    assert.equal(provider.stats.revisionCalls, 0)
 
     await api("foreground Build extension", `/session/${encodeURIComponent(sessionID)}/prompt_async`, {
       method: "POST",
@@ -517,6 +528,7 @@ async function main() {
       revision: replanned.revision,
       status: replanned.status,
       executionAgent: replanned.execution?.agent,
+      planBoundaryRequests: provider.stats.planBoundaryRequests,
       revisionCalls: provider.stats.revisionCalls,
       revisedTodoCalls: provider.stats.revisedTodoCalls,
       sawRevisionTool: provider.stats.sawRevisionTool,

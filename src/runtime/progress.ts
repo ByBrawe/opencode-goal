@@ -1,5 +1,6 @@
 import type { GoalState } from "../domain/types.js"
 import { settleReachedGoalBudget } from "./accounting.js"
+import { todoPlanIsCurrent } from "./todo-plan.js"
 
 export function addProgressNote(goal: GoalState, input: { summary: string; next?: string; now?: number }): GoalState {
   const now = input.now ?? Date.now()
@@ -8,6 +9,16 @@ export function addProgressNote(goal: GoalState, input: { summary: string; next?
     progressNotes: [...goal.progressNotes, { time: now, summary: input.summary.trim(), next: (input.next ?? "").trim() }].slice(-50),
     updatedAt: now,
   }
+}
+
+function defaultStallLimit(goal: GoalState): number {
+  if (!todoPlanIsCurrent(goal) || !goal.todoPlan) return 3
+  const openItems = goal.todoPlan.pending + goal.todoPlan.inProgress
+  if (openItems <= 0) return 3
+  // Long native Todo plans naturally contain reconnaissance, verification, and
+  // read-only turns that may not create a fresh mutation fingerprint. Keep the
+  // guard bounded, but scale its tolerance with remaining plan size.
+  return Math.min(12, Math.max(4, 3 + Math.ceil(openItems / 10)))
 }
 
 export function closeObservedTurn(goal: GoalState, input: { maxStalledTurns?: number; now?: number } = {}): GoalState {
@@ -21,7 +32,7 @@ export function closeObservedTurn(goal: GoalState, input: { maxStalledTurns?: nu
     skipNextStallCheck,
     ...settled
   } = goal
-  const limit = Math.max(1, input.maxStalledTurns ?? 3)
+  const limit = Math.max(1, input.maxStalledTurns ?? defaultStallLimit(settled))
   const madeProgress = settled.progressRevision > settled.observedProgressRevision
   // A verifier/provider/transport failure is not an agent no-progress turn.
   // Consume the one-shot exemption without manufacturing a progress fingerprint

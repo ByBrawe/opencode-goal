@@ -113,8 +113,10 @@ test("paused Goal can extend from the exact 100-line foreground user instruction
     const lines = Array.from({ length: 100 }, (_, index) => `${index + 1}. yeni gereksinim ${index + 1}`)
     const instruction = `şimdi bunları da yap:\n${lines.join("\n")}`
     const output = await foreground(hooks, instruction, "human-100")
-    assert.equal(output.parts[0].text, instruction, "the raw human text must remain untouched")
-    assert.ok(output.parts.some((part) => part?.synthetic === true && /opencode_goal_revise_from_user/.test(part.text ?? "")))
+    assert.equal(output.parts.length, 1, "revision guidance must reuse the host-owned durable text part")
+    assert.ok(output.parts[0].text.startsWith(`${instruction}\n\n<opencode_goal_user_revision>`))
+    assert.match(output.parts[0].text, /opencode_goal_revise_from_user/)
+    assert.equal(output.parts[0].synthetic, undefined, "foreground human text must not be reclassified as a synthetic host message")
 
     let persisted = await readOnlyGoal(root)
     assert.equal(persisted.status, "paused", "ordinary foreground chat alone still must not silently mutate lifecycle state")
@@ -138,7 +140,7 @@ test("paused Goal can extend from the exact 100-line foreground user instruction
     assert.equal(persisted.usage.turns, usage.turns)
     assert.equal(persisted.usage.tokens, usage.tokens)
     assert.equal(persisted.stalledTurns, 0)
-    assert.equal(persisted.skipNextStallCheck, true, "the intentional revision-boundary turn must not spend the no-progress budget")
+    assert.equal(persisted.skipNextStallCheck, true, "the first revised planning turn must not spend the no-progress budget")
 
     const replay = await hooks.tool.opencode_goal_revise_from_user.execute(
       { mode: "extend" },

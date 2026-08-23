@@ -123,7 +123,7 @@ Pause and resume:
 /goal resume
 ```
 
-When a Goal is paused, a short explicit continuation message such as `devam et`, `continue`, or `resume` also resumes it through the same lifecycle control chain. Other normal chat does not silently reactivate a paused Goal.
+When a Goal is paused, a short explicit continuation message such as `devam et`, `continue`, or `resume` resumes the **same revision** through the normal lifecycle control chain. A substantive foreground follow-up is different: when it clearly adds required work, the exact human message can be promoted into a new **extend** revision; when it clearly replaces the requested outcome, it can become a new **replace** revision. Questions, status/explanation requests, and ordinary same-scope steering do not rewrite the Goal contract.
 
 Queue future Goals:
 
@@ -173,7 +173,8 @@ A single OpenCode **session has at most one unfinished live Goal**. This avoids 
 
 If a Goal is already active or paused:
 
-- use `/goal edit <objective>` when you mean to revise the current Goal;
+- use `/goal edit <objective>` when you want an explicit deterministic rewrite of the current Goal;
+- give a substantive foreground follow-up when you want the current Goal to absorb or replace scope naturally; material scope changes become a new revision before implementation continues;
 - use `/goal add <objective>` to queue a second Goal for later;
 - use `/goal clear` if you intentionally want to abandon/archive the current Goal and start a different one;
 - use a **separate OpenCode session** when you intentionally want two Goals to run in parallel.
@@ -190,15 +191,23 @@ For queued Goals:
 
 Separate sessions have separate persisted Goal snapshots. They can therefore run distinct Goals in the same project directory, although normal workspace conflicts are still possible if both sessions edit the same project files.
 
-## Pause vs. normal chat: explicit continuation and arbitrary chat
+## Pause, steering, and user-authorized Goal revisions
 
-`/goal pause` changes persisted Goal state to `paused`. `/goal resume` remains the explicit lifecycle command for reactivating it.
+`/goal pause` changes persisted Goal state to `paused`. `/goal resume` remains the explicit lifecycle command for reactivating the current revision.
 
-For convenience, a narrow set of short, unambiguous continuation messages — for example `devam et`, `continue`, `kaldığın yerden devam et`, or `resume` — is treated as resume intent while a Goal is paused. The plugin routes that intent through the same `/goal resume` command/ownership chain rather than directly rewriting Goal state.
+Foreground user messages are classified by intent rather than treating every message as either “resume” or “unrelated chat”:
 
-Other foreground chat stays ordinary conversation and does **not** silently reactivate the Goal. This keeps arbitrary chat from becoming lifecycle control while letting a clear “continue” instruction do what the user expects.
+- **Resume the same Goal:** short, unambiguous messages such as `devam et`, `continue`, `kaldığın yerden devam et`, or `resume` use the existing `/goal resume` ownership chain and keep the same revision.
+- **Steer inside the existing scope:** clarifications or implementation guidance that already fit the current objective stay ordinary foreground steering; they do not rewrite the Goal contract.
+- **Extend the scope:** a substantive message such as “also do these 100 items” can create a new revision that preserves the previous objective and appends the **exact latest human message** as additional required work.
+- **Replace the scope:** a message that intentionally says to abandon/replace the old requested outcome can create a new revision whose objective is the **exact latest human message**.
+- **Ask/explain/status:** questions such as “why did it stop?” or “what is left?” do not change Goal status, scope, or revision.
 
-The same resume path can be used after a fail-closed verifier outage. A timeout-class verifier failure first receives one fresh bounded automatic retry; if that retry also fails and the Goal is persisted as `paused`, wait until the verifier/provider is usable and then use `/goal resume` or a short explicit continuation message to retry completion.
+Material scope revisions are host-authorized: the model may choose whether the latest message means extend or replace, but it cannot invent or summarize replacement objective text. Only the exact foreground human message that directly parented that assistant turn can be consumed, once. The revision resets stale native Todo telemetry so the next Goal-owned turn builds a fresh plan, while cumulative usage, budgets, and historical evidence remain preserved. The stale pre-revision assistant turn is not allowed to keep mutating the workspace after the revision boundary.
+
+`budget_limited`, `usage_limited`, and completed states are not implicitly bypassed by foreground chat. Use the explicit Goal budget/lifecycle controls when those states require intervention. `/goal edit` remains available whenever you want deterministic manual control over the exact resulting objective.
+
+Transient verifier/provider/network failures are different from a user pause. Since 1.3.26, retryable infrastructure failures use persisted recovery/backoff rather than normally requiring a manual `/goal resume`: Goal respects host `retry`/`busy`/unknown ownership, backs off from 15 seconds up to a five-minute cap, survives process restarts, and avoids spending the normal no-progress budget on infrastructure failure. A short resume command remains useful for an actual user pause or compatible legacy state, but it is not the normal recovery mechanism for a current retryable outage.
 
 ## Goal Contracts
 
@@ -221,7 +230,7 @@ New Goals have no cumulative token cap by default (`maxTokens: 0`). Use `--max-t
 
 The full objective always remains a required semantic requirement. Narrow checks add proof obligations; they never replace the broader outcome.
 
-`/goal edit` creates a new revision. Evidence from an older revision cannot silently prove the edited Goal.
+`/goal edit` and material foreground scope changes create a new revision. Evidence from an older revision cannot silently prove the edited/rebased Goal.
 
 ## Multi-turn cadence and anti-batching
 
@@ -248,7 +257,8 @@ The boundary is strict:
 - Todo cannot widen the user-authorized Goal scope;
 - a current Todo plan with `pending` or `in_progress` work vetoes completion;
 - a fully completed Todo plan still does **not** prove the Goal;
-- missing or stale Todo telemetry cannot block a newer Goal revision.
+- missing or stale Todo telemetry cannot block a newer Goal revision;
+- a material user-authorized Goal revision discards the stale Todo snapshot so the next Goal-owned turn must re-plan the new revision.
 
 ## Completion integrity
 
@@ -265,19 +275,13 @@ Completion is an audit pipeline:
 
 If verification is unavailable, incomplete, stale, ambiguous, or races with a lifecycle change, completion **fails closed**.
 
-### Verifier timeout / bounded retry / Goal stays paused
+### Verifier/provider infrastructure recovery
 
-If the executor has finished the work but independent semantic verification hits a timeout-class infrastructure failure, the plugin aborts and cleans up that verifier child and automatically retries **once** in a fresh verifier session. The retry is capped at 60 seconds, or at the configured verifier timeout when that is lower. There is no third automatic verifier attempt.
+A timeout-class semantic-verifier failure still gets one fresh bounded verifier retry after the failed verifier child is aborted and cleaned up. If verification or the provider remains unavailable for a retryable infrastructure reason, current releases do **not** normally convert that temporary outage into a permanent manual pause. The Goal records persisted infrastructure-recovery state and retries with exponential cooldown starting at 15 seconds and capped at five minutes.
 
-Non-timeout provider or transport failures are not automatically retried. If the bounded timeout retry also fails, the Goal is persisted as `paused` instead of entering an endless completion retry loop. Existing host evidence remains persisted.
+The recovery coordinator also covers retryable provider/transport failures such as transient fetch/network errors, `ECONNRESET`, `ENOTFOUND`, `EAI_AGAIN`, and `ETIMEDOUT`. While OpenCode reports `retry`, `busy`, or an unknown/non-idle ownership state, Goal does not inject a competing autonomous prompt. A bounded watchdog exists for older hosts that can remain stuck in retry, and the recovery state survives a process restart.
 
-When the verifier/provider is healthy again:
-
-```text
-/goal resume
-```
-
-A short explicit continuation message such as `continue` or `devam et` uses the same resume path.
+Infrastructure recovery does not prove completion and does not spend the normal no-progress/stall budget. Fatal authentication/configuration failures and explicit host usage limits remain fail-closed and require the appropriate user/configuration action.
 
 A verifier outage never marks an unproven Goal completed.
 
@@ -326,7 +330,11 @@ Check:
 /goal audit
 ```
 
-If the stop reason is verifier infrastructure/timeout after the bounded automatic retry and the workspace is already correct, do not manually repeat the requested mutations. Use `/goal resume` or a short explicit continuation message to retry the completion path.
+If `/goal status` reports current infrastructure recovery, let the persisted recovery/backoff path retry; do not manually repeat already-correct workspace mutations. If the Goal is genuinely user-paused, restored from a compatible legacy state, or otherwise eligible for manual reactivation, use `/goal resume` or a short explicit continuation message. Fatal authentication/configuration errors and explicit usage/budget limits must be fixed explicitly rather than bypassed by resume/revision chat.
+
+### I gave the paused Goal a large new list but it did not belong to the old plan
+
+You can send the new requirements as ordinary foreground text. When they materially add work, Goal creates an extend revision from the exact message and rebuilds native Todo planning on the next Goal-owned turn. If you explicitly replace the old outcome, it creates a replace revision instead. Use `/goal edit <objective>` when you want to force an exact manual rewrite.
 
 ### I cannot start another Goal in the same session
 

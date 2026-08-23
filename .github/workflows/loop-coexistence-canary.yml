@@ -47,10 +47,18 @@ jobs:
           node -p "require('./node_modules/@bybrawe/opencode-loop/package.json').version"
 
       - name: Check coexistence canary syntax
-        run: node --check scripts/host-loop-coexistence-canary.mjs
+        run: |
+          node --check scripts/host-loop-coexistence-canary.mjs
+          node --check scripts/host-loop-coexistence-delayed-canary.mjs
 
-      - name: Preserve Goal ownership across rejected Loop command
+      - name: Preserve Goal ownership after first token
         run: node --import ./scripts/host-canary-bootstrap.mjs scripts/host-loop-coexistence-canary.mjs
+        env:
+          OPENCODE_PRINT_LOGS: "1"
+          OPENCODE_LOG_LEVEL: DEBUG
+
+      - name: Preserve Goal ownership before first token
+        run: node --import ./scripts/host-canary-bootstrap.mjs scripts/host-loop-coexistence-delayed-canary.mjs
         env:
           OPENCODE_PRINT_LOGS: "1"
           OPENCODE_LOG_LEVEL: DEBUG

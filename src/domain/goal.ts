@@ -144,7 +144,8 @@ export function editGoal(goal: GoalState, input: {
     observedProgressRevision: goal.progressRevision + 1,
     progressFingerprints: [],
     progressNotes: goal.progressNotes,
-    ...(goal.todoPlan ? { todoPlan: goal.todoPlan } : {}),
+    // Todo telemetry belongs to the previous Goal contract. Do not carry it
+    // across revisions: a fresh native todowrite must establish the new plan.
     storageGeneration: goal.storageGeneration ?? 0,
     createdAt: goal.createdAt,
   }

@@ -1,4 +1,5 @@
 import OpenCodeGoalCorePlugin from "./opencode/plugin.js"
+import { installForeignCommandSteeringGuard } from "./opencode/foreign-command-guard.js"
 import { enhanceGoalControls } from "./opencode/controls.js"
 import { installGoalAuditUX } from "./opencode/audit-ux.js"
 import { installProjectGoalIndex } from "./opencode/project-index.js"
@@ -34,6 +35,11 @@ export default async function OpenCodeGoalPlugin(
     client: preferSynchronousSessionPrompt(infrastructureTransport.client),
   }
   const hooks = await OpenCodeGoalCorePlugin(coreInput, applySemanticVerifierTimeoutDefault(options))
+  // OpenCode 1.x may still materialize a plugin-handled slash command as a
+  // synthetic user/model turn. Install this directly above the core so outer
+  // safety/deferral wrappers still run, while the core never mistakes that
+  // command bridge for human Goal steering or a new execution context.
+  installForeignCommandSteeringGuard(input, hooks)
   enhanceGoalControls(input, hooks)
   installGoalAuditUX(input, hooks)
   installProjectGoalIndex(input, hooks)
@@ -102,3 +108,4 @@ export * from "./opencode/client-compat.js"
 export * from "./opencode/lifecycle-ux.js"
 export * from "./opencode/i18n-ux.js"
 export * from "./opencode/verifier-defaults.js"
+export * from "./opencode/foreign-command-guard.js"

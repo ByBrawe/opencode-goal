@@ -1,0 +1,64 @@
+name: Real Loop Coexistence
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: loop-coexistence-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  current-loop:
+    name: Goal branch + Loop 0.5.35 (${{ matrix.os }})
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: npm install
+      - run: npm run build
+
+      - name: Install current OpenCode and released Loop
+        run: npm install --no-save --package-lock=false opencode-ai@latest @bybrawe/opencode-loop@0.5.35
+
+      - name: Show integration versions
+        run: |
+          node -p "require('./package.json').version"
+          npx --no-install opencode --version
+          node -p "require('./node_modules/@bybrawe/opencode-loop/package.json').version"
+
+      - name: Check coexistence canary syntax
+        run: |
+          node --check scripts/host-loop-coexistence-canary.mjs
+          node --check scripts/host-loop-coexistence-delayed-canary.mjs
+
+      - name: Preserve Goal ownership after first token
+        run: node --import ./scripts/host-canary-bootstrap.mjs scripts/host-loop-coexistence-canary.mjs
+        env:
+          OPENCODE_PRINT_LOGS: "1"
+          OPENCODE_LOG_LEVEL: DEBUG
+
+      - name: Preserve Goal ownership before first token
+        run: node --import ./scripts/host-canary-bootstrap.mjs scripts/host-loop-coexistence-delayed-canary.mjs
+        env:
+          OPENCODE_PRINT_LOGS: "1"
+          OPENCODE_LOG_LEVEL: DEBUG

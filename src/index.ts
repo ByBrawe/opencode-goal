@@ -1,4 +1,5 @@
 import OpenCodeGoalCorePlugin from "./opencode/plugin.js"
+import { installGoalUserRevision } from "./opencode/user-revision.js"
 import { installForeignCommandSteeringGuard } from "./opencode/foreign-command-guard.js"
 import { enhanceGoalControls } from "./opencode/controls.js"
 import { installGoalAuditUX } from "./opencode/audit-ux.js"
@@ -35,10 +36,14 @@ export default async function OpenCodeGoalPlugin(
     client: preferSynchronousSessionPrompt(infrastructureTransport.client),
   }
   const hooks = await OpenCodeGoalCorePlugin(coreInput, applySemanticVerifierTimeoutDefault(options))
+  // Foreground human follow-ups can deliberately revise a persisted Goal, but
+  // only through a one-shot authorization bound to the exact user message. Put
+  // this directly above core so the foreign-command guard can still intercept
+  // plugin bridge traffic before it ever becomes revision authority.
+  installGoalUserRevision(input, hooks)
   // OpenCode 1.x may still materialize a plugin-handled slash command as a
-  // synthetic user/model turn. Install this directly above the core so outer
-  // safety/deferral wrappers still run, while the core never mistakes that
-  // command bridge for human Goal steering or a new execution context.
+  // synthetic user/model turn. Install this above the user-revision bridge so
+  // foreign command traffic cannot authorize or repin a Goal revision.
   installForeignCommandSteeringGuard(input, hooks)
   enhanceGoalControls(input, hooks)
   installGoalAuditUX(input, hooks)
@@ -108,4 +113,5 @@ export * from "./opencode/client-compat.js"
 export * from "./opencode/lifecycle-ux.js"
 export * from "./opencode/i18n-ux.js"
 export * from "./opencode/verifier-defaults.js"
+export * from "./opencode/user-revision.js"
 export * from "./opencode/foreign-command-guard.js"

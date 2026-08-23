@@ -2,6 +2,15 @@
 
 All notable changes to **OpenCode Goals** are documented here.
 
+## 1.3.27 — 2026-08-23
+
+Cross-plugin command-ownership reliability release.
+
+- Keep foreign/plugin slash-command bridge traffic out of active Goal foreground steering so a companion command cannot repin the Goal executor to its local command agent, model, or variant.
+- Correlate command-owned bridge messages with one-time plugin-issued markers, strip valid markers before provider dispatch, and leave spoofed or expired markers as ordinary foreground chat.
+- Preserve normal human steering and preemption behavior while maintaining the single-autonomous-owner contract with companion schedulers such as OpenCode Loop.
+- Add Ubuntu/Windows real-host coexistence canaries with released OpenCode Loop 0.5.35, including a provider-first-response-byte-delayed case, plus cross-plugin ownership architecture documentation.
+
 ## 1.3.26 — 2026-08-22
 
 Transient infrastructure recovery release.

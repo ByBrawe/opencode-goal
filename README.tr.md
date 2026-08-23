@@ -123,7 +123,7 @@ Duraklatın ve devam ettirin:
 /goal resume
 ```
 
-Goal paused durumundayken `devam et`, `continue` veya `resume` gibi kısa ve açık bir devam mesajı da aynı lifecycle control zinciri üzerinden Goal'ı yeniden aktive eder. Diğer normal chat mesajları paused Goal'ı sessizce yeniden başlatmaz.
+Goal paused durumundayken `devam et`, `continue` veya `resume` gibi kısa ve açık bir mesaj normal lifecycle zinciri üzerinden **aynı revision'ı** devam ettirir. Ciddi bir foreground follow-up ise farklıdır: mesaj açıkça yeni zorunlu işler ekliyorsa kullanıcının yazdığı metnin birebir hali yeni bir **extend** revision'ına taşınabilir; eski sonucu açıkça bırakıp başka sonucu istiyorsa yeni bir **replace** revision'ı oluşturulabilir. Soru, durum/açıklama isteği ve mevcut scope içindeki normal steering Goal contract'ını yeniden yazmaz.
 
 Gelecekteki Goal'ları sıraya ekleyin:
 
@@ -173,7 +173,8 @@ Tek bir OpenCode **session'ında en fazla bir bitmemiş canlı Goal** bulunur. B
 
 Bir Goal zaten active veya paused durumdaysa:
 
-- mevcut Goal'ı revize etmek istiyorsanız `/goal edit <objective>` kullanın;
+- mevcut Goal'ı tam ve deterministik biçimde yeniden yazmak istiyorsanız `/goal edit <objective>` kullanın;
+- mevcut Goal'ın yeni işi doğal biçimde kapsamasını veya eski sonucu değiştirmesini istiyorsanız ciddi foreground follow-up gönderin; material scope değişikliği implementation sürmeden önce yeni revision olur;
 - ikinci Goal'ı daha sonra çalıştırmak için `/goal add <objective>` kullanın;
 - mevcut Goal'ı bilerek bırakıp/arşivleyip başka bir Goal başlatmak istiyorsanız `/goal clear` kullanın;
 - iki Goal'ı bilinçli olarak paralel çalıştırmak istiyorsanız **ayrı bir OpenCode session'ı** kullanın.
@@ -190,15 +191,23 @@ Queue için:
 
 Ayrı session'lar ayrı kalıcı Goal snapshot'larına sahiptir. Bu nedenle aynı proje dizininde farklı Goal'lar çalıştırabilirler; ancak iki session aynı proje dosyalarını değiştirirse normal workspace çakışmaları yine oluşabilir.
 
-## Pause ile normal chat farkı: açık devam isteği ve sıradan chat
+## Pause, steering ve kullanıcı yetkili Goal revision'ları
 
-`/goal pause`, kalıcı Goal durumunu `paused` yapar. `/goal resume`, Goal'ı yeniden aktive etmek için açık lifecycle komutu olarak kalır.
+`/goal pause`, kalıcı Goal durumunu `paused` yapar. `/goal resume`, mevcut revision'ı yeniden aktive etmek için açık lifecycle komutu olarak kalır.
 
-Kolaylık için `devam et`, `continue`, `kaldığın yerden devam et` veya `resume` gibi kısa ve belirsiz olmayan devam mesajları, Goal paused durumundayken resume niyeti olarak kabul edilir. Plugin bu niyeti Goal state'ini doğrudan değiştirmek yerine mevcut `/goal resume` command/ownership zinciri üzerinden geçirir.
+Foreground kullanıcı mesajları artık her şeyi “resume” veya “ilgisiz chat” diye ikiye ayırmak yerine niyetine göre değerlendirilir:
 
-Diğer foreground chat mesajları normal konuşma olarak kalır ve Goal'ı **sessizce yeniden aktive etmez**. Böylece rastgele chat lifecycle control'e dönüşmezken açık bir “devam et” isteği beklenen davranışı verir.
+- **Aynı Goal'a devam:** `devam et`, `continue`, `kaldığın yerden devam et` veya `resume` gibi kısa ve belirsiz olmayan mesajlar mevcut `/goal resume` ownership zincirini kullanır ve revision değişmez.
+- **Mevcut scope içinde steering:** mevcut objective'in zaten kapsadığı açıklama, öncelik veya implementation yönlendirmesi normal foreground steering olarak kalır; Goal contract yeniden yazılmaz.
+- **Scope'u genişlet:** “bunlara ek olarak şu 100 maddeyi de yap” gibi ciddi bir mesaj, eski objective'i koruyup **son insan mesajının birebir halini** additional required work olarak ekleyen yeni revision oluşturabilir.
+- **Scope'u değiştir:** eski sonucu açıkça bırakıp yerine başka sonuç isteyen mesaj, objective'i **son insan mesajının birebir hali** olan yeni revision oluşturabilir.
+- **Soru/açıklama/status:** “neden durdu?” veya “ne kaldı?” gibi mesajlar Goal status, scope veya revision değiştirmez.
 
-Aynı resume yolu fail-closed verifier kesintisi sonrasında da kullanılabilir. Timeout sınıfındaki bir verifier hatası önce taze bir verifier session'ında tek ve bounded bir otomatik retry alır; bu retry de başarısız olur ve Goal `paused` olarak kalıcılaştırılırsa verifier/provider kullanılabilir olduğunda `/goal resume` veya kısa ve açık bir devam mesajıyla completion yeniden denenebilir.
+Material scope revision'ları host tarafından yetkilendirilir: model son mesajın extend mi replace mi olduğuna karar verebilir, fakat yeni objective metnini kendi yazamaz, özetleyemez veya 100 maddeden bazılarını düşüremez. Yalnızca o assistant turn'ünün doğrudan parent'ı olan exact foreground human message tek kez kullanılabilir. Revision, stale native Todo telemetry'yi temizler; sonraki Goal-owned turn yeni revision için taze plan kurar. Cumulative usage, budget'lar ve geçmiş evidence korunur. Revision boundary'den sonra stale pre-revision assistant turn workspace'i değiştirmeye devam edemez.
+
+`budget_limited`, `usage_limited` ve completed durumları foreground chat ile sessizce bypass edilmez. Bu durumlarda gerekli açık Goal budget/lifecycle kontrolünü kullanın. Son objective üzerinde deterministik manuel kontrol istediğinizde `/goal edit` her zaman kullanılabilir.
+
+Transient verifier/provider/network hataları kullanıcı pause'undan farklıdır. 1.3.26'dan beri retry edilebilir altyapı hataları normalde manuel `/goal resume` gerektiren kalıcı pause'a dönüşmez: Goal host `retry`/`busy`/unknown ownership durumuna saygı gösterir, 15 saniyeden başlayıp beş dakikaya kadar çıkan persisted backoff kullanır, restart sonrasında recovery state'i korur ve altyapı hatasını normal no-progress bütçesinden yemez. Kısa resume mesajı gerçek user pause veya uyumlu eski state için faydalıdır; güncel retryable outage için normal recovery mekanizması değildir.
 
 ## Goal Contracts
 
@@ -221,7 +230,7 @@ Yeni Goal'larda cumulative token limiti varsayılan olarak yoktur (`maxTokens: 0
 
 Tam objective her zaman gerekli bir semantic requirement olarak kalır. Dar kapsamlı kontroller ek proof obligations oluşturur; geniş sonucu asla değiştirmez veya yerine geçmez.
 
-`/goal edit` yeni bir revision oluşturur. Eski revision'a ait kanıtlar düzenlenmiş Goal'ı sessizce kanıtlayamaz.
+`/goal edit` ve material foreground scope değişiklikleri yeni revision oluşturur. Eski revision'a ait kanıtlar düzenlenmiş/rebase edilmiş Goal'ı sessizce kanıtlayamaz.
 
 ## Multi-turn cadence ve anti-batching
 
@@ -248,7 +257,8 @@ Sınır nettir:
 - Todo, kullanıcının yetki verdiği Goal scope'unu genişletemez;
 - güncel Todo planında `pending` veya `in_progress` iş varsa completion veto edilir;
 - tamamen bitmiş Todo planı bile Goal'ı kanıtlamaz;
-- eksik veya stale Todo telemetry daha yeni Goal revision'ını engelleyemez.
+- eksik veya stale Todo telemetry daha yeni Goal revision'ını engelleyemez;
+- material kullanıcı yetkili Goal revision'ı stale Todo snapshot'ını temizler ve sonraki Goal-owned turn yeni revision'ı yeniden planlar.
 
 ## Completion bütünlüğü
 
@@ -265,19 +275,13 @@ Completion bir audit pipeline'ıdır:
 
 Verification kullanılamıyorsa, eksikse, stale/ambiguous ise veya lifecycle değişikliğiyle race oluşursa completion **fail closed** olur.
 
-### Verifier timeout / bounded retry / Goal paused kalıyor
+### Verifier/provider altyapı recovery
 
-Executor işi bitirmiş olsa bile bağımsız semantic verification timeout sınıfındaki bir altyapı hatasına ulaşırsa plugin timeout olan verifier child'ını abort edip temizler ve **bir kez** taze verifier session'ıyla otomatik retry yapar. Bu retry en fazla 60 saniyedir; yapılandırılmış verifier timeout daha düşükse o düşük değer kullanılır. Üçüncü bir otomatik verifier denemesi yoktur.
+Timeout sınıfındaki semantic-verifier hatası, başarısız verifier child abort edilip temizlendikten sonra hâlâ bir taze bounded verifier retry alır. Verification veya provider retry edilebilir bir altyapı nedeniyle kullanılamamaya devam ederse güncel sürümler bu geçici kesintiyi normalde kalıcı manuel pause'a çevirmek yerine persisted infrastructure-recovery state yazar ve 15 saniyeden başlayıp beş dakikada tavan yapan exponential cooldown ile tekrar dener.
 
-Timeout dışındaki provider veya transport hataları otomatik retry edilmez. Bounded timeout retry da başarısız olursa Goal sonsuz completion retry döngüsüne girmek yerine `paused` olarak kalıcılaştırılır. Mevcut host evidence korunur.
+Recovery coordinator; transient fetch/network hataları, `ECONNRESET`, `ENOTFOUND`, `EAI_AGAIN` ve `ETIMEDOUT` gibi retry edilebilir provider/transport hatalarını da kapsar. OpenCode `retry`, `busy` veya unknown/non-idle ownership bildirirken Goal ikinci bir autonomous prompt basmaz. Eski host'ların retry durumunda takılabilmesi için bounded watchdog vardır ve recovery state process restart sonrasında korunur.
 
-Verifier/provider tekrar sağlıklı olduğunda:
-
-```text
-/goal resume
-```
-
-kullanın. `devam et` veya `continue` gibi kısa ve açık bir mesaj da aynı resume yolunu kullanır.
+Infrastructure recovery completion'ı kanıtlamaz ve normal no-progress/stall bütçesini harcamaz. Fatal authentication/configuration hataları ile açık host usage limitleri fail-closed kalır ve uygun kullanıcı/configuration müdahalesi ister.
 
 Verifier kesintisi kanıtlanmamış bir Goal'ı hiçbir zaman completed olarak işaretlemez.
 
@@ -326,7 +330,11 @@ Installer kullanıcıya ait bir `commands/goal.md` dosyasının üzerine yazmaz.
 /goal audit
 ```
 
-Stop reason bounded otomatik retry sonrasında verifier infrastructure/timeout ise ve workspace zaten doğruysa istenen mutation'ları elle tekrar etmeyin. Completion yolunu yeniden denemek için `/goal resume` veya kısa ve açık bir devam mesajı kullanın.
+`/goal status` güncel infrastructure recovery gösteriyorsa persisted recovery/backoff yolunun retry etmesine izin verin; zaten doğru olan workspace mutation'larını elle tekrarlamayın. Goal gerçekten kullanıcı tarafından pause edildiyse, uyumlu eski bir state'ten restore edildiyse veya başka şekilde manuel reactivation için uygunsa `/goal resume` ya da kısa ve açık devam mesajı kullanın. Fatal authentication/configuration hataları ile açık usage/budget limitleri resume/revision chat ile bypass edilmemeli; nedeni doğrudan düzeltilmelidir.
+
+### Paused Goal'a büyük bir yeni liste verdim ama eski plan bunu kapsamıyor
+
+Yeni requirements'ı normal foreground metni olarak gönderebilirsiniz. Material olarak iş ekliyorsa Goal exact mesajdan extend revision oluşturur ve sonraki Goal-owned turn'de native Todo planını yeniden kurar. Eski sonucu açıkça değiştiriyorsanız replace revision oluşturur. Son objective'i birebir kendiniz belirlemek istiyorsanız `/goal edit <objective>` kullanın.
 
 ### Aynı session'da başka Goal başlatamıyorum
 

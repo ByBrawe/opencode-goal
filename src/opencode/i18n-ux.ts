@@ -1,6 +1,5 @@
 import type CorePlugin from "./plugin.js"
-import { GoalStore, GoalStoreIntegrityError } from "../persistence/store.js"
-import { currentGoalLocale, isNaturalResumeText, translateCoreText } from "../i18n.js"
+import { currentGoalLocale, translateCoreText } from "../i18n.js"
 
 type PluginInput = Parameters<typeof CorePlugin>[0]
 type PluginHooks = Awaited<ReturnType<typeof CorePlugin>>
@@ -21,10 +20,6 @@ function withText(output: any, text: string): any {
   }
 }
 
-function isSyntheticHostMessage(parts: any[]): boolean {
-  return parts.some((part) => part?.synthetic === true)
-}
-
 /**
  * Localize only the user-visible Goal command surface. Before the later
  * chat.message hook reaches the existing ownership/lifecycle wrappers, feed
@@ -32,18 +27,15 @@ function isSyntheticHostMessage(parts: any[]): boolean {
  * originally produced. The host-owned command output keeps the localized text,
  * so localization never becomes lifecycle state or model-visible authorization.
  *
- * Short resume intent is recognized across all supported languages. When the
- * Goal is actually paused, normalize that foreground message in place to the
- * already-supported English "continue" intent so the existing lifecycle wrapper
- * can replace it with the normal Goal-owned continuation prompt. Persistence is
- * never mutated directly here.
+ * Natural-language work/resume intent is deliberately not normalized here.
+ * The user's original text reaches the model unchanged; the model decides
+ * semantically whether to invoke the Goal resume tool in any language.
  */
-export function installGoalI18nUX(input: PluginInput, hooks: PluginHooks): void {
+export function installGoalI18nUX(_input: PluginInput, hooks: PluginHooks): void {
   const commandHook = hooks["command.execute.before"]
   const chatHook = hooks["chat.message"]
   if (typeof commandHook !== "function" || typeof chatHook !== "function") return
 
-  const store = new GoalStore(input.directory)
   const translations = new Map<string, PromptTranslation>()
 
   hooks["command.execute.before"] = async (event: any, output: any) => {
@@ -67,23 +59,6 @@ export function installGoalI18nUX(input: PluginInput, hooks: PluginHooks): void 
       if (shown === translation.shown) {
         await chatHook(event, withText(output, translation.owned))
         return
-      }
-    }
-
-    const synthetic = (output as any)?.noReply === true || isSyntheticHostMessage(output?.parts ?? [])
-    if (!synthetic && isNaturalResumeText(shown)) {
-      try {
-        const goal = await store.load(event.sessionID)
-        if (goal?.status === "paused") {
-          // The existing lifecycle wrapper already treats "continue" as a
-          // narrow explicit resume intent and routes it through /goal resume.
-          // Keep its in-place prompt replacement behavior intact.
-          replaceParts(output.parts, "continue")
-          await chatHook(event, output)
-          return
-        }
-      } catch (error) {
-        if (!(error instanceof GoalStoreIntegrityError)) throw error
       }
     }
 

@@ -6,7 +6,7 @@ import path from "node:path"
 import OpenCodeGoalPlugin, { createGoal, editGoal, pauseGoal } from "../dist/index.js"
 import { GoalStore } from "../dist/persistence/store.js"
 import { closeObservedTurn } from "../dist/runtime/progress.js"
-import { observeTodoPlan } from "../dist/runtime/todo-plan.js"
+import { observeTodoPlan, todoPlanIsCurrent } from "../dist/runtime/todo-plan.js"
 
 async function readOnlyGoal(root) {
   const dir = path.join(root, ".opencode", "goals")
@@ -103,12 +103,22 @@ test("open long Todo plans receive a bounded adaptive no-progress window", () =>
   assert.equal(goal.stalledTurns, 12)
 })
 
-test("Goal edit invalidates previous Todo telemetry until a fresh native plan is observed", () => {
+test("Goal edit keeps stale Todo telemetry and rejects unchanged re-observation", () => {
   let goal = createGoal({ sessionID: "todo-revision", objective: "old contract" })
-  goal = observeTodoPlan(goal, [{ content: "Old task", status: "pending" }])
+  const oldTodos = [{ content: "Old task", status: "pending" }]
+  goal = observeTodoPlan(goal, oldTodos)
   assert.ok(goal.todoPlan)
 
   const edited = editGoal(goal, { objective: "new contract" })
   assert.equal(edited.revision, 2)
-  assert.equal(edited.todoPlan, undefined)
+  assert.equal(edited.todoPlan?.goalRevision, 1)
+  assert.equal(todoPlanIsCurrent(edited), false)
+
+  const unchanged = observeTodoPlan(edited, oldTodos)
+  assert.strictEqual(unchanged, edited, "the old native Todo list must not become current merely by being emitted again")
+  assert.equal(unchanged.todoPlan?.goalRevision, 1)
+
+  const rebuilt = observeTodoPlan(edited, [{ content: "New contract task", status: "pending" }])
+  assert.equal(rebuilt.todoPlan?.goalRevision, 2)
+  assert.equal(todoPlanIsCurrent(rebuilt), true)
 })

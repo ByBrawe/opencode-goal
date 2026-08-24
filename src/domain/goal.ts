@@ -5,7 +5,7 @@ const DEFAULT_BUDGET: GoalBudget = {
   maxTurns: 0,
   maxTokens: 0,
   maxCost: 0,
-  maxRuntimeMs: 60 * 60_000,
+  maxRuntimeMs: 0,
 }
 
 function requirement(input: {
@@ -27,7 +27,7 @@ function requirement(input: {
     source: input.source,
     ...(input.command ? { command: input.command } : {}),
     ...(input.file ? { file: input.file } : {}),
-    ...(input.contains ? { contains: input.contains } : {}),
+    ...(input.contains ? { contains } : {}),
     updatedAt: now,
   }
 }

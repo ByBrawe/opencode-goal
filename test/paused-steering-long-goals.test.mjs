@@ -47,7 +47,7 @@ async function foregroundChat(hooks, text, messageID, sessionID = "session-long"
   return output
 }
 
-test("auto-stalled Goal keeps steering text intact until the model chooses the resume tool", async () => {
+test("auto-stalled Goal keeps steering text intact until model resume is activated at idle", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-auto-stall-steering-"))
   try {
     const fake = fakeClient()
@@ -70,11 +70,15 @@ test("auto-stalled Goal keeps steering text intact until the model chooses the r
       messageID: "assistant-routing",
       agent: "build",
     })
-    assert.match(String(result), /Goal resumed/)
+    assert.match(String(result), /Goal resume accepted/)
+    persisted = await readOnlyGoal(root)
+    assert.equal(persisted.status, "paused", "model routing turn must remain outside Goal ownership")
+
+    await hooks.event({ event: { type: "session.idle", properties: { sessionID: "session-long" } } })
     persisted = await readOnlyGoal(root)
     assert.equal(persisted.status, "active")
     assert.equal(persisted.stalledTurns, 0)
-    assert.equal(persisted.skipNextStallCheck, true)
+    assert.equal(persisted.skipNextStallCheck, undefined)
   } finally {
     await rm(root, { recursive: true, force: true })
   }

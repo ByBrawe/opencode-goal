@@ -141,7 +141,7 @@ test("localized command text stays visible while inner ownership remains intact"
   }
 })
 
-test("a paused Goal keeps another language intact until the model chooses the resume tool", async () => {
+test("a paused Goal keeps another language intact until the model chooses resume and idle activates it", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-i18n-resume-"))
   const previous = process.env.OPENCODE_GOAL_LANG
   process.env.OPENCODE_GOAL_LANG = "tr"
@@ -164,7 +164,11 @@ test("a paused Goal keeps another language intact until the model chooses the re
       messageID: "assistant-de",
       agent: "build",
     })
-    assert.match(String(result), /Goal resumed/)
+    assert.match(String(result), /Goal resume accepted/)
+    persisted = await store.load("i18n-session")
+    assert.equal(persisted?.status, "paused", "tool selection alone must not cross the Goal ownership boundary")
+
+    await hooks.event({ event: { type: "session.idle", properties: { sessionID: "i18n-session" } } })
     persisted = await store.load("i18n-session")
     assert.equal(persisted?.status, "active")
   } finally {

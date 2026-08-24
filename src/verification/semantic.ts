@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto"
 import type { EvidenceRecord, GoalState, RequirementStatus } from "../domain/types.js"
+import { retainEvidenceRecords } from "./retention.js"
 
 export type SemanticVerdict = "proven" | "failed" | "unknown"
 
@@ -61,15 +62,16 @@ export function applySemanticVerifierResults(
       ...(result.verdict === "unknown" ? {} : { passed: result.verdict === "proven" }),
       metadata: { verdict: result.verdict, evidenceCount: refs.length },
     }
-    next = {
+    const candidate: GoalState = {
       ...next,
-      evidence: [...next.evidence, evidence].slice(-500),
+      evidence: [...next.evidence, evidence],
       requirements: next.requirements.map((item) => item.id === result.requirementID
-        ? { ...item, status: statusForVerdict(result.verdict), evidenceIDs: [...new Set([...item.evidenceIDs, evidence.id])], updatedAt: now }
+        ? { ...item, status: statusForVerdict(result.verdict), evidenceIDs: [evidence.id], updatedAt: now }
         : item),
       progressRevision: result.verdict === "proven" ? next.progressRevision + 1 : next.progressRevision,
       updatedAt: now,
     }
+    next = { ...candidate, evidence: retainEvidenceRecords(candidate, candidate.evidence) }
   }
 
   for (const id of expected) {

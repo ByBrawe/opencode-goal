@@ -47,7 +47,7 @@ async function foregroundChat(hooks, text, messageID, sessionID = "session-long"
   return output
 }
 
-test("actionable foreground instruction resumes an auto-stalled Goal without rewriting the instruction", async () => {
+test("auto-stalled Goal keeps steering text intact until the model chooses the resume tool", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-auto-stall-steering-"))
   try {
     const fake = fakeClient()
@@ -61,11 +61,20 @@ test("actionable foreground instruction resumes an auto-stalled Goal without rew
     await store.save(pauseGoal(active, reason))
 
     const output = await foregroundChat(hooks, "önce 12. haritayı düzelt", "human-steer")
-    const persisted = await readOnlyGoal(root)
+    let persisted = await readOnlyGoal(root)
+    assert.equal(persisted.status, "paused", "chat ingress must not guess natural-language intent")
+    assert.equal(output.parts[0].text, "önce 12. haritayı düzelt", "the human steering instruction must remain intact")
+
+    const result = await hooks.tool.opencode_goal_resume.execute({}, {
+      sessionID: "session-long",
+      messageID: "assistant-routing",
+      agent: "build",
+    })
+    assert.match(String(result), /Goal resumed/)
+    persisted = await readOnlyGoal(root)
     assert.equal(persisted.status, "active")
     assert.equal(persisted.stalledTurns, 0)
-    assert.equal(output.parts[0].text, "önce 12. haritayı düzelt", "the human steering instruction must remain intact")
-    assert.ok(fake.toasts.some((item) => /new work instruction/.test(item?.body?.message ?? "")))
+    assert.equal(persisted.skipNextStallCheck, true)
   } finally {
     await rm(root, { recursive: true, force: true })
   }

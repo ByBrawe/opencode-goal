@@ -49,10 +49,13 @@ export function installGoalModelResume(input: PluginInput, hooks: PluginHooks): 
     else output.system[0] = `${output.system[0]}\n\n${instruction}`
   }
 
-  hooks.tool ||= {}
-  if (hooks.tool.opencode_goal_resume) return
+  // Core returns a structurally inferred object with its built-in Goal tool
+  // names as literal keys. OpenCode's runtime tool registry is extensible, so
+  // widen only this local view instead of weakening the core plugin's types.
+  const tools = (hooks as any).tool as Record<string, any> | undefined
+  if (!tools || tools.opencode_goal_resume) return
 
-  hooks.tool.opencode_goal_resume = tool({
+  tools.opencode_goal_resume = tool({
     description: [
       "Resume the current persisted OpenCode Goal when the latest user message semantically asks to continue, resume, proceed, or steer that paused Goal.",
       "Interpret the user's meaning directly in any language; do not rely on exact phrases.",

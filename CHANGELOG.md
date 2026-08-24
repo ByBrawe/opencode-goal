@@ -2,6 +2,17 @@
 
 All notable changes to **OpenCode Goals** are documented here.
 
+## 1.3.29 — 2026-08-24
+
+Agent-native resume and long-run completion-integrity release.
+
+- Move natural-language paused-Goal resume intent from lifecycle phrase matching into the OpenCode agent/model layer: foreground text stays unchanged in the user's language, paused Goal context tells the model when re-entry is appropriate, and the model may call `opencode_goal_resume` to continue/resume/steer the persisted Goal.
+- Keep the routing assistant turn outside Goal ownership: a successful model-selected resume queues re-entry, then the following `session.idle` boundary activates the Goal and lets the existing scheduler dispatch the normal Goal-owned continuation; explicit `/goal resume`, user pause, hard stop states, and other lifecycle guards remain authoritative.
+- Make the remaining implicit runtime cap opt-in for newly created Goals (`maxRuntimeMs: 0`), while explicit finite runtime budgets and persisted finite legacy budgets remain hard guards.
+- Replace blind 500-record evidence FIFO truncation with audit-aware retention: current-revision trusted proof anchors still referenced by requirements and the latest current host/verifier result for each verification key are retained, preventing long runs from silently losing required proof or forgetting a newer failure.
+- Canonicalize host/file and semantic requirement proof pointers to the current proof record instead of accumulating unbounded historical `evidenceIDs`; the normal evidence target stays at 500 records and exceeds it only when the correctness-critical pinned set itself is larger.
+- Add multilingual model-resume/ownership regressions and 500+ evidence-record retention regressions; validate unit/eval/package gates, minimum/latest OpenCode plugin compatibility, real lifecycle/steering/compaction/semantic completion, host progress, restart recovery, Loop 0.5.35 coexistence, and Node 20/24 release-smoke matrices across Ubuntu/Windows.
+
 ## 1.3.28 — 2026-08-24
 
 Long-running steering and plan reliability release.
@@ -398,17 +409,3 @@ First stable release.
 
 - `/goal`, `/goal status`, `/goal contract`, `/goal doctor`, lifecycle controls, history, restore, and budget commands.
 - Server/session-layer authoritative state usable across normal OpenCode CLI/TUI/web session surfaces.
-- Best-effort TUI lifecycle/delegation feedback that never participates in correctness.
-- Windows and Ubuntu real-host/restart canaries plus minimum/latest OpenCode plugin compatibility checks.
-
-### Release and supply-chain policy
-
-- npm package: `@bybrawe/opencode-goal`.
-- Stable channel publishes to npm `latest` through GitHub Actions trusted publishing/OIDC.
-- The publish workflow has `contents: read` and narrowly scoped `id-token: write`; checkout credentials are not persisted.
-- Repository workflows do not automatically push commits or merge pull requests.
-- Post-1.0 breaking public-interface changes require a new major version.
-
-## 0.1.0-beta.1 / 0.1.0-beta.2
-
-Public prerelease line used to harden verification, persistence, restart recovery, storage integrity/concurrency, Goal Contracts, Plan safety, delegated-task coordination, and release gates before 1.0.0.

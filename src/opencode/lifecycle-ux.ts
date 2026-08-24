@@ -1,6 +1,6 @@
 import type CorePlugin from "./plugin.js"
 import type { GoalState } from "../domain/types.js"
-import { GoalStore, GoalStoreIntegrityError } from "../persistence/store.js"
+import { GoalStore } from "../persistence/store.js"
 import { parseGoalCommand } from "./command.js"
 import { showGoalToast } from "./toast.js"
 
@@ -14,34 +14,6 @@ function textFromParts(parts: any[]): string {
 
 function replaceParts(parts: any[], text: string) {
   parts.splice(0, parts.length, { type: "text", text })
-}
-
-function normalizedContinuationIntent(text: string): string {
-  return text
-    .trim()
-    .toLocaleLowerCase("tr-TR")
-    .replace(/[.!?]+$/g, "")
-    .replace(/\s+/g, " ")
-}
-
-function isNaturalResumeMessage(text: string): boolean {
-  const normalized = normalizedContinuationIntent(text)
-  return new Set([
-    "devam",
-    "devam et",
-    "devam edelim",
-    "kaldığın yerden devam et",
-    "kaldigin yerden devam et",
-    "continue",
-    "continue working",
-    "resume",
-    "resume work",
-  ]).has(normalized)
-}
-
-function isAutoStallPause(goal: GoalState): boolean {
-  return goal.status === "paused"
-    && /^Paused after \d+ continuation turns without host-observed progress\.$/.test(goal.stopReason ?? "")
 }
 
 function conflictMessage(goal: GoalState): string {
@@ -66,21 +38,11 @@ function pausedMessage(goal: GoalState): string {
     "Goal paused. Autonomous Goal continuation is now off.",
     `Current Goal: ${goal.objective}`,
     "",
-    "To continue this persisted Goal, either run:",
-    "/goal resume",
-    "",
-    "or send a short explicit continuation message such as \"devam et\" or \"continue\".",
-    "Other normal chat remains foreground conversation and does not silently reactivate the Goal.",
+    "To continue this persisted Goal, either run /goal resume or tell the agent to continue in your normal language.",
+    "Natural-language continuation is interpreted by the model through the Goal resume tool; lifecycle code does not use a language-specific phrase list.",
+    "Questions and unrelated foreground chat do not directly mutate Goal state.",
     "Use /goal clear only when you intentionally want to stop tracking this Goal and start another one.",
   ].join("\n")
-}
-
-function pausedNoticeKey(goal: GoalState): string {
-  return `${goal.id}:${goal.revision}:${goal.stopReason ?? ""}`
-}
-
-function isSyntheticHostMessage(parts: any[]): boolean {
-  return parts.some((part) => part?.synthetic === true)
 }
 
 export function installGoalLifecycleUX(input: PluginInput, hooks: PluginHooks): void {
@@ -91,22 +53,10 @@ export function installGoalLifecycleUX(input: PluginInput, hooks: PluginHooks): 
 
   const translations = new Map<string, PromptTranslation>()
   const commandOutputs = new Map<string, string>()
-  const foreignCommandOutputs = new Map<string, Set<string>>()
-  const pausedChatNotices = new Map<string, string>()
 
   hooks["command.execute.before"] = async (event: any, output: any) => {
     if (event.command !== "goal") {
       await commandHook(event, output)
-      const commandOutput = textFromParts(output?.parts ?? [])
-      if (commandOutput && typeof event.sessionID === "string") {
-        const owned = foreignCommandOutputs.get(event.sessionID) ?? new Set<string>()
-        owned.add(commandOutput)
-        if (owned.size > 32) {
-          const first = owned.values().next().value
-          if (typeof first === "string") owned.delete(first)
-        }
-        foreignCommandOutputs.set(event.sessionID, owned)
-      }
       return
     }
 
@@ -133,7 +83,6 @@ export function installGoalLifecycleUX(input: PluginInput, hooks: PluginHooks): 
     }
 
     if (parsed.action === "pause") {
-      pausedChatNotices.delete(event.sessionID)
       await commandHook(event, output)
       const goal = await store.load(event.sessionID)
       if (!goal || goal.status !== "paused") return
@@ -142,13 +91,11 @@ export function installGoalLifecycleUX(input: PluginInput, hooks: PluginHooks): 
       ;(output as any).noReply = true
       replaceParts(output.parts, shown)
       translations.set(event.sessionID, { shown, owned })
-      await showGoalToast(input.client, "Goal paused. Use /goal resume or a short continuation message such as 'devam et' to restart autonomous continuation.", "info")
+      await showGoalToast(input.client, "Goal paused. Use /goal resume or tell the agent to continue in your normal language.", "info")
       return
     }
 
     await commandHook(event, output)
-    if (["create", "edit", "resume", "clear"].includes(parsed.action)) pausedChatNotices.delete(event.sessionID)
-
     const commandOutput = textFromParts(output?.parts ?? [])
     if (commandOutput) commandOutputs.set(event.sessionID, commandOutput)
   }
@@ -165,13 +112,6 @@ export function installGoalLifecycleUX(input: PluginInput, hooks: PluginHooks): 
       return
     }
 
-    const foreignOutputs = foreignCommandOutputs.get(event.sessionID)
-    if (foreignOutputs?.delete(shown)) {
-      if (foreignOutputs.size === 0) foreignCommandOutputs.delete(event.sessionID)
-      await chatHook(event, output)
-      return
-    }
-
     const commandOutput = commandOutputs.get(event.sessionID)
     if (commandOutput) {
       commandOutputs.delete(event.sessionID)
@@ -181,74 +121,6 @@ export function installGoalLifecycleUX(input: PluginInput, hooks: PluginHooks): 
       }
     }
 
-    const synthetic = (output as any)?.noReply === true || isSyntheticHostMessage(output?.parts ?? [])
-    if (!synthetic) {
-      let paused: GoalState | null
-      try {
-        paused = await store.load(event.sessionID)
-      } catch (error) {
-        if (error instanceof GoalStoreIntegrityError) paused = null
-        else throw error
-      }
-
-      if (paused?.status === "paused" && isNaturalResumeMessage(shown)) {
-        const resumeOutput: any = { parts: [{ type: "text", text: "resume" }] }
-        await commandHook({ ...event, command: "goal", arguments: "resume" }, resumeOutput)
-        const resumeText = textFromParts(resumeOutput.parts)
-        if (resumeText) replaceParts(output.parts, resumeText)
-        const resumed = await store.load(event.sessionID)
-        pausedChatNotices.delete(event.sessionID)
-        await chatHook(event, output)
-        if (resumed?.status === "active") {
-          await showGoalToast(input.client, "Paused Goal resumed from your continuation message.", "success")
-        }
-        return
-      }
-
-      if (paused && isAutoStallPause(paused) && shown.trim()) {
-        // A host-generated no-progress pause is a scheduler safety backstop, not
-        // a language or intent boundary. Any real foreground user message
-        // re-enters the persisted Goal through the normal guarded resume chain;
-        // the model can then understand the message in its original language.
-        // Command-owned and synthetic traffic is filtered before this branch.
-        const resumeOutput: any = { parts: [{ type: "text", text: "resume" }] }
-        await commandHook({ ...event, command: "goal", arguments: "resume" }, resumeOutput)
-        await chatHook(event, resumeOutput)
-        const resumed = await store.load(event.sessionID)
-        pausedChatNotices.delete(event.sessionID)
-        await chatHook(event, output)
-        if (resumed?.status === "active") {
-          await showGoalToast(input.client, "Auto-paused Goal resumed from your foreground message.", "success")
-        }
-        return
-      }
-    }
-
     await chatHook(event, output)
-
-    if (synthetic) return
-
-    let goal: GoalState | null
-    try {
-      goal = await store.load(event.sessionID)
-    } catch (error) {
-      if (error instanceof GoalStoreIntegrityError) return
-      throw error
-    }
-    if (!goal || goal.status !== "paused") {
-      pausedChatNotices.delete(event.sessionID)
-      return
-    }
-
-    const key = pausedNoticeKey(goal)
-    if (pausedChatNotices.get(event.sessionID) === key) return
-    pausedChatNotices.set(event.sessionID, key)
-    await showGoalToast(
-      input.client,
-      isAutoStallPause(goal)
-        ? "Goal remains paused. It auto-paused after repeated no-progress turns; send any normal foreground message to re-enter it, or use /goal resume / 'devam et'."
-        : "Goal remains paused. Use /goal resume or send a short continuation message such as 'devam et' to continue the persisted Goal.",
-      "warning",
-    )
   }
 }

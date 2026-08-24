@@ -12,6 +12,43 @@ test("goal parser keeps success criteria constraints checks and host file contra
   assert.equal(parsed.maxTurns, 20)
 })
 
+test("multiline pasted Goal specifications are literal even when they contain CLI-style flags", () => {
+  const objective = [
+    "Build the release without losing the pasted specification.",
+    "",
+    "Commands users may run:",
+    "- npm test -- --watch=false",
+    "- tool --dry-run --accept something",
+    "",
+    "Do not reinterpret --max-turns 1 or --wat as Goal command options here.",
+  ].join("\n")
+  const parsed = parseGoalCommand(objective)
+  assert.equal(parsed.action, "create")
+  assert.equal(parsed.objective, objective)
+  assert.deepEqual(parsed.acceptance, [])
+  assert.deepEqual(parsed.constraints, [])
+  assert.deepEqual(parsed.checks, [])
+  assert.deepEqual(parsed.files, [])
+  assert.equal(parsed.maxTurns, undefined)
+})
+
+test("multiline edit and add preserve pasted body text without option parsing", () => {
+  const edited = parseGoalCommand("edit Replace the workflow text exactly.\nExample: runner --accept literal --wat literal")
+  assert.equal(edited.action, "edit")
+  assert.equal(edited.objective, "Replace the workflow text exactly.\nExample: runner --accept literal --wat literal")
+  assert.deepEqual(edited.acceptance, [])
+
+  const added = parseGoalCommand("add Ship the follow-up.\nKeep CLI sample: tool --max-turns 1 --dry-run")
+  assert.equal(added.action, "add")
+  assert.equal(added.objective, "Ship the follow-up.\nKeep CLI sample: tool --max-turns 1 --dry-run")
+  assert.equal(added.maxTurns, undefined)
+})
+
+test("trailing newline alone does not turn a normal control command into pasted work", () => {
+  assert.equal(parseGoalCommand("status\n").action, "status")
+  assert.equal(parseGoalCommand("pause\r\n").action, "pause")
+})
+
 test("goal contract is a read-only no-argument command", () => {
   assert.deepEqual(parseGoalCommand("contract"), {
     action: "contract",
@@ -90,7 +127,7 @@ test("budget command rejects contract mutation flags", () => {
   assert.throws(() => parseGoalCommand('budget --success "tests pass"'), /accepts only/)
 })
 
-test("unknown flags fail closed", () => {
+test("unknown flags fail closed on the single-line command surface", () => {
   assert.throws(() => parseGoalCommand("ship --wat nope"), /unknown goal option/)
 })
 

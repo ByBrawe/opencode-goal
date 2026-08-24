@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto"
 import { promises as fs } from "node:fs"
 import path from "node:path"
 import type { EvidenceRecord, GoalRequirement, GoalState } from "../domain/types.js"
+import { retainEvidenceRecords } from "./retention.js"
 
 function assertInside(root: string, candidate: string): string {
   const base = path.resolve(root)
@@ -12,9 +13,10 @@ function assertInside(root: string, candidate: string): string {
 }
 
 function addEvidence(goal: GoalState, evidence: EvidenceRecord): GoalState {
+  const nextEvidence = retainEvidenceRecords(goal, [...goal.evidence, evidence])
   return {
     ...goal,
-    evidence: [...goal.evidence, evidence].slice(-500),
+    evidence: nextEvidence,
     progressRevision: evidence.trust === "agent" ? goal.progressRevision : goal.progressRevision + 1,
     updatedAt: evidence.createdAt,
   }
@@ -120,8 +122,14 @@ export function proveRequirementsFromEvidence(goal: GoalState, evidenceID: strin
       (item.verification === "file" && evidence.kind === "file" && evidence.source === item.file)
     if (!contractMatches) throw new Error(`evidence does not satisfy verification contract for requirement: ${item.text}`)
     changed = true
-    return { ...item, status: "proven" as const, evidenceIDs: [...new Set([...item.evidenceIDs, evidence.id])], updatedAt: now }
+    return { ...item, status: "proven" as const, evidenceIDs: [evidence.id], updatedAt: now }
   })
   if (!changed) throw new Error("evidence does not reference a current requirement")
-  return { ...goal, requirements, progressRevision: goal.progressRevision + 1, updatedAt: now }
+  const next: GoalState = {
+    ...goal,
+    requirements,
+    progressRevision: goal.progressRevision + 1,
+    updatedAt: now,
+  }
+  return { ...next, evidence: retainEvidenceRecords(next, next.evidence) }
 }

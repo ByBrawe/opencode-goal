@@ -123,7 +123,7 @@ test("paused Goal create-conflict and pause output explain both explicit and nat
   }
 })
 
-test("ordinary foreground chat keeps an automatically paused Goal paused and warns once", async () => {
+test("ordinary foreground chat re-enters an automatically paused Goal while Goal commands remain read-only", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-paused-chat-ux-"))
   try {
     const fake = fakeClient()
@@ -132,31 +132,30 @@ test("ordinary foreground chat keeps an automatically paused Goal paused and war
     const reason = "Paused after 3 continuation turns without host-observed progress."
 
     await command(hooks, "keep researching until the canonical dataset is complete")
-    const active = await store.load("session-ux")
-    assert.ok(active)
-    await store.save(pauseGoal(active, reason))
+    let goal = await store.load("session-ux")
+    assert.ok(goal)
+    await store.save(pauseGoal(goal, reason))
     fake.toasts.length = 0
 
-    await foregroundChat(hooks, "what happened here?", "human-1")
+    const question = await foregroundChat(hooks, "what happened here?", "human-1")
     let persisted = await readOnlyGoal(root)
-    assert.equal(persisted.status, "paused")
-    assert.equal(persisted.stopReason, reason)
+    assert.equal(persisted.status, "active")
+    assert.equal(persisted.stalledTurns, 0)
+    assert.equal(question.parts[0].text, "what happened here?", "foreground text must stay intact for the model")
+    assert.ok(fake.toasts.some((item) => item?.body?.variant === "success" && /foreground message/.test(item?.body?.message ?? "")))
+    assert.equal(pausedChatGuidance(fake).length, 0)
 
-    let warnings = pausedChatGuidance(fake)
-    assert.equal(warnings.length, 1)
-    assert.match(warnings[0].body.message, /devam et/)
-
-    await foregroundChat(hooks, "show me the status first", "human-2")
-    warnings = pausedChatGuidance(fake)
-    assert.equal(warnings.length, 1, "the same paused snapshot should not spam repeated foreground-chat warnings")
+    goal = await store.load("session-ux")
+    assert.ok(goal)
+    await store.save(pauseGoal(goal, reason))
+    fake.toasts.length = 0
 
     const status = await command(hooks, "status")
     await bindCommandChat(hooks, status, "status-owned")
-    warnings = pausedChatGuidance(fake)
-    assert.equal(warnings.length, 1, "read-only Goal commands must not be mistaken for foreground chat")
-
     persisted = await readOnlyGoal(root)
     assert.equal(persisted.status, "paused")
+    assert.equal(persisted.stopReason, reason)
+    assert.equal(pausedChatGuidance(fake).length, 0, "read-only Goal commands must not be mistaken for foreground re-entry")
   } finally {
     await rm(root, { recursive: true, force: true })
   }

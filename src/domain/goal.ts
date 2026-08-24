@@ -5,7 +5,7 @@ const DEFAULT_BUDGET: GoalBudget = {
   maxTurns: 0,
   maxTokens: 0,
   maxCost: 0,
-  maxRuntimeMs: 60 * 60_000,
+  maxRuntimeMs: 0,
 }
 
 function requirement(input: {

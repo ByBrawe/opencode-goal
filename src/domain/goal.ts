@@ -27,7 +27,7 @@ function requirement(input: {
     source: input.source,
     ...(input.command ? { command: input.command } : {}),
     ...(input.file ? { file: input.file } : {}),
-    ...(input.contains ? { contains } : {}),
+    ...(input.contains ? { contains: input.contains } : {}),
     updatedAt: now,
   }
 }

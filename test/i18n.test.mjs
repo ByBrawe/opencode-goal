@@ -30,7 +30,7 @@ test("locale resolution accepts common OS locale forms and falls back safely", (
   assert.equal(resolveGoalLocale("xx_YY"), "en")
 })
 
-test("short explicit resume intent is recognized across supported languages", () => {
+test("short explicit resume intent helper remains available across supported languages", () => {
   for (const text of [
     "devam et",
     "Weiter!",
@@ -141,7 +141,7 @@ test("localized command text stays visible while inner ownership remains intact"
   }
 })
 
-test("a paused Goal resumes from a supported language different from the UI locale", async () => {
+test("a paused Goal keeps another language intact until the model chooses the resume tool", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-i18n-resume-"))
   const previous = process.env.OPENCODE_GOAL_LANG
   process.env.OPENCODE_GOAL_LANG = "tr"
@@ -155,9 +155,18 @@ test("a paused Goal resumes from a supported language different from the UI loca
     await store.save(pauseGoal(active, "test pause"))
 
     const german = await foregroundChat(hooks, "Weiter!", "resume-de")
-    const resumed = await store.load("i18n-session")
-    assert.equal(resumed?.status, "active")
-    assert.match(german.parts[0].text, /Continue working toward the active OpenCode goal/)
+    let persisted = await store.load("i18n-session")
+    assert.equal(persisted?.status, "paused")
+    assert.equal(german.parts[0].text, "Weiter!", "i18n must not normalize natural-language intent before the model")
+
+    const result = await hooks.tool.opencode_goal_resume.execute({}, {
+      sessionID: "i18n-session",
+      messageID: "assistant-de",
+      agent: "build",
+    })
+    assert.match(String(result), /Goal resumed/)
+    persisted = await store.load("i18n-session")
+    assert.equal(persisted?.status, "active")
   } finally {
     if (previous === undefined) delete process.env.OPENCODE_GOAL_LANG
     else process.env.OPENCODE_GOAL_LANG = previous

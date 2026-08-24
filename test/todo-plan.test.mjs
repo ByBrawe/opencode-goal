@@ -43,9 +43,9 @@ test("native Todo telemetry is advisory, deterministic, and revision-bound", () 
 
   const edited = editGoal(observed, { objective: "analyze the project and finish required gaps without API changes", now: 300 })
   assert.equal(edited.revision, 2)
-  assert.equal(edited.todoPlan, undefined, "a revised Goal contract requires a fresh native Todo observation")
+  assert.equal(edited.todoPlan?.goalRevision, 1, "the previous plan stays visible only as stale telemetry")
   assert.equal(todoPlanIsCurrent(edited), false)
-  assert.equal(formatTodoPlan(edited), "not observed")
+  assert.match(formatTodoPlan(edited), /STALE r1/)
 })
 
 test("current unfinished Todo plan vetoes completion without becoming evidence", () => {
@@ -73,7 +73,7 @@ test("current unfinished Todo plan vetoes completion without becoming evidence",
   const edited = editGoal(open, { objective: "finish the required work without changing the public API", now: 300 })
   const staleAudit = auditCompletion(edited)
   assert.equal(todoPlanIsCurrent(edited), false)
-  assert.equal(staleAudit.reasons.some((reason) => reason.includes("current native Todo plan still has unfinished work")), false, "previous-revision Todo telemetry must not veto a newer Goal revision")
+  assert.equal(staleAudit.reasons.some((reason) => reason.includes("current native Todo plan still has unfinished work")), false, "stale advisory Todo telemetry must not veto a newer Goal revision")
 })
 
 test("malformed native Todo input and malformed advisory telemetry are ignored safely", () => {

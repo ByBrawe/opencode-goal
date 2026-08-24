@@ -236,7 +236,7 @@ export function installGoalLifecycleUX(input: PluginInput, hooks: PluginHooks): 
     await showGoalToast(
       input.client,
       isAutoStallPause(goal)
-        ? "Goal auto-paused after repeated no-progress turns. Send a concrete work instruction to resume and steer it, or use /goal resume."
+        ? "Goal remains paused. It auto-paused after repeated no-progress turns; send a concrete work instruction to resume and steer it, or use /goal resume."
         : "Goal remains paused. Use /goal resume or send a short continuation message such as 'devam et' to continue the persisted Goal.",
       "warning",
     )

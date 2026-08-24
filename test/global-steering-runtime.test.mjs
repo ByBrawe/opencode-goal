@@ -11,15 +11,27 @@ import { closeObservedTurn } from "../dist/runtime/progress.js"
 const AUTO_STALL_REASON = "Paused after 3 continuation turns without host-observed progress."
 
 function fakeClient() {
+  const prompts = []
   return {
-    session: {
-      prompt() { return Promise.resolve({}) },
-      abort() { return Promise.resolve(true) },
+    client: {
+      session: {
+        prompt(arg) {
+          prompts.push(arg)
+          return Promise.resolve({})
+        },
+        abort() { return Promise.resolve(true) },
+      },
+      tui: {
+        showToast() { return Promise.resolve({}) },
+      },
     },
-    tui: {
-      showToast() { return Promise.resolve({}) },
-    },
+    prompts,
   }
+}
+
+async function tick() {
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  await new Promise((resolve) => setTimeout(resolve, 0))
 }
 
 async function readOnlyGoal(root) {
@@ -41,7 +53,7 @@ async function foregroundChat(hooks, text, messageID, sessionID = "global-steeri
   return output
 }
 
-test("auto-stall re-entry is language agnostic and preserves original foreground text", async () => {
+test("paused foreground messages remain unchanged and are not classified by lifecycle language rules", async () => {
   const messages = [
     "şunu çöz ve testleri bitir",
     "¿puedes corregir esto y terminar las pruebas?",
@@ -55,7 +67,8 @@ test("auto-stall re-entry is language agnostic and preserves original foreground
   for (const [index, text] of messages.entries()) {
     const root = await mkdtemp(path.join(os.tmpdir(), `opencode-goal-global-steering-${index}-`))
     try {
-      const hooks = await OpenCodeGoalPlugin({ client: fakeClient(), directory: root })
+      const fake = fakeClient()
+      const hooks = await OpenCodeGoalPlugin({ client: fake.client, directory: root })
       const store = new GoalStore(root)
       await createGoalCommand(hooks, "finish the repository work")
       const active = await store.load("global-steering")
@@ -64,8 +77,7 @@ test("auto-stall re-entry is language agnostic and preserves original foreground
 
       const output = await foregroundChat(hooks, text, `human-${index}`)
       const persisted = await readOnlyGoal(root)
-      assert.equal(persisted.status, "active", `foreground message ${index + 1} should re-enter the auto-stalled Goal`)
-      assert.equal(persisted.stalledTurns, 0)
+      assert.equal(persisted.status, "paused", `foreground message ${index + 1} must not directly mutate paused Goal state`)
       assert.equal(output.parts[0].text, text, "the model must receive the user's original language and wording unchanged")
     } finally {
       await rm(root, { recursive: true, force: true })
@@ -73,10 +85,105 @@ test("auto-stall re-entry is language agnostic and preserves original foreground
   }
 })
 
+test("paused Goal context tells the model to decide semantically whether to use the resume tool", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-model-resume-context-"))
+  try {
+    const fake = fakeClient()
+    const hooks = await OpenCodeGoalPlugin({ client: fake.client, directory: root })
+    const store = new GoalStore(root)
+    await createGoalCommand(hooks, "finish the repository work")
+    const active = await store.load("global-steering")
+    assert.ok(active)
+    await store.save(pauseGoal(active, AUTO_STALL_REASON))
+
+    const output = { system: ["base system"] }
+    await hooks["experimental.chat.system.transform"]({ sessionID: "global-steering", model: {} }, output)
+    assert.match(output.system[0], /persisted Goal is currently paused/)
+    assert.match(output.system[0], /opencode_goal_resume/)
+    assert.match(output.system[0], /whatever language/)
+    assert.match(output.system[0], /status\/explanation/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("model-selected resume tool activates the Goal and idle dispatch restores owned continuation", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-model-resume-tool-"))
+  try {
+    const fake = fakeClient()
+    const hooks = await OpenCodeGoalPlugin({ client: fake.client, directory: root })
+    const store = new GoalStore(root)
+    await createGoalCommand(hooks, "finish the repository work")
+    const active = await store.load("global-steering")
+    assert.ok(active)
+    await store.save(pauseGoal(active, AUTO_STALL_REASON))
+
+    const original = await foregroundChat(hooks, "继续，把测试做完", "human-zh")
+    assert.equal(original.parts[0].text, "继续，把测试做完")
+    let persisted = await readOnlyGoal(root)
+    assert.equal(persisted.status, "paused", "model must choose the control tool; chat ingress alone cannot resume")
+
+    const result = await hooks.tool.opencode_goal_resume.execute({}, {
+      sessionID: "global-steering",
+      messageID: "assistant-routing",
+      agent: "build",
+    })
+    assert.match(String(result), /Goal resumed from the user's natural-language intent/)
+    assert.match(String(result), /session idle/)
+
+    persisted = await readOnlyGoal(root)
+    assert.equal(persisted.status, "active")
+    assert.equal(persisted.stalledTurns, 0)
+    assert.equal(persisted.skipNextStallCheck, true)
+
+    await hooks.event({ event: { type: "session.idle", properties: { sessionID: "global-steering" } } })
+    await tick()
+    persisted = await readOnlyGoal(root)
+    assert.equal(persisted.status, "active")
+    assert.equal(persisted.skipNextStallCheck, undefined)
+    assert.equal(fake.prompts.length, 1, "idle must dispatch the normal Goal-owned continuation after model-selected resume")
+    assert.match(fake.prompts[0].body.parts[0].text, /Continue working toward the active OpenCode goal/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("resume tool refuses non-paused Goal states instead of overriding hard controls", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-model-resume-guard-"))
+  try {
+    const fake = fakeClient()
+    const hooks = await OpenCodeGoalPlugin({ client: fake.client, directory: root })
+    await createGoalCommand(hooks, "finish the repository work")
+
+    const activeResult = await hooks.tool.opencode_goal_resume.execute({}, {
+      sessionID: "global-steering",
+      messageID: "assistant-active",
+      agent: "build",
+    })
+    assert.match(String(activeResult), /already active/)
+
+    const store = new GoalStore(root)
+    const active = await store.load("global-steering")
+    assert.ok(active)
+    await store.save({ ...active, status: "usage_limited", stopReason: "provider limit" })
+    const limitedResult = await hooks.tool.opencode_goal_resume.execute({}, {
+      sessionID: "global-steering",
+      messageID: "assistant-limited",
+      agent: "build",
+    })
+    assert.match(String(limitedResult), /status is usage_limited/)
+    const persisted = await readOnlyGoal(root)
+    assert.equal(persisted.status, "usage_limited")
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test("foreign slash-command traffic cannot wake an auto-stalled Goal", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-global-foreign-command-"))
   try {
-    const hooks = await OpenCodeGoalPlugin({ client: fakeClient(), directory: root })
+    const fake = fakeClient()
+    const hooks = await OpenCodeGoalPlugin({ client: fake.client, directory: root })
     const store = new GoalStore(root)
     await createGoalCommand(hooks, "finish the repository work")
     const active = await store.load("global-steering")

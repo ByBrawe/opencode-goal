@@ -39,6 +39,20 @@ function isNaturalResumeMessage(text: string): boolean {
   ]).has(normalized)
 }
 
+function isAutoStallPause(goal: GoalState): boolean {
+  return goal.status === "paused"
+    && /^Paused after \d+ continuation turns without host-observed progress\.$/.test(goal.stopReason ?? "")
+}
+
+function isActionablePausedSteering(text: string): boolean {
+  const normalized = normalizedContinuationIntent(text)
+  if (!normalized || normalized.startsWith("/")) return false
+  if (/[?？]$/.test(text.trim())) return false
+  if (/^(ne|neden|niye|nasıl|nasil|what|why|how|when|where|who)\b/.test(normalized)) return false
+  if (/\b(status|durum|özet|ozet|summary)\b/.test(normalized)) return false
+  return /\b(devam|yap|düzelt|duzelt|ekle|çıkar|cikar|sil|bitir|tamamla|uygula|incele|araştır|arastir|test|denetle|kontrol et|fix|implement|add|remove|delete|finish|complete|apply|review|research|test|check|update|change|refactor|build|create|use|work on)\b/.test(normalized)
+}
+
 function conflictMessage(goal: GoalState): string {
   const resume = goal.status === "paused" ? "\n- /goal resume — resume the current paused Goal." : ""
   return [
@@ -105,10 +119,6 @@ export function installGoalLifecycleUX(input: PluginInput, hooks: PluginHooks): 
     if (parsed.action === "create" && parsed.objective) {
       const goal = await store.load(event.sessionID)
       if (goal && goal.status !== "completed") {
-        // Seed the existing command-ownership chain through a read-only status
-        // command, then translate only the user-visible text. This keeps the
-        // warning from being mistaken for a normal human message that pauses
-        // or mutates the current Goal.
         await commandHook({ ...event, arguments: "status" }, output)
         const owned = textFromParts(output.parts)
         const shown = conflictMessage(goal)
@@ -137,10 +147,6 @@ export function installGoalLifecycleUX(input: PluginInput, hooks: PluginHooks): 
     await commandHook(event, output)
     if (["create", "edit", "resume", "clear"].includes(parsed.action)) pausedChatNotices.delete(event.sessionID)
 
-    // `noReply` is command-hook metadata and is not guaranteed to survive into
-    // the later chat.message payload. Remember the concrete command response so
-    // doctor/status/contract/history and lifecycle command messages are never
-    // misclassified as ordinary foreground steering by this outer UX wrapper.
     const commandOutput = textFromParts(output?.parts ?? [])
     if (commandOutput) commandOutputs.set(event.sessionID, commandOutput)
   }
@@ -167,7 +173,7 @@ export function installGoalLifecycleUX(input: PluginInput, hooks: PluginHooks): 
     }
 
     const synthetic = (output as any)?.noReply === true || isSyntheticHostMessage(output?.parts ?? [])
-    if (!synthetic && isNaturalResumeMessage(shown)) {
+    if (!synthetic) {
       let paused: GoalState | null
       try {
         paused = await store.load(event.sessionID)
@@ -176,12 +182,7 @@ export function installGoalLifecycleUX(input: PluginInput, hooks: PluginHooks): 
         else throw error
       }
 
-      if (paused?.status === "paused") {
-        // Route natural-language resume through the normal /goal resume command
-        // chain instead of mutating persistence directly. This preserves budget,
-        // ownership, restricted-agent, and other lifecycle guards. The command
-        // output is then rebound to this foreground message so the same turn
-        // becomes an ordinary Goal-owned continuation turn.
+      if (paused?.status === "paused" && isNaturalResumeMessage(shown)) {
         const resumeOutput: any = { parts: [{ type: "text", text: "resume" }] }
         await commandHook({ ...event, command: "goal", arguments: "resume" }, resumeOutput)
         const resumeText = textFromParts(resumeOutput.parts)
@@ -194,23 +195,33 @@ export function installGoalLifecycleUX(input: PluginInput, hooks: PluginHooks): 
         }
         return
       }
+
+      if (paused && isAutoStallPause(paused) && isActionablePausedSteering(shown)) {
+        // An automatic no-progress pause is a safety backstop, not a user intent
+        // boundary. Resume through the normal command chain, consume that
+        // internal command ownership, then preserve the original human message
+        // so core Goal steering owns and executes the actual instruction.
+        const resumeOutput: any = { parts: [{ type: "text", text: "resume" }] }
+        await commandHook({ ...event, command: "goal", arguments: "resume" }, resumeOutput)
+        await chatHook(event, resumeOutput)
+        const resumed = await store.load(event.sessionID)
+        pausedChatNotices.delete(event.sessionID)
+        await chatHook(event, output)
+        if (resumed?.status === "active") {
+          await showGoalToast(input.client, "Auto-paused Goal resumed from your new work instruction.", "success")
+        }
+        return
+      }
     }
 
     await chatHook(event, output)
 
-    // Host-generated synthetic task notifications are not foreground user
-    // steering. `noReply` is kept as a best-effort extra signal, but command
-    // ownership above does not rely on it crossing the host hook boundary.
     if (synthetic) return
 
     let goal: GoalState | null
     try {
       goal = await store.load(event.sessionID)
     } catch (error) {
-      // Paused-chat guidance is advisory. Unsupported/corrupt Goal storage must
-      // remain inspectable through /goal doctor instead of being converted into
-      // a foreground-chat failure by this UX wrapper. Other persistence failures
-      // still surface normally rather than being hidden by notification logic.
       if (error instanceof GoalStoreIntegrityError) return
       throw error
     }
@@ -224,7 +235,9 @@ export function installGoalLifecycleUX(input: PluginInput, hooks: PluginHooks): 
     pausedChatNotices.set(event.sessionID, key)
     await showGoalToast(
       input.client,
-      "Goal remains paused. Use /goal resume or send a short continuation message such as 'devam et' to continue the persisted Goal.",
+      isAutoStallPause(goal)
+        ? "Goal remains paused. It auto-paused after repeated no-progress turns; send a concrete work instruction to resume and steer it, or use /goal resume / 'devam et'."
+        : "Goal remains paused. Use /goal resume or send a short continuation message such as 'devam et' to continue the persisted Goal.",
       "warning",
     )
   }

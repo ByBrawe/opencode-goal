@@ -74,6 +74,13 @@ export function summarizeTodoPlan(goalRevision: number, todos: NativeTodoItem[],
 export function observeTodoPlan(goal: GoalState, todos: NativeTodoItem[], observedAt = Date.now()): GoalState {
   const next = summarizeTodoPlan(goal.revision, todos, observedAt)
   const previous = validGoalTodoPlan(goal.todoPlan) ? goal.todoPlan : undefined
+
+  // After a Goal edit, preserve the old Todo snapshot as visibly stale and do
+  // not let an unchanged native list become current merely because OpenCode
+  // re-emitted it. A genuinely rebuilt/changed plan gets a new digest and can
+  // then bind to the new Goal revision.
+  if (previous && previous.goalRevision !== goal.revision && previous.digest === next.digest) return goal
+
   if (
     previous?.goalRevision === next.goalRevision
     && previous.digest === next.digest

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto"
 import type { FileRequirementInput, GoalBudget, GoalExecutionContext, GoalRequirement, GoalRequirementSource, GoalState, VerificationKind } from "./types.js"
 
 const DEFAULT_BUDGET: GoalBudget = {
-  maxTurns: 30,
+  maxTurns: 0,
   maxTokens: 0,
   maxCost: 0,
   maxRuntimeMs: 60 * 60_000,

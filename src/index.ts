@@ -13,6 +13,7 @@ import { installRestrictedAgentSafety } from "./opencode/agent-boundary.js"
 import { installHostLimitHandling } from "./opencode/host-limits.js"
 import { createGoalInfrastructureTransport, installGoalInfrastructureRecovery } from "./opencode/infrastructure-recovery.js"
 import { preferSynchronousSessionPrompt } from "./opencode/client-compat.js"
+import { installGoalModelResume } from "./opencode/model-resume.js"
 import { installGoalLifecycleUX } from "./opencode/lifecycle-ux.js"
 import { installGoalI18nUX } from "./opencode/i18n-ux.js"
 import { captureStartupGoals, scheduleStartupRecovery } from "./opencode/recovery.js"
@@ -72,9 +73,12 @@ export default async function OpenCodeGoalPlugin(
   // a process/network restart fails transiently, it enters the same persisted
   // backoff path instead of becoming a manual `/goal resume` dead-end.
   scheduleStartupRecovery({ ...input, client: infrastructureTransport.client }, hooks, startupGoals)
-  // Lifecycle UX remains the outer ownership-aware wrapper. Localization is
-  // installed after it and restores command-owned text before chat.message
-  // reaches lifecycle logic, so translated UI never becomes authorization.
+  // Natural-language continuation is an agent decision, not a lifecycle regex.
+  // A paused Goal is exposed to the model with a dedicated resume tool; after
+  // the model chooses it, normal session.idle dispatch restores Goal ownership.
+  installGoalModelResume(input, hooks)
+  // Lifecycle UX now owns only deterministic command/translation boundaries.
+  // Localization is installed last and never rewrites foreground user intent.
   installGoalLifecycleUX(input, hooks)
   installGoalI18nUX(input, hooks)
   return hooks
@@ -105,6 +109,7 @@ export * from "./opencode/todo-orchestration.js"
 export * from "./opencode/compaction-continuation.js"
 export * from "./opencode/infrastructure-recovery.js"
 export * from "./opencode/client-compat.js"
+export * from "./opencode/model-resume.js"
 export * from "./opencode/lifecycle-ux.js"
 export * from "./opencode/i18n-ux.js"
 export * from "./opencode/verifier-defaults.js"

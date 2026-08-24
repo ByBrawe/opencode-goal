@@ -2,6 +2,16 @@
 
 All notable changes to **OpenCode Goals** are documented here.
 
+## 1.3.28 — 2026-08-24
+
+Long-running steering and plan reliability release.
+
+- Resume a Goal that was auto-paused by the host no-progress guard when the user sends a concrete foreground work instruction, routing recovery through the normal guarded `/goal resume` chain and preserving the original instruction as active Goal steering; explicit user `/goal pause` remains authoritative.
+- Scale the no-progress window from 4 to 12 turns while a current native Todo plan still has open work, so large read/recon/verification-heavy plans do not inherit the same three-turn stall window as short unplanned work.
+- Keep prior Todo telemetry visibly stale across `/goal edit` and reject unchanged native Todo digest rebinding to the new Goal revision; a genuinely changed/rebuilt plan may bind current.
+- Make cumulative Goal turn caps opt-in for newly created Goals (`maxTurns: 0`), while explicit `--max-turns` / `/goal budget --max-turns` limits and persisted finite legacy budgets remain hard guards.
+- Add regressions for auto-stalled steering, explicit pause safety, 100-item Todo plans, Todo revision rebinding, unlimited default turn budgets, and explicit finite caps; validate real lifecycle, steering, compaction, semantic completion, progress, restart recovery, Loop 0.5.35 coexistence, compatibility, eval, and package-smoke gates across Ubuntu/Windows.
+
 ## 1.3.27 — 2026-08-23
 
 Cross-plugin command-ownership reliability release.

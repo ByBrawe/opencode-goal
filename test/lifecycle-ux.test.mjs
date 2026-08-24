@@ -149,7 +149,7 @@ test("ordinary foreground chat does not directly reactivate an automatically pau
   }
 })
 
-test("natural-language continuation is model-controlled and resumes through the dedicated tool", async () => {
+test("natural-language continuation is model-controlled and activates at the idle ownership boundary", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-natural-resume-"))
   try {
     const fake = fakeClient()
@@ -172,17 +172,17 @@ test("natural-language continuation is model-controlled and resumes through the 
       messageID: "assistant-routing",
       agent: "build",
     })
-    assert.match(String(result), /Goal resumed from the user's natural-language intent/)
+    assert.match(String(result), /Goal resume accepted from the user's natural-language intent/)
 
     persisted = await readOnlyGoal(root)
-    assert.equal(persisted.status, "active")
-    assert.equal(persisted.stalledTurns, 0)
-    assert.equal(persisted.skipNextStallCheck, true)
+    assert.equal(persisted.status, "paused", "tool routing turn must remain outside Goal ownership")
+    assert.equal(persisted.skipNextStallCheck, undefined)
 
     await hooks.event({ event: { type: "session.idle", properties: { sessionID: "session-ux" } } })
     await tick()
     persisted = await readOnlyGoal(root)
     assert.equal(persisted.status, "active")
+    assert.equal(persisted.stalledTurns, 0)
     assert.equal(persisted.skipNextStallCheck, undefined)
     assert.equal(fake.prompts.length, 1)
     assert.match(fake.prompts[0].body.parts[0].text, /Continue working toward the active OpenCode goal/)

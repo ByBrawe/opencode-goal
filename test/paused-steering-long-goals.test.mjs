@@ -5,6 +5,7 @@ import os from "node:os"
 import path from "node:path"
 import OpenCodeGoalPlugin, { createGoal, editGoal, pauseGoal } from "../dist/index.js"
 import { GoalStore } from "../dist/persistence/store.js"
+import { accountAssistantUsage } from "../dist/runtime/accounting.js"
 import { closeObservedTurn } from "../dist/runtime/progress.js"
 import { observeTodoPlan, todoPlanIsCurrent } from "../dist/runtime/todo-plan.js"
 
@@ -101,6 +102,25 @@ test("open long Todo plans receive a bounded adaptive no-progress window", () =>
   goal = closeObservedTurn(goal)
   assert.equal(goal.status, "paused")
   assert.equal(goal.stalledTurns, 12)
+})
+
+test("new Goals have no implicit cumulative turn cap while explicit caps remain hard guards", () => {
+  let unlimited = createGoal({ sessionID: "turn-budget-default", objective: "finish a long plan" })
+  assert.equal(unlimited.budget.maxTurns, 0)
+  for (let turn = 1; turn <= 40; turn += 1) {
+    unlimited = accountAssistantUsage(unlimited, { messageID: `m-${turn}` })
+    unlimited = closeObservedTurn(unlimited, { maxStalledTurns: 100 })
+  }
+  assert.equal(unlimited.status, "active")
+  assert.equal(unlimited.usage.turns, 40)
+
+  let bounded = createGoal({ sessionID: "turn-budget-explicit", objective: "bounded work", budget: { maxTurns: 2 } })
+  bounded = accountAssistantUsage(bounded, { messageID: "b-1" })
+  bounded = closeObservedTurn(bounded, { maxStalledTurns: 100 })
+  bounded = accountAssistantUsage(bounded, { messageID: "b-2" })
+  bounded = closeObservedTurn(bounded, { maxStalledTurns: 100 })
+  assert.equal(bounded.status, "budget_limited")
+  assert.match(bounded.stopReason ?? "", /turns 2 \/ 2/)
 })
 
 test("Goal edit keeps stale Todo telemetry and rejects unchanged re-observation", () => {

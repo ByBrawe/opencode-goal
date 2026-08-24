@@ -44,15 +44,6 @@ function isAutoStallPause(goal: GoalState): boolean {
     && /^Paused after \d+ continuation turns without host-observed progress\.$/.test(goal.stopReason ?? "")
 }
 
-function isActionablePausedSteering(text: string): boolean {
-  const normalized = normalizedContinuationIntent(text)
-  if (!normalized || normalized.startsWith("/")) return false
-  if (/[?？]$/.test(text.trim())) return false
-  if (/^(ne|neden|niye|nasıl|nasil|what|why|how|when|where|who)\b/.test(normalized)) return false
-  if (/\b(status|durum|özet|ozet|summary)\b/.test(normalized)) return false
-  return /\b(devam|yap|düzelt|duzelt|ekle|çıkar|cikar|sil|bitir|tamamla|uygula|incele|araştır|arastir|test|denetle|kontrol et|fix|implement|add|remove|delete|finish|complete|apply|review|research|test|check|update|change|refactor|build|create|use|work on)\b/.test(normalized)
-}
-
 function conflictMessage(goal: GoalState): string {
   const resume = goal.status === "paused" ? "\n- /goal resume — resume the current paused Goal." : ""
   return [
@@ -100,11 +91,22 @@ export function installGoalLifecycleUX(input: PluginInput, hooks: PluginHooks): 
 
   const translations = new Map<string, PromptTranslation>()
   const commandOutputs = new Map<string, string>()
+  const foreignCommandOutputs = new Map<string, Set<string>>()
   const pausedChatNotices = new Map<string, string>()
 
   hooks["command.execute.before"] = async (event: any, output: any) => {
     if (event.command !== "goal") {
       await commandHook(event, output)
+      const commandOutput = textFromParts(output?.parts ?? [])
+      if (commandOutput && typeof event.sessionID === "string") {
+        const owned = foreignCommandOutputs.get(event.sessionID) ?? new Set<string>()
+        owned.add(commandOutput)
+        if (owned.size > 32) {
+          const first = owned.values().next().value
+          if (typeof first === "string") owned.delete(first)
+        }
+        foreignCommandOutputs.set(event.sessionID, owned)
+      }
       return
     }
 
@@ -163,6 +165,13 @@ export function installGoalLifecycleUX(input: PluginInput, hooks: PluginHooks): 
       return
     }
 
+    const foreignOutputs = foreignCommandOutputs.get(event.sessionID)
+    if (foreignOutputs?.delete(shown)) {
+      if (foreignOutputs.size === 0) foreignCommandOutputs.delete(event.sessionID)
+      await chatHook(event, output)
+      return
+    }
+
     const commandOutput = commandOutputs.get(event.sessionID)
     if (commandOutput) {
       commandOutputs.delete(event.sessionID)
@@ -196,11 +205,12 @@ export function installGoalLifecycleUX(input: PluginInput, hooks: PluginHooks): 
         return
       }
 
-      if (paused && isAutoStallPause(paused) && isActionablePausedSteering(shown)) {
-        // An automatic no-progress pause is a safety backstop, not a user intent
-        // boundary. Resume through the normal command chain, consume that
-        // internal command ownership, then preserve the original human message
-        // so core Goal steering owns and executes the actual instruction.
+      if (paused && isAutoStallPause(paused) && shown.trim()) {
+        // A host-generated no-progress pause is a scheduler safety backstop, not
+        // a language or intent boundary. Any real foreground user message
+        // re-enters the persisted Goal through the normal guarded resume chain;
+        // the model can then understand the message in its original language.
+        // Command-owned and synthetic traffic is filtered before this branch.
         const resumeOutput: any = { parts: [{ type: "text", text: "resume" }] }
         await commandHook({ ...event, command: "goal", arguments: "resume" }, resumeOutput)
         await chatHook(event, resumeOutput)
@@ -208,7 +218,7 @@ export function installGoalLifecycleUX(input: PluginInput, hooks: PluginHooks): 
         pausedChatNotices.delete(event.sessionID)
         await chatHook(event, output)
         if (resumed?.status === "active") {
-          await showGoalToast(input.client, "Auto-paused Goal resumed from your new work instruction.", "success")
+          await showGoalToast(input.client, "Auto-paused Goal resumed from your foreground message.", "success")
         }
         return
       }
@@ -236,7 +246,7 @@ export function installGoalLifecycleUX(input: PluginInput, hooks: PluginHooks): 
     await showGoalToast(
       input.client,
       isAutoStallPause(goal)
-        ? "Goal remains paused. It auto-paused after repeated no-progress turns; send a concrete work instruction to resume and steer it, or use /goal resume / 'devam et'."
+        ? "Goal remains paused. It auto-paused after repeated no-progress turns; send any normal foreground message to re-enter it, or use /goal resume / 'devam et'."
         : "Goal remains paused. Use /goal resume or send a short continuation message such as 'devam et' to continue the persisted Goal.",
       "warning",
     )

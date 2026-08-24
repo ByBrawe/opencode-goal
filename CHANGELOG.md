@@ -409,3 +409,17 @@ First stable release.
 
 - `/goal`, `/goal status`, `/goal contract`, `/goal doctor`, lifecycle controls, history, restore, and budget commands.
 - Server/session-layer authoritative state usable across normal OpenCode CLI/TUI/web session surfaces.
+- Best-effort TUI lifecycle/delegation feedback that never participates in correctness.
+- Windows and Ubuntu real-host/restart canaries plus minimum/latest OpenCode plugin compatibility checks.
+
+### Release and supply-chain policy
+
+- npm package: `@bybrawe/opencode-goal`.
+- Stable channel publishes to npm `latest` through GitHub Actions trusted publishing/OIDC.
+- The publish workflow has `contents: read` and narrowly scoped `id-token: write`; checkout credentials are not persisted.
+- Repository workflows do not automatically push commits or merge pull requests.
+- Post-1.0 breaking public-interface changes require a new major version.
+
+## 0.1.0-beta.1 / 0.1.0-beta.2
+
+Public prerelease line used to harden verification, persistence, restart recovery, storage integrity/concurrency, Goal Contracts, Plan safety, delegated-task coordination, and release gates before 1.0.0.

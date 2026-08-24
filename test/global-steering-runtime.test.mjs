@@ -107,7 +107,7 @@ test("paused Goal context tells the model to decide semantically whether to use 
   }
 })
 
-test("model-selected resume tool activates the Goal and idle dispatch restores owned continuation", async () => {
+test("model-selected resume tool waits for idle before activating and dispatching owned continuation", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-model-resume-tool-"))
   try {
     const fake = fakeClient()
@@ -128,20 +128,20 @@ test("model-selected resume tool activates the Goal and idle dispatch restores o
       messageID: "assistant-routing",
       agent: "build",
     })
-    assert.match(String(result), /Goal resumed from the user's natural-language intent/)
+    assert.match(String(result), /Goal resume accepted from the user's natural-language intent/)
     assert.match(String(result), /session idle/)
 
     persisted = await readOnlyGoal(root)
-    assert.equal(persisted.status, "active")
-    assert.equal(persisted.stalledTurns, 0)
-    assert.equal(persisted.skipNextStallCheck, true)
+    assert.equal(persisted.status, "paused", "routing turn must not activate Goal before idle ownership boundary")
+    assert.equal(persisted.skipNextStallCheck, undefined)
 
     await hooks.event({ event: { type: "session.idle", properties: { sessionID: "global-steering" } } })
     await tick()
     persisted = await readOnlyGoal(root)
     assert.equal(persisted.status, "active")
+    assert.equal(persisted.stalledTurns, 0)
     assert.equal(persisted.skipNextStallCheck, undefined)
-    assert.equal(fake.prompts.length, 1, "idle must dispatch the normal Goal-owned continuation after model-selected resume")
+    assert.equal(fake.prompts.length, 1, "idle must activate and dispatch the normal Goal-owned continuation after model-selected resume")
     assert.match(fake.prompts[0].body.parts[0].text, /Continue working toward the active OpenCode goal/)
   } finally {
     await rm(root, { recursive: true, force: true })

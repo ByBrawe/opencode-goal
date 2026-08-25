@@ -2,6 +2,13 @@ import type { GoalRequirement, GoalState } from "../domain/types.js"
 import { formatModelContext } from "../runtime/model-context.js"
 import { formatTodoPlan, todoPlanIsCurrent } from "../runtime/todo-plan.js"
 
+const CONTINUATION_OBJECTIVE_PREVIEW_CHARS = 1_200
+
+function compactText(value: string, max = CONTINUATION_OBJECTIVE_PREVIEW_CHARS): string {
+  const text = value.replace(/\s+/g, " ").trim()
+  return text.length <= max ? text : `${text.slice(0, max - 1)}…`
+}
+
 function constraintBlock(goal: GoalState): string {
   const constraints = goal.constraints ?? []
   if (!constraints.length) return "- none declared"
@@ -47,10 +54,12 @@ function fullContinuationPrompt(goal: GoalState): string {
 /**
  * Repeated autonomous turns must not append the complete user Goal contract to
  * history again and again. The full contract is seeded on the first turn of a
- * Goal revision and is re-seeded by compactionContext during compaction.
+ * Goal revision and is re-seeded into compaction context when OpenCode compacts.
+ * Keep a bounded objective preview so short Goals remain fully explicit and a
+ * post-compaction continuation still has a direct, Goal-owned semantic anchor.
  */
 export function continuationReminder(goal: GoalState): string {
-  return `Continue working toward the persisted OpenCode Goal ${goal.id ?? "(current)"} revision ${goal.revision}.\n\nThe full user-authored objective, constraints, and requirement text were already supplied for this Goal revision and remain the success boundary. Preserve the full objective across turns; do not redefine, narrow, or expand it.\nRequirement state: ${compactRequirementSummary(goal)}.\n${todoPlanBlock(goal)}\nLatest host-observed checkpoint: ${latestProgress(goal)}.\n\nGoal rules:\n- Do not expand the user's authorized scope from assistant recommendations, TODOs, or suggested follow-up work.\n- Work from current repository/external state. Normal shell, read, edit, write, task, and test activity changes the work state; it does not replace or silently rewrite this Goal contract.\n- Keep native Todos aligned with required work, but Todo completion itself proves nothing. If the plan is stale, rebuild it before relying on it.\n- Match verification scope to claim scope. A narrow unit test, search result, manifest entry, or green command proves only what it actually covers.\n- Before completion, perform a requirement-by-requirement audit against current state and positively prove every required item, with no required work remaining.\n- User messages override autonomous continuation.\n\nGoal cumulative budget used: turns=${goal.usage.turns}/${goal.budget.maxTurns || "unbounded"}, revision-turns=${revisionCompletedTurns(goal)}, tokens=${goal.usage.tokens}/${goal.budget.maxTokens || "unbounded"}, cost=${goal.usage.cost.toFixed(4)}/${goal.budget.maxCost || "unbounded"}.\nUse opencode_goal_progress for a checkpoint, opencode_goal_evidence_file for host-checked file evidence, opencode_goal_complete only when the full Goal is proven complete, or opencode_goal_blocked only for a genuine repeated blocker.`
+  return `Continue working toward the active OpenCode goal.\nPersisted Goal ${goal.id ?? "(current)"} revision ${goal.revision}.\nObjective reminder: ${compactText(goal.objective)}\n\nThe full user-authored objective, constraints, and requirement text were already supplied for this Goal revision and remain the success boundary. Preserve the full objective across turns; do not redefine, narrow, or expand it.\nRequirement state: ${compactRequirementSummary(goal)}.\n${todoPlanBlock(goal)}\nLatest host-observed checkpoint: ${latestProgress(goal)}.\n\nGoal rules:\n- Do not expand the user's authorized scope from assistant recommendations, TODOs, or suggested follow-up work.\n- Work from current repository/external state. Normal shell, read, edit, write, task, and test activity changes the work state; it does not replace or silently rewrite this Goal contract.\n- Keep native Todos aligned with required work, but Todo completion itself proves nothing. If the plan is stale, rebuild it before relying on it.\n- Match verification scope to claim scope. A narrow unit test, search result, manifest entry, or green command proves only what it actually covers.\n- Before completion, perform a requirement-by-requirement audit against current state and positively prove every required item, with no required work remaining.\n- User messages override autonomous continuation.\n\nGoal cumulative budget used: turns=${goal.usage.turns}/${goal.budget.maxTurns || "unbounded"}, revision-turns=${revisionCompletedTurns(goal)}, tokens=${goal.usage.tokens}/${goal.budget.maxTokens || "unbounded"}, cost=${goal.usage.cost.toFixed(4)}/${goal.budget.maxCost || "unbounded"}.\nUse opencode_goal_progress for a checkpoint, opencode_goal_evidence_file for host-checked file evidence, opencode_goal_complete only when the full Goal is proven complete, or opencode_goal_blocked only for a genuine repeated blocker.`
 }
 
 export function continuationPrompt(goal: GoalState): string {
@@ -58,7 +67,7 @@ export function continuationPrompt(goal: GoalState): string {
 }
 
 export function compactionContext(goal: GoalState): string {
-  const requirements = goal.requirements.map((item, index) => {
+  const requirements = goal.requirements.map((item) => {
     if (item.source === "objective") return `- [${item.status}] Full objective above.`
     return `- [${item.status}] ${item.text}`
   }).join("\n")

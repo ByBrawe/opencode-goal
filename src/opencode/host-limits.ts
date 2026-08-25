@@ -146,7 +146,7 @@ export function installHostLimitHandling(input: PluginInput, hooks: PluginHooks)
         const goal = await store.load(sessionID)
         if (goal?.status === "active") {
           const previous = overflowAttempts.get(sessionID)
-          if (sameAttempt(goal, previous) && goal.usage.turns <= previous.baselineTurns) {
+          if (previous && sameAttempt(goal, previous) && goal.usage.turns <= previous.baselineTurns) {
             await store.save(pauseForFatalProviderError(goal, overflowFailureReason(overflowReason)))
             await abortSession(input.client, sessionID)
             await showGoalToast(input.client, "Goal paused after prompt overflow repeated. Run /compact, then /goal resume.", "error")
@@ -162,7 +162,12 @@ export function installHostLimitHandling(input: PluginInput, hooks: PluginHooks)
             await abortSession(input.client, sessionID)
             await showGoalToast(input.client, "Provider prompt limit reached; compacting the OpenCode session once before continuing.", "warning")
             await originalEvent(eventInput)
-            queueMicrotask(() => { void recoverPromptOverflow(sessionID, attempt, overflowReason).catch(() => undefined) })
+            queueMicrotask(() => {
+              void recoverPromptOverflow(sessionID, attempt, overflowReason).catch(async (error) => {
+                recoveringOverflow.delete(sessionID)
+                await pauseOverflow(sessionID, attempt, `${overflowReason} Automatic compaction recovery failed: ${String(error)}`).catch(() => undefined)
+              })
+            })
             return
           }
         }

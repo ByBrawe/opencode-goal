@@ -44,6 +44,10 @@ function parseMultilineWorkCommand(input: string): ParsedGoalCommand | null {
   const trimmed = input.trim()
   if (!/[\r\n]/.test(trimmed)) return null
 
+  if (/^opencode\s+run\b/i.test(trimmed)) {
+    throw new Error("Do not paste an outer 'opencode run ...' command inside /goal. You are already in the OpenCode TUI: remove the opencode run / @' ... '@ wrapper and paste only the Goal text after /goal.")
+  }
+
   const prefixed = /^(edit|add)\b/i.exec(trimmed)
   if (prefixed) {
     const action = prefixed[1]!.toLowerCase() as "edit" | "add"

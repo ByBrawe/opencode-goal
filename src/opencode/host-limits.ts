@@ -102,8 +102,8 @@ export function installHostLimitHandling(input: PluginInput, hooks: PluginHooks)
       if (!sameAttempt(latest, attempt) || latest.status !== "active") return null
       return pauseForFatalProviderError(latest, overflowFailureReason(reason))
     })
-    if (!result?.wrote) return false
     recoveringOverflow.delete(sessionID)
+    if (!result?.wrote) return false
     await abortSession(input.client, sessionID)
     await showGoalToast(input.client, "Goal paused after the provider prompt stayed too large. Run /compact, then /goal resume.", "error")
     return true
@@ -114,7 +114,6 @@ export function installHostLimitHandling(input: PluginInput, hooks: PluginHooks)
     const before = await store.load(sessionID)
     const model = sameAttempt(before, attempt) ? before.execution?.model : undefined
     if (typeof summarize !== "function" || !model) {
-      recoveringOverflow.delete(sessionID)
       await pauseOverflow(sessionID, attempt, `${reason} Automatic compaction is unavailable for the bound OpenCode client/model.`)
       return
     }
@@ -125,16 +124,18 @@ export function installHostLimitHandling(input: PluginInput, hooks: PluginHooks)
         body: { providerID: model.providerID, modelID: model.modelID },
       })
     } catch (error) {
-      recoveringOverflow.delete(sessionID)
       await pauseOverflow(sessionID, attempt, `${reason} Automatic compaction failed: ${String(error)}`)
       return
     }
 
-    recoveringOverflow.delete(sessionID)
+    // Keep the recovery barrier active until the cleared state is durably saved.
+    // A session.idle emitted between summarize() completion and this save must not
+    // be allowed to dispatch the pre-compaction oversized history again.
     const cleared = await mutateFreshGoal(store, sessionID, (latest) => {
       if (!sameAttempt(latest, attempt) || latest.status !== "active") return null
       return clearOverflowRecovery(latest)
     })
+    recoveringOverflow.delete(sessionID)
     if (!cleared?.wrote) return
 
     await showGoalToast(input.client, "Provider prompt limit reached; OpenCode compacted the session and Goal continuation is resuming.", "warning")
@@ -218,12 +219,14 @@ export function installHostLimitHandling(input: PluginInput, hooks: PluginHooks)
             await showGoalToast(input.client, "Provider prompt limit reached; compacting the OpenCode session once before continuing.", "warning")
             await originalEvent(eventInput)
             const attempt = freshAttempt
-            queueMicrotask(() => {
-              void recoverPromptOverflow(sessionID, attempt, overflowReason).catch(async (error) => {
-                recoveringOverflow.delete(sessionID)
-                await pauseOverflow(sessionID, attempt, `${overflowReason} Automatic compaction recovery failed: ${String(error)}`).catch(() => undefined)
-              })
-            })
+            try {
+              // Complete the recovery inside the same session.error hook chain.
+              // Returning while this is only a detached microtask allows outer
+              // wrappers to race a stale Goal snapshot back over the cleared state.
+              await recoverPromptOverflow(sessionID, attempt, overflowReason)
+            } catch (error) {
+              await pauseOverflow(sessionID, attempt, `${overflowReason} Automatic compaction recovery failed: ${String(error)}`).catch(() => undefined)
+            }
             return
           }
         }

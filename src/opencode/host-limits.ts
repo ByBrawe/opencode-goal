@@ -1,6 +1,6 @@
 import type CorePlugin from "./plugin.js"
 import type { GoalState } from "../domain/types.js"
-import { GoalStore } from "../persistence/store.js"
+import { GoalStore, GoalStoreConcurrencyError } from "../persistence/store.js"
 import {
   fatalProviderReason,
   hostUsageLimitReason,
@@ -18,6 +18,11 @@ type PromptOverflowAttempt = {
   goalID: string
   revision: number
   baselineTurns: number
+}
+
+type FreshMutationResult = {
+  goal: GoalState
+  wrote: boolean
 }
 
 function eventSessionID(input: any): string | undefined {
@@ -54,6 +59,37 @@ function clearOverflowRecovery(goal: GoalState, now = Date.now()): GoalState {
   return { ...rest, status: "active", skipNextStallCheck: true, updatedAt: now }
 }
 
+/**
+ * Host events and wrapper coordinators can persist the same Goal in adjacent
+ * microtasks. Re-load and retry stale generation writes instead of allowing a
+ * recovery transition to disappear or surface GoalStoreConcurrencyError.
+ */
+async function mutateFreshGoal(
+  store: GoalStore,
+  sessionID: string,
+  mutate: (goal: GoalState) => GoalState | null,
+  maxAttempts = 6,
+): Promise<FreshMutationResult | null> {
+  let lastStale: GoalStoreConcurrencyError | undefined
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const current = await store.load(sessionID)
+    if (!current) return null
+    const next = mutate(current)
+    if (!next) return { goal: current, wrote: false }
+    try {
+      await store.save(next)
+      return { goal: next, wrote: true }
+    } catch (error) {
+      if (error instanceof GoalStoreConcurrencyError && error.kind === "stale_write") {
+        lastStale = error
+        continue
+      }
+      throw error
+    }
+  }
+  throw lastStale ?? new Error("Goal state kept changing while applying host-limit recovery")
+}
+
 export function installHostLimitHandling(input: PluginInput, hooks: PluginHooks): void {
   if (typeof hooks.event !== "function") return
   const originalEvent = hooks.event
@@ -61,12 +97,16 @@ export function installHostLimitHandling(input: PluginInput, hooks: PluginHooks)
   const recoveringOverflow = new Set<string>()
   const overflowAttempts = new Map<string, PromptOverflowAttempt>()
 
-  async function pauseOverflow(sessionID: string, attempt: PromptOverflowAttempt, reason: string): Promise<void> {
-    const latest = await store.load(sessionID)
-    if (!sameAttempt(latest, attempt) || latest.status !== "active") return
-    await store.save(pauseForFatalProviderError(latest, overflowFailureReason(reason)))
+  async function pauseOverflow(sessionID: string, attempt: PromptOverflowAttempt, reason: string): Promise<boolean> {
+    const result = await mutateFreshGoal(store, sessionID, (latest) => {
+      if (!sameAttempt(latest, attempt) || latest.status !== "active") return null
+      return pauseForFatalProviderError(latest, overflowFailureReason(reason))
+    })
+    if (!result?.wrote) return false
+    recoveringOverflow.delete(sessionID)
     await abortSession(input.client, sessionID)
     await showGoalToast(input.client, "Goal paused after the provider prompt stayed too large. Run /compact, then /goal resume.", "error")
+    return true
   }
 
   async function recoverPromptOverflow(sessionID: string, attempt: PromptOverflowAttempt, reason: string): Promise<void> {
@@ -90,11 +130,13 @@ export function installHostLimitHandling(input: PluginInput, hooks: PluginHooks)
       return
     }
 
-    const latest = await store.load(sessionID)
     recoveringOverflow.delete(sessionID)
-    if (!sameAttempt(latest, attempt) || latest.status !== "active") return
+    const cleared = await mutateFreshGoal(store, sessionID, (latest) => {
+      if (!sameAttempt(latest, attempt) || latest.status !== "active") return null
+      return clearOverflowRecovery(latest)
+    })
+    if (!cleared?.wrote) return
 
-    await store.save(clearOverflowRecovery(latest))
     await showGoalToast(input.client, "Provider prompt limit reached; OpenCode compacted the session and Goal continuation is resuming.", "warning")
 
     // The compaction-continuation coordinator may have queued an idle while the
@@ -123,11 +165,8 @@ export function installHostLimitHandling(input: PluginInput, hooks: PluginHooks)
     if (sessionID && type === "session.status") {
       const reason = hostUsageLimitReason(properties.status)
       if (reason) {
-        const goal = await store.load(sessionID)
-        if (goal?.status === "active") {
-          await store.save(markUsageLimited(goal, reason))
-          await abortSession(input.client, sessionID)
-        }
+        const limited = await mutateFreshGoal(store, sessionID, (goal) => goal.status === "active" ? markUsageLimited(goal, reason) : null)
+        if (limited?.wrote) await abortSession(input.client, sessionID)
         await originalEvent(eventInput)
         return
       }
@@ -147,21 +186,38 @@ export function installHostLimitHandling(input: PluginInput, hooks: PluginHooks)
         if (goal?.status === "active") {
           const previous = overflowAttempts.get(sessionID)
           if (previous && sameAttempt(goal, previous) && goal.usage.turns <= previous.baselineTurns) {
-            await store.save(pauseForFatalProviderError(goal, overflowFailureReason(overflowReason)))
-            await abortSession(input.client, sessionID)
-            await showGoalToast(input.client, "Goal paused after prompt overflow repeated. Run /compact, then /goal resume.", "error")
-          } else {
-            const attempt: PromptOverflowAttempt = {
-              goalID: goal.id,
-              revision: goal.revision,
-              baselineTurns: goal.usage.turns,
+            const paused = await mutateFreshGoal(store, sessionID, (latest) => {
+              if (latest.status !== "active" || !sameAttempt(latest, previous) || latest.usage.turns > previous.baselineTurns) return null
+              return pauseForFatalProviderError(latest, overflowFailureReason(overflowReason))
+            })
+            if (paused?.wrote) {
+              recoveringOverflow.delete(sessionID)
+              await abortSession(input.client, sessionID)
+              await showGoalToast(input.client, "Goal paused after prompt overflow repeated. Run /compact, then /goal resume.", "error")
             }
-            overflowAttempts.set(sessionID, attempt)
+          } else {
             recoveringOverflow.add(sessionID)
-            await store.save(markPromptOverflowRecovering(goal, overflowReason))
+            let freshAttempt: PromptOverflowAttempt | undefined
+            const marked = await mutateFreshGoal(store, sessionID, (latest) => {
+              if (latest.status !== "active") return null
+              freshAttempt = {
+                goalID: latest.id,
+                revision: latest.revision,
+                baselineTurns: latest.usage.turns,
+              }
+              return markPromptOverflowRecovering(latest, overflowReason)
+            })
+            if (!marked?.wrote || !freshAttempt) {
+              recoveringOverflow.delete(sessionID)
+              await originalEvent(eventInput)
+              return
+            }
+
+            overflowAttempts.set(sessionID, freshAttempt)
             await abortSession(input.client, sessionID)
             await showGoalToast(input.client, "Provider prompt limit reached; compacting the OpenCode session once before continuing.", "warning")
             await originalEvent(eventInput)
+            const attempt = freshAttempt
             queueMicrotask(() => {
               void recoverPromptOverflow(sessionID, attempt, overflowReason).catch(async (error) => {
                 recoveringOverflow.delete(sessionID)
@@ -177,11 +233,8 @@ export function installHostLimitHandling(input: PluginInput, hooks: PluginHooks)
 
       const reason = fatalProviderReason(properties.error)
       if (reason) {
-        const goal = await store.load(sessionID)
-        if (goal?.status === "active") {
-          await store.save(pauseForFatalProviderError(goal, reason))
-          await abortSession(input.client, sessionID)
-        }
+        const paused = await mutateFreshGoal(store, sessionID, (goal) => goal.status === "active" ? pauseForFatalProviderError(goal, reason) : null)
+        if (paused?.wrote) await abortSession(input.client, sessionID)
         await originalEvent(eventInput)
         return
       }

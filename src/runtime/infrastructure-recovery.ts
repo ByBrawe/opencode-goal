@@ -2,6 +2,7 @@ import type {
   GoalInfrastructureRecoveryKind,
   GoalState,
 } from "../domain/types.js"
+import { isProviderPromptOverflowError } from "./limits.js"
 
 export const DEFAULT_INFRASTRUCTURE_RETRY_BASE_MS = 15_000
 export const DEFAULT_INFRASTRUCTURE_RETRY_MAX_MS = 5 * 60_000
@@ -30,6 +31,10 @@ function textOf(value: unknown): string {
 }
 
 export function isTransientInfrastructureError(value: unknown): boolean {
+  // A deterministic oversized prompt cannot recover through network/provider
+  // backoff. Treat it separately so session.status=retry does not trap the Goal
+  // in an endless provider_retry loop.
+  if (isProviderPromptOverflowError(value)) return false
   const text = textOf(value)
   return TRANSIENT_PATTERNS.some((pattern) => pattern.test(text))
 }

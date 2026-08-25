@@ -6,11 +6,17 @@ import { GoalStore, GoalStoreIntegrityError } from "../persistence/store.js"
 type PluginInput = Parameters<typeof CorePlugin>[0]
 type PluginHooks = Awaited<ReturnType<typeof CorePlugin>>
 
-function pausedAgentInstruction(goal: { objective: string; stopReason?: string }): string {
+function concise(value: string, max = 600): string {
+  const text = value.replace(/\s+/g, " ").trim()
+  return text.length <= max ? text : `${text.slice(0, max - 1)}…`
+}
+
+function pausedAgentInstruction(goal: { id?: string; revision?: number; objective: string; stopReason?: string }): string {
   return [
     "OpenCode Goal state: a persisted Goal is currently paused.",
-    `Goal objective: ${goal.objective}`,
-    `Pause reason: ${goal.stopReason ?? "not specified"}`,
+    `Goal: ${goal.id ?? "current"} revision ${goal.revision ?? "unknown"}.`,
+    `Goal objective preview: ${concise(goal.objective)}.`,
+    `Pause reason: ${concise(goal.stopReason ?? "not specified", 300)}`,
     "Decide from the latest user's meaning, in whatever language they used, whether they want to resume/continue/steer this Goal.",
     "If they do, call opencode_goal_resume before attempting Goal work.",
     "If they are only asking a question, requesting status/explanation, or discussing unrelated work, do not call the resume tool.",
@@ -116,7 +122,7 @@ export function installGoalModelResume(input: PluginInput, hooks: PluginHooks): 
       pendingResume.add(context.sessionID)
       return [
         "Goal resume accepted from the user's natural-language intent.",
-        `Objective: ${goal.objective}`,
+        `Goal ${goal.id} revision ${goal.revision} remains paused until the idle ownership boundary.`,
         "End this assistant turn without modifying the project. At session idle, OpenCode Goal will activate the Goal and dispatch the normal owned continuation turn.",
       ].join("\n")
     },

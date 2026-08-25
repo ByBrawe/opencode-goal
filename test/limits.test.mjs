@@ -2,7 +2,15 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import { createGoal } from "../dist/domain/goal.js"
 import { accountAssistantUsage, applyGoalBudget, budgetLimitHits, budgetStopReason, formatGoalBudget } from "../dist/runtime/accounting.js"
-import { fatalProviderReason, hostUsageLimitReason, markUsageLimited } from "../dist/runtime/limits.js"
+import { isTransientInfrastructureError } from "../dist/runtime/infrastructure-recovery.js"
+import {
+  fatalProviderReason,
+  hostUsageLimitReason,
+  isProviderPromptOverflowError,
+  markUsageLimited,
+  pauseForFatalProviderError,
+  providerPromptOverflowReason,
+} from "../dist/runtime/limits.js"
 import { closeObservedTurn } from "../dist/runtime/progress.js"
 import { parseGoalCommand } from "../dist/opencode/command.js"
 
@@ -103,4 +111,38 @@ test("fatal provider classification ignores retryable failures and aborted error
   assert.equal(fatalProviderReason({ name: "MessageAbortedError", data: { message: "aborted" } }), undefined)
   assert.match(fatalProviderReason({ name: "ProviderAuthError", data: { providerID: "p", message: "bad key" } }), /authentication failed.*bad key/i)
   assert.match(fatalProviderReason({ name: "APIError", data: { message: "model missing", statusCode: 404, isRetryable: false } }), /HTTP 404/)
+})
+
+test("provider prompt overflow is deterministic context pressure, never transient infrastructure", () => {
+  const error = {
+    name: "APIError",
+    data: {
+      providerID: "opencode",
+      statusCode: 400,
+      isRetryable: false,
+      message: "Error from provider (Console): Upstream request failed: [1261] Prompt exceeds max length",
+    },
+  }
+  assert.equal(isProviderPromptOverflowError(error), true)
+  assert.match(providerPromptOverflowReason(error), /prompt\/context limit.*HTTP 400.*Prompt exceeds max length/i)
+  assert.equal(isTransientInfrastructureError(error), false)
+  assert.equal(isTransientInfrastructureError(JSON.stringify(error)), false)
+})
+
+test("fatal provider pause clears stale infrastructure retry metadata", () => {
+  const goal = {
+    ...createGoal({ sessionID: "s-overflow", objective: "work" }),
+    infrastructureRecovery: {
+      kind: "provider_retry",
+      reason: "old retry",
+      attempt: 1,
+      startedAt: 1,
+      nextRetryAt: 2,
+    },
+    skipNextStallCheck: true,
+  }
+  const paused = pauseForFatalProviderError(goal, "Provider request failed (HTTP 400): Prompt exceeds max length", 100)
+  assert.equal(paused.status, "paused")
+  assert.equal(paused.infrastructureRecovery, undefined)
+  assert.equal(paused.skipNextStallCheck, undefined)
 })

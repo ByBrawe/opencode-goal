@@ -45,6 +45,18 @@ function pausedMessage(goal: GoalState): string {
   ].join("\n")
 }
 
+function commandErrorMessage(error: unknown): string {
+  const detail = error instanceof Error ? error.message : String(error)
+  return [
+    "Goal command was not run because its arguments are invalid.",
+    `Reason: ${detail}`,
+    "",
+    "No Goal state was changed.",
+    "Fix the command and try again. Long pasted specifications may be pasted directly after /goal; meaningful multiline content is treated as literal Goal text rather than command flags.",
+    "Respond with this error only; do not perform work.",
+  ].join("\n")
+}
+
 export function installGoalLifecycleUX(input: PluginInput, hooks: PluginHooks): void {
   const store = new GoalStore(input.directory)
   const commandHook = hooks["command.execute.before"]
@@ -63,8 +75,20 @@ export function installGoalLifecycleUX(input: PluginInput, hooks: PluginHooks): 
     let parsed: ReturnType<typeof parseGoalCommand>
     try {
       parsed = parseGoalCommand(event.arguments ?? "")
-    } catch {
-      await commandHook(event, output)
+    } catch (error) {
+      // Seed the core command ownership with a safe read-only prompt, then swap
+      // only the host-visible/model-visible presentation. This prevents a
+      // malformed slash command from escaping as a command.execute.before hook
+      // exception (which recent OpenCode TUI versions can render as an empty or
+      // failed command turn) while also preventing the synthetic error message
+      // from being mistaken for ordinary foreground Goal steering.
+      await commandHook({ ...event, arguments: "status" }, output)
+      const owned = textFromParts(output.parts)
+      const shown = commandErrorMessage(error)
+      ;(output as any).noReply = false
+      replaceParts(output.parts, shown)
+      translations.set(event.sessionID, { shown, owned })
+      await showGoalToast(input.client, error instanceof Error ? error.message : "Invalid /goal command.", "error")
       return
     }
 

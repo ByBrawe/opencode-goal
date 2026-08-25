@@ -27,6 +27,42 @@ function empty(action: ParsedGoalCommand["action"]): ParsedGoalCommand {
   return { action, objective: "", acceptance: [], constraints: [], checks: [], files: [] }
 }
 
+/**
+ * OpenCode renders a large terminal paste as one slash-command argument while
+ * preserving its embedded newlines. Treat that shape as literal work text.
+ *
+ * This deliberately disables inline Goal option parsing for meaningful
+ * multiline create/edit/add input. Long specifications routinely contain
+ * markdown/code/CLI examples such as `--watch`, `--accept`, or `--max-turns`;
+ * interpreting those tokens as Goal control flags can throw from the plugin
+ * hook and leave the TUI on an apparently blank command turn.
+ *
+ * Structured Goal flags remain available on the normal single-line command
+ * surface. Explicit `edit`/`add` prefixes keep their established meaning.
+ */
+function parseMultilineWorkCommand(input: string): ParsedGoalCommand | null {
+  const trimmed = input.trim()
+  if (!/[\r\n]/.test(trimmed)) return null
+
+  if (/^opencode\s+run\b/i.test(trimmed)) {
+    throw new Error("Do not paste an outer 'opencode run ...' command inside /goal. You are already in the OpenCode TUI: remove the opencode run / @' ... '@ wrapper and paste only the Goal text after /goal.")
+  }
+
+  const prefixed = /^(edit|add)\b/i.exec(trimmed)
+  if (prefixed) {
+    const action = prefixed[1]!.toLowerCase() as "edit" | "add"
+    return {
+      ...empty(action),
+      objective: trimmed.slice(prefixed[0].length).trim(),
+    }
+  }
+
+  return {
+    ...empty("create"),
+    objective: trimmed,
+  }
+}
+
 function parseContainsContract(value: string): FileRequirementInput {
   const split = value.indexOf("::")
   if (split <= 0 || split === value.length - 2) throw new Error('--contains expects "path::exact text"')
@@ -92,6 +128,9 @@ function parseQueueCommand(list: string[]): ParsedGoalCommand {
 }
 
 export function parseGoalCommand(input: string): ParsedGoalCommand {
+  const multiline = parseMultilineWorkCommand(input)
+  if (multiline) return multiline
+
   const list = tokens(input.trim())
   const sub = (list[0] ?? "").toLowerCase()
   if (sub === "doctor") {

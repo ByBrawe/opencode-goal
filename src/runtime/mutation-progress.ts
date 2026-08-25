@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto"
 import { promises as fs } from "node:fs"
 import path from "node:path"
+import { isGoalControlPlanePath } from "./control-plane-path.js"
 
 export interface MutationFingerprint {
   fingerprint: string
@@ -89,7 +90,7 @@ export async function collectMutationFingerprints(input: {
 
   for (const item of found) {
     const safe = await canonicalInside(input.root, item.filePath, item.deleted === true)
-    if (!safe || seen.has(safe.relative)) continue
+    if (!safe || isGoalControlPlanePath(safe.relative) || seen.has(safe.relative)) continue
     seen.add(safe.relative)
 
     if (item.deleted) {

@@ -1,4 +1,5 @@
 import OpenCodeGoalCorePlugin from "./opencode/plugin.js"
+import { installGoalControlPlaneProgressGuard } from "./opencode/control-plane-progress.js"
 import { installForeignCommandSteeringGuard } from "./opencode/foreign-command-guard.js"
 import { enhanceGoalControls } from "./opencode/controls.js"
 import { installGoalAuditUX } from "./opencode/audit-ux.js"
@@ -36,6 +37,10 @@ export default async function OpenCodeGoalPlugin(
     client: preferSynchronousSessionPrompt(infrastructureTransport.client),
   }
   const hooks = await OpenCodeGoalCorePlugin(coreInput, applySemanticVerifierTimeoutDefault(options))
+  // GoalStore writes live inside the project tree and OpenCode may expose them
+  // as PatchParts. Filter those control-plane paths directly above core before
+  // they can be mistaken for user-project progress and reset the stall guard.
+  installGoalControlPlaneProgressGuard(input, hooks)
   // OpenCode 1.x may still materialize a plugin-handled slash command as a
   // synthetic user/model turn. Install this directly above the core so outer
   // safety/deferral wrappers still run, while the core never mistakes that
@@ -96,6 +101,7 @@ export * from "./runtime/infrastructure-recovery.js"
 export * from "./runtime/model-context.js"
 export * from "./runtime/progress.js"
 export * from "./runtime/todo-plan.js"
+export * from "./runtime/control-plane-path.js"
 export * from "./persistence/sequence-store.js"
 export * from "./i18n.js"
 export * from "./opencode/command.js"
@@ -110,6 +116,7 @@ export * from "./opencode/compaction-continuation.js"
 export * from "./opencode/infrastructure-recovery.js"
 export * from "./opencode/client-compat.js"
 export * from "./opencode/model-resume.js"
+export * from "./opencode/control-plane-progress.js"
 export * from "./opencode/lifecycle-ux.js"
 export * from "./opencode/i18n-ux.js"
 export * from "./opencode/verifier-defaults.js"

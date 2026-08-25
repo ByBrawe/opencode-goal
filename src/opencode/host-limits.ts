@@ -140,16 +140,17 @@ export function installHostLimitHandling(input: PluginInput, hooks: PluginHooks)
 
     await showGoalToast(input.client, "Provider prompt limit reached; OpenCode compacted the session and Goal continuation is resuming.", "warning")
 
-    // The compaction-continuation coordinator may have queued an idle while the
-    // summarize request was in flight. Host-limit handling deliberately swallowed
-    // those idles so the pre-compaction prompt could not race. Re-enter the final
-    // wrapper stack once, after compaction is complete; its pending barrier (when
-    // present) turns this into exactly one Goal-owned continuation.
-    queueMicrotask(() => {
-      const eventHook = hooks.event
-      if (typeof eventHook !== "function") return
-      void eventHook({ event: { type: "session.idle", properties: { sessionID } } }).catch(() => undefined)
-    })
+    // The compaction coordinator's own fallback idle is intentionally blocked
+    // while `recoveringOverflow` is set. Once the cleared state is durable,
+    // synchronously route one unmarked idle through the final wrapper stack.
+    // If compaction left a pending one-shot barrier, that coordinator consumes
+    // this idle; otherwise core Goal scheduling owns it directly. Awaiting it
+    // prevents the recovery hook from returning before continuation ownership is
+    // re-established and avoids detached wake-up races.
+    const eventHook = hooks.event
+    if (typeof eventHook === "function") {
+      await eventHook({ event: { type: "session.idle", properties: { sessionID } } })
+    }
   }
 
   hooks.event = async (eventInput: any) => {
@@ -220,9 +221,8 @@ export function installHostLimitHandling(input: PluginInput, hooks: PluginHooks)
             await originalEvent(eventInput)
             const attempt = freshAttempt
             try {
-              // Complete the recovery inside the same session.error hook chain.
-              // Returning while this is only a detached microtask allows outer
-              // wrappers to race a stale Goal snapshot back over the cleared state.
+              // Complete recovery and re-establish Goal continuation ownership
+              // before this provider-error hook returns to outer wrappers.
               await recoverPromptOverflow(sessionID, attempt, overflowReason)
             } catch (error) {
               await pauseOverflow(sessionID, attempt, `${overflowReason} Automatic compaction recovery failed: ${String(error)}`).catch(() => undefined)

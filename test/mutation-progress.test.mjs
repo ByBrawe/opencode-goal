@@ -25,6 +25,35 @@ test("write progress fingerprints actual file bytes so identical rewrites dedupl
   }
 })
 
+test("Goal persistence and queue files never count as project mutation progress", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-control-plane-"))
+  try {
+    const internal = [
+      path.join(root, ".opencode", "goals", "state.json"),
+      path.join(root, ".opencode", "goal-locks", "state.lock"),
+      path.join(root, ".opencode", "goal-sequences", "queue.json"),
+    ]
+    for (const file of internal) {
+      await mkdir(path.dirname(file), { recursive: true })
+      await writeFile(file, "state\n")
+      assert.deepEqual(
+        await collectMutationFingerprints({ root, tool: "write", args: { filePath: file }, metadata: { filepath: file } }),
+        [],
+        `${file} is Goal control-plane state, not user project progress`,
+      )
+    }
+
+    const command = path.join(root, ".opencode", "commands", "project-command.md")
+    await mkdir(path.dirname(command), { recursive: true })
+    await writeFile(command, "project owned\n")
+    const visible = await collectMutationFingerprints({ root, tool: "write", args: { filePath: command }, metadata: { filepath: command } })
+    assert.equal(visible.length, 1, "the guard must not blanket-ignore project-owned .opencode files")
+    assert.match(visible[0].fingerprint, /^file:\.opencode\/commands\/project-command\.md:/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test("mutation progress ignores files outside the project including symlink escapes", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-root-"))
   const outside = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-outside-"))

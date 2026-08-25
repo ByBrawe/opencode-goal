@@ -25,7 +25,7 @@ export function installGoalControlPlaneProgressGuard(_input: PluginInput, hooks:
       return
     }
 
-    const files = part.files.map(String)
+    const files: string[] = (part.files as unknown[]).map(String)
     const projectFiles = files.filter((file) => !isGoalControlPlanePath(file))
     if (projectFiles.length === 0) return
     if (projectFiles.length === files.length) {

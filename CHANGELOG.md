@@ -2,6 +2,16 @@
 
 All notable changes to **OpenCode Goals** are documented here.
 
+## 1.3.30 — 2026-08-25
+
+Long-Goal context-overflow and blank-session reliability release.
+
+- Exclude Goal control-plane persistence under `.opencode/goals`, `.opencode/goal-locks`, and `.opencode/goal-sequences` from host progress so internal state writes cannot defeat the no-progress guard.
+- Anchor the full Goal contract once per revision, use bounded reminders on repeated autonomous turns, and re-anchor once after compaction instead of re-appending huge objectives indefinitely.
+- Treat provider prompt/context overflow as deterministic context pressure rather than transient infrastructure: compact once under Goal ownership, then pause safely with explicit recovery guidance if overflow repeats before successful work.
+- Keep paused natural-language resume routing bounded for huge objectives, preserve multiline Goal bodies literally, and turn malformed pasted outer `opencode run` wrappers into visible non-mutating guidance instead of blank command failures.
+- Add regression coverage for the exact provider overflow shape, control-plane self-progress, ~30K-character contracts, bounded resume context, one-shot compaction recovery, repeated-overflow fail-safe behavior, and pasted command syntax.
+
 ## 1.3.29 — 2026-08-24
 
 Agent-native resume and long-run completion-integrity release.

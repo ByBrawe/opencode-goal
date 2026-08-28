@@ -2,6 +2,17 @@
 
 All notable changes to **OpenCode Goals** are documented here.
 
+## 1.3.31 — 2026-08-28
+
+Durable long-Goal Todo recovery release.
+
+- Persist native OpenCode Todo plans as revision-bound advisory item manifests with exact text, status, priority, order, optional native IDs, and stable Goal-owned item identities.
+- Preserve schema-v1 compatibility by accepting aggregate-only Todo telemetry and upgrading it on the next current native Todo observation without a schema bump.
+- Keep `/goal edit` ownership strict: unchanged stale-plan replays cannot silently rebind the old manifest to a new Goal revision, while genuinely rebuilt/changed plans can become current.
+- Re-anchor a bounded item-level manifest only in compaction/recovery context; repeated autonomous continuations retain aggregate summaries so 50-100+ item plans do not recreate long-context growth.
+- Keep Todo planning non-evidentiary and non-progressing: completed Todo items still cannot prove Goal completion or widen user-authorized scope.
+- Add 100-item persistence/identity/legacy-upgrade/stale-revision/context-boundary regressions and validate the exact feature head across security, CI, compatibility, lifecycle, steering, compaction, semantic completion, host progress, restart recovery, Loop coexistence, and Node 20/24 packed-artifact gates on Ubuntu/Windows.
+
 ## 1.3.30 — 2026-08-25
 
 Long-Goal context-overflow and blank-session reliability release.

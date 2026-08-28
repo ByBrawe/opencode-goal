@@ -30,26 +30,38 @@ Assistant-generated nice-to-haves, unrelated cleanup, speculative improvements, 
 
 ## Persistence and ownership model
 
-OpenCode owns and persists the native Todo list for the session. OpenCode Goals persists only aggregate advisory telemetry:
+OpenCode remains the live owner of the native Todo list for the session. OpenCode Goals additionally persists a **revision-bound advisory snapshot** so long plans can survive restart/compaction without reducing the work plan to aggregate counts.
+
+The persisted Todo snapshot contains:
 
 - the Goal revision that observed the plan;
 - a deterministic plan digest;
 - pending / in-progress / completed / cancelled counts;
-- observation time.
+- observation time;
+- exact Todo item text, status, priority, order, and optional native Todo id;
+- a deterministic Goal-owned item key that remains stable across status transitions.
 
-Todo item text is not duplicated into Goal persistence.
+This durable item manifest is recovery/reconciliation data only. It does not turn Goal into a second Todo database, requirement ledger, or completion authority. Older schema-v1 Goal files that contain only aggregate Todo telemetry remain valid; the next current native Todo observation upgrades them to the item-level snapshot without a schema bump.
 
 A native `todowrite` result is attached to Goal telemetry only when the tool call belongs to the exact current assistant Goal turn (`goalID + revision`). A tool call from an older revision, or one that finishes after the Goal is paused, is ignored.
 
-Editing a Goal keeps the prior aggregate telemetry visible as **STALE** so continuation can rebuild the plan for the new revision. Restoring an archived Goal clears the old Todo binding because the session Todo database may have changed while the Goal was archived.
+Editing a Goal keeps the prior Todo snapshot visible as **STALE** so continuation can rebuild the plan for the new revision. An unchanged native replay cannot silently bind that stale manifest to the new revision; a genuinely rebuilt/changed native plan can bind current. Restoring an archived Goal still clears the old Todo binding because the session Todo database may have changed while the Goal was archived.
 
-Todo telemetry:
+Todo telemetry/manifest state:
 
 - does **not** increment `progressRevision`;
 - does **not** create evidence records;
 - does **not** prove requirements;
 - does **not** authorize scope changes;
 - does **not** block Goal execution if `todowrite` is unavailable or denied.
+
+## Restart and compaction recovery
+
+Repeated autonomous continuation prompts intentionally do **not** re-append all Todo item text. They carry only the compact aggregate plan summary, preventing a 50-100+ item Todo list from recreating the long-context growth failure that Goal's bounded continuation prompts are designed to avoid.
+
+When OpenCode compacts a Goal session, the persistent compaction context re-anchors a bounded rendering of the durable Todo manifest together with the Goal contract. If the manifest is larger than the context budget, the full item list remains persisted in Goal state while the model-facing compaction block explicitly reports that additional items were omitted to keep context bounded.
+
+The worktree and current native Todo state remain authoritative for execution. The persisted manifest exists to recover the last observed plan after restart/compaction and to make stale/current revision ownership visible; it is not proof that any task was performed.
 
 ## Deterministic real-host canary
 
@@ -136,7 +148,7 @@ Expected observations:
 3. Only required current-scope work appears in that list; unrelated improvements are omitted/cancelled.
 4. Shell/edit/test/task operations proceed while the same Goal ID/revision remains active.
 5. `/goal audit` shows Todo telemetry as advisory and separate from the evidence ledger.
-6. Editing the Goal makes prior Todo telemetry stale; subsequent work rebuilds/updates the plan for the new revision.
+6. Editing the Goal makes prior Todo telemetry/manifest stale; subsequent work rebuilds/updates the plan for the new revision.
 7. A real user message still pauses/steers autonomous Goal continuation.
 8. Marking every Todo `completed` does not by itself complete the Goal.
 9. If a hidden acceptance requirement is still failing, `opencode_goal_complete` remains rejected.
@@ -147,13 +159,16 @@ Expected observations:
 The repository tests cover:
 
 - deterministic Todo normalization/digest/counting;
+- durable item-level text/status/order/native-id persistence for 100-item plans;
+- stable Goal-owned Todo item identity across status transitions;
+- schema-v1 aggregate-only snapshot compatibility and automatic manifest upgrade;
 - no evidence or host-progress credit from Todo planning;
 - no persistence churn for an identical plan rewrite;
 - exact assistant-turn ownership;
 - stale Goal-revision and pause races;
-- stale-plan visibility after Goal edit;
+- stale-plan visibility after Goal edit and unchanged-replay rejection;
 - Todo binding invalidation on archived Goal restore;
-- continuation/compaction scope rules;
+- bounded compaction manifest recovery without repeated continuation bloat;
 - read-only `/goal audit` Todo visibility;
 - mandatory adversarial eval cases for the Todo/Goal boundary;
 - the broad-project model fixture's red/pass/incomplete-Todo oracle geometry;

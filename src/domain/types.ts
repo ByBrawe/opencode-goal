@@ -85,12 +85,30 @@ export interface GoalInfrastructureRecovery {
 }
 
 /**
+ * One durable item from OpenCode's native Todo plan.
+ *
+ * `key` is Goal-owned and deterministic from the item's planning identity; it
+ * is not completion evidence and does not replace OpenCode's optional native
+ * Todo id. Keeping the exact item text/status/order lets restart/compaction
+ * recovery reconstruct the last observed work plan without making Goal a
+ * second Todo authority.
+ */
+export interface GoalTodoPlanItem {
+  key: string
+  content: string
+  status: "pending" | "in_progress" | "completed" | "cancelled"
+  priority?: string
+  nativeID?: string
+  order: number
+}
+
+/**
  * Advisory telemetry for OpenCode's native session Todo plan.
  *
  * The Todo list is owned by OpenCode and remains execution-planning state, not
- * Goal completion evidence. Only aggregate counts/digest are persisted here so
- * a Goal can tell whether the native plan was observed for the current revision
- * without duplicating the Todo database inside Goal storage.
+ * Goal completion evidence. Aggregate counts/digest are retained for cheap
+ * gating/status, while `items` keeps a revision-bound durable snapshot for
+ * restart/compaction reconciliation. Older schema-v1 snapshots may omit items.
  */
 export interface GoalTodoPlan {
   goalRevision: number
@@ -101,6 +119,7 @@ export interface GoalTodoPlan {
   completed: number
   cancelled: number
   observedAt: number
+  items?: GoalTodoPlanItem[]
 }
 
 export interface FileRequirementInput {
@@ -161,7 +180,7 @@ export interface GoalState {
   skipNextStallCheck?: boolean
   /** Persisted retry state for transient verifier/provider/dispatch failures. */
   infrastructureRecovery?: GoalInfrastructureRecovery | undefined
-  /** Native OpenCode Todo-plan telemetry. Advisory only; never completion evidence. */
+  /** Native OpenCode Todo-plan telemetry/manifest. Advisory only; never completion evidence. */
   todoPlan?: GoalTodoPlan
   blockerAudit?: BlockerAudit
   progressNotes: ProgressNote[]

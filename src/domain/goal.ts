@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto"
+import { currentGoalRuntimeFingerprint } from "../runtime/fingerprint.js"
 import type { FileRequirementInput, GoalBudget, GoalExecutionContext, GoalRequirement, GoalRequirementSource, GoalState, VerificationKind } from "./types.js"
 
 const DEFAULT_BUDGET: GoalBudget = {
@@ -96,6 +97,7 @@ export function createGoal(input: {
     evidence: [],
     checks,
     ...(input.execution ? { execution: input.execution } : {}),
+    runtimeFingerprint: currentGoalRuntimeFingerprint(),
     usage: { turns: 0, tokens: 0, cost: 0, runtimeMs: 0, seenMessageIDs: [] },
     revisionTurnBaseline: 0,
     budget: { ...DEFAULT_BUDGET, ...input.budget },

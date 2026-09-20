@@ -1,6 +1,7 @@
 import path from "node:path"
 import type { GoalState } from "../domain/types.js"
 import { GoalStore } from "../persistence/store.js"
+import { formatGoalRuntimeFingerprint } from "../runtime/fingerprint.js"
 import { parseGoalCommand } from "../opencode/command.js"
 
 export const OPENCODE2_EXPERIMENTAL_PLUGIN_ID = "bybrawe.open-code-goals.v2-experimental"
@@ -72,7 +73,7 @@ async function resolveSessionDirectory(ctx: OpenCode2ExperimentalContext, sessio
 function formatStatus(goal: GoalState | null): string {
   if (!goal) return "No active goal."
   const req = goal.requirements.map((item, index) => `${index + 1}. [${item.status}] ${item.text}`).join("\n")
-  return `Goal: ${goal.objective}\nStatus: ${goal.status}\nRevision: ${goal.revision}\nUsage: ${goal.usage.turns} turns, ${goal.usage.tokens} tokens, cost ${goal.usage.cost.toFixed(4)}\nRequirements:\n${req}`
+  return `Goal: ${goal.objective}\nStatus: ${goal.status}\nRevision: ${goal.revision}\nRuntime: ${formatGoalRuntimeFingerprint(goal.runtimeFingerprint)}\nUsage: ${goal.usage.turns} turns, ${goal.usage.tokens} tokens, cost ${goal.usage.cost.toFixed(4)}\nRequirements:\n${req}`
 }
 
 function formatContract(goal: GoalState | null): string {

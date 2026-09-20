@@ -74,6 +74,6 @@ test("explicit cadence rejects a second successful file mutation in the same Goa
       hooks["tool.execute.before"]({ tool: "edit", sessionID: "s1", callID: "call-3" }),
     )
   } finally {
-    await rm(root, { recursive: true, force: true })
+    await rm(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 50 })
   }
 })

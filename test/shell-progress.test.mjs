@@ -237,7 +237,6 @@ test("distinct read-only shell probes cannot keep a stalled Goal alive", async (
   try {
     const hooks = await OpenCodeGoalPlugin({ client: fakeClient(), directory: root })
     await createGoal(hooks)
-    await closeTurn(hooks)
 
     const baseline = (await readOnlyGoal(root)).progressRevision
     const commands = ["ls", "cat README.md", "Get-Content README.md"]

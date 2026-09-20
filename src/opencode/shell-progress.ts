@@ -1,6 +1,10 @@
+import { execFile } from "node:child_process"
 import { createHash } from "node:crypto"
+import { promisify } from "node:util"
 import type CorePlugin from "./plugin.js"
 import { GoalStore, GoalStoreConcurrencyError } from "../persistence/store.js"
+import { isClearlyReadOnlyShellCommand } from "../runtime/cadence.js"
+import { isGoalControlPlanePath } from "../runtime/control-plane-path.js"
 import { markHostProgress } from "../runtime/progress.js"
 
 type PluginInput = Parameters<typeof CorePlugin>[0]
@@ -9,11 +13,14 @@ type PluginHooks = Awaited<ReturnType<typeof CorePlugin>>
 type PendingShell = {
   goalID: string
   revision: number
+  command: string
+  gitMarker?: string
 }
 
 const SHELL_TOOL = "bash"
 const MAX_PENDING_SHELL_CALLS = 512
 const MAX_SAVE_ATTEMPTS = 3
+const execFileAsync = promisify(execFile)
 
 function text(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined
@@ -22,6 +29,37 @@ function text(value: unknown): string | undefined {
 function callKey(sessionID: unknown, callID: unknown): string | undefined {
   if (typeof sessionID !== "string" || !sessionID || typeof callID !== "string" || !callID) return undefined
   return `${sessionID}\u0000${callID}`
+}
+
+function porcelainProjectLines(raw: string): string[] {
+  return raw
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter(Boolean)
+    .filter((line) => {
+      const body = line.length > 3 ? line.slice(3).trim() : line.trim()
+      const paths = body.includes(" -> ") ? body.split(" -> ") : [body]
+      return paths.some((value) => !isGoalControlPlanePath(value.replace(/^"|"$/g, "")))
+    })
+    .sort()
+}
+
+/**
+ * Durable Git worktree marker used to distinguish real shell-driven project
+ * progress from read-only diagnostics. Goal/Loop control-plane paths are
+ * removed so plugin bookkeeping cannot change this marker.
+ */
+export async function shellGitWorkspaceMarker(directory: string): Promise<string | undefined> {
+  try {
+    const [head, status] = await Promise.all([
+      execFileAsync("git", ["-C", directory, "rev-parse", "--verify", "HEAD"], { windowsHide: true }),
+      execFileAsync("git", ["-C", directory, "status", "--porcelain=v1", "--untracked-files=all"], { windowsHide: true }),
+    ])
+    const payload = `${String(head.stdout).trim()}\n${porcelainProjectLines(String(status.stdout)).join("\n")}`
+    return createHash("sha256").update(payload).digest("hex")
+  } catch {
+    return undefined
+  }
 }
 
 export function shellActivityFingerprint(args: any): string | undefined {
@@ -38,17 +76,17 @@ export function shellProcessExited(output: any): boolean {
 }
 
 /**
- * Count completed, Goal-revision-bound shell actions as host-observed progress.
+ * Count shell work as host-observed progress only when it leaves durable
+ * project state behind.
  *
- * The core plugin already owns shell safety/cadence. This wrapper only feeds the
- * no-progress guard so real work performed through `bash` is not mistaken for a
- * stalled turn. Raw command text is never persisted; only a SHA-256 fingerprint
- * and a generic progress note are stored. Repeating the exact same command is
- * therefore a no-op for progress accounting.
+ * In a Git worktree we compare HEAD + porcelain state before/after the shell
+ * command, excluding Goal/Loop control-plane files. This prevents repeated
+ * curl/grep/test/status probes from resetting the stall guard while preserving
+ * generators, moves, commits, and other shell-driven project mutations.
  *
- * OpenCode 1.4.0+ reports a numeric metadata.exit when the shell process really
- * exits and null when the tool is aborted or times out. Incomplete executions
- * must not manufacture progress merely because tool.execute.after still fires.
+ * Outside Git we keep the historical command-fingerprint fallback for
+ * compatibility, but explicitly reject commands the cadence layer can prove
+ * read-only. Raw command text is never persisted.
  */
 export function installShellProgress(input: PluginInput, hooks: PluginHooks): void {
   const beforeHook = hooks["tool.execute.before"]
@@ -72,11 +110,17 @@ export function installShellProgress(input: PluginInput, hooks: PluginHooks): vo
     if (event?.tool !== SHELL_TOOL) return
 
     const key = callKey(event.sessionID, event.callID)
-    if (!key) return
+    const command = text(event?.args?.command)
+    if (!key || !command) return
 
     const goal = await store.load(event.sessionID)
     if (!goal || goal.status !== "active") return
-    remember(key, { goalID: goal.id, revision: goal.revision })
+    remember(key, {
+      goalID: goal.id,
+      revision: goal.revision,
+      command,
+      ...(await shellGitWorkspaceMarker(input.directory) ? { gitMarker: await shellGitWorkspaceMarker(input.directory) } : {}),
+    })
   }
 
   hooks["tool.execute.after"] = async (event: any, output: any) => {
@@ -89,7 +133,19 @@ export function installShellProgress(input: PluginInput, hooks: PluginHooks): vo
     pending.delete(key)
     if (!owned || !shellProcessExited(output)) return
 
-    const fingerprint = shellActivityFingerprint(event.args)
+    const afterGitMarker = await shellGitWorkspaceMarker(input.directory)
+    let fingerprint: string | undefined
+    let summary: string | undefined
+
+    if (owned.gitMarker !== undefined && afterGitMarker !== undefined) {
+      if (owned.gitMarker === afterGitMarker) return
+      fingerprint = `shell-worktree:${afterGitMarker}`
+      summary = "Goal-owned shell command changed the project worktree."
+    } else {
+      if (isClearlyReadOnlyShellCommand(owned.command)) return
+      fingerprint = shellActivityFingerprint({ command: owned.command })
+      summary = "Goal-owned shell command completed outside a detectable Git worktree."
+    }
     if (!fingerprint) return
 
     for (let attempt = 0; attempt < MAX_SAVE_ATTEMPTS; attempt += 1) {
@@ -99,7 +155,7 @@ export function installShellProgress(input: PluginInput, hooks: PluginHooks): vo
       const next = markHostProgress(goal, {
         fingerprint,
         source: "tool:bash",
-        summary: "Goal-owned shell command completed.",
+        summary,
       })
       if (next === goal) return
 

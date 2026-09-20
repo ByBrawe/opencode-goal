@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto"
 import { promises as fs } from "node:fs"
 import path from "node:path"
+import { isDeepStrictEqual } from "node:util"
 import type { GoalState } from "../domain/types.js"
 import { acquireGoalStoreProcessLock, GoalStoreConcurrencyError } from "./process-lock.js"
 
@@ -60,6 +61,20 @@ function validGeneration(value: unknown): boolean {
 
 function storageGeneration(goal: GoalState | null | undefined): number {
   return goal?.storageGeneration ?? 0
+}
+
+function samePersistedGoalState(left: GoalState, right: GoalState): boolean {
+  const {
+    storageGeneration: _leftGeneration,
+    updatedAt: _leftUpdatedAt,
+    ...leftSemantic
+  } = left
+  const {
+    storageGeneration: _rightGeneration,
+    updatedAt: _rightUpdatedAt,
+    ...rightSemantic
+  } = right
+  return isDeepStrictEqual(leftSemantic, rightSemantic)
 }
 
 function validateState(value: unknown): GoalState | null {
@@ -350,6 +365,11 @@ export class GoalStore {
             `expected generation ${expectedGeneration}, but current generation is ${currentGeneration}`,
             file,
           )
+        }
+        if (samePersistedGoalState(previous, state)) {
+          state.storageGeneration = currentGeneration
+          state.updatedAt = previous.updatedAt
+          return
         }
         nextGeneration = currentGeneration + 1
       } else {

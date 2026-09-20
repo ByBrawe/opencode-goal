@@ -3,6 +3,7 @@ import { createGoal, editGoal, pauseGoal, resumeGoal, waitForUserGoal } from "..
 import type { GoalExecutionContext, GoalState } from "../domain/types.js"
 import { GoalStore, GoalStoreConcurrencyError } from "../persistence/store.js"
 import { accountAssistantUsage } from "../runtime/accounting.js"
+import { assistantInfoHasMeaningfulActivity, assistantPartHasMeaningfulActivity, clearEmptyAssistantTurnStreak, recordEmptyAssistantTurn } from "../runtime/empty-turn.js"
 import { reportBlocker } from "../runtime/blocker.js"
 import { CADENCE_BOUNDARY_MESSAGE, isClearlyReadOnlyShellCommand, requiresDistinctGoalTurnCadence } from "../runtime/cadence.js"
 import { runConfiguredChecks } from "../runtime/checks.js"
@@ -17,6 +18,7 @@ import { parseGoalCommand } from "./command.js"
 import { TurnOwnership, goalTurnOwner, sameGoalTurn } from "./ownership.js"
 import { compactionContext, continuationPrompt } from "./prompt.js"
 import { createSemanticVerifierRuntime, SemanticVerifierUnavailableError } from "./verifier.js"
+import { showGoalToast } from "./toast.js"
 
 const FILE_MUTATION_TOOLS = new Set(["write", "edit", "apply_patch"])
 const TODO_TOOL = "todowrite"
@@ -91,6 +93,8 @@ export default async function OpenCodeGoalPlugin(input: any, options: OpenCodeGo
   const sessionContexts = new Map<string, GoalExecutionContext>()
   const toolProgressMessages = new Set<string>()
   const toolProgressOrder: string[] = []
+  const meaningfulAssistantMessages = new Set<string>()
+  const meaningfulAssistantOrder: string[] = []
   const cadenceMutationReservations = new Map<string, string>()
   let hostAutoCompaction = true
   let hostCompactionReserved: number | undefined
@@ -145,6 +149,26 @@ export default async function OpenCodeGoalPlugin(input: any, options: OpenCodeGo
       const stale = toolProgressOrder.shift()
       if (stale) toolProgressMessages.delete(stale)
     }
+  }
+
+  function rememberMeaningfulAssistant(messageID: unknown) {
+    if (typeof messageID !== "string" || !messageID || meaningfulAssistantMessages.has(messageID)) return
+    meaningfulAssistantMessages.add(messageID)
+    meaningfulAssistantOrder.push(messageID)
+    while (meaningfulAssistantOrder.length > 256) {
+      const stale = meaningfulAssistantOrder.shift()
+      if (stale) meaningfulAssistantMessages.delete(stale)
+    }
+  }
+
+  function consumeMeaningfulAssistant(messageID: unknown): boolean {
+    if (typeof messageID !== "string" || !messageID) return false
+    const meaningful = meaningfulAssistantMessages.delete(messageID)
+    if (meaningful) {
+      const index = meaningfulAssistantOrder.indexOf(messageID)
+      if (index >= 0) meaningfulAssistantOrder.splice(index, 1)
+    }
+    return meaningful
   }
 
   function suppressNextSteeringIdle(sessionID: string) {
@@ -479,33 +503,54 @@ export default async function OpenCodeGoalPlugin(input: any, options: OpenCodeGo
       if (type === "message.updated") {
         const info = properties.info
         if (info?.role !== "assistant") return
+        if (assistantInfoHasMeaningfulActivity(info)) rememberMeaningfulAssistant(info?.id)
         const queuedSteeringMessageID = queuedSteeringMessages.get(sessionID)
         if (queuedSteeringMessageID && info?.parentID === queuedSteeringMessageID) {
           queuedSteeringMessages.delete(sessionID)
           steeringIdleSuppressions.delete(sessionID)
         }
         const owner = ownership.observeAssistant(info)
-        if (info?.time?.completed && owner) {
-          await serialize(sessionID, async () => {
-            const goal = await load(sessionID)
-            if (!goal || owner.goalID !== goal.id) return
-            let next = accountAssistantUsage(goal, {
-              messageID: info.id,
-              inputTokens: info.tokens?.input,
-              outputTokens: info.tokens?.output,
-              reasoningTokens: info.tokens?.reasoning,
-              cost: info.cost,
-              createdAt: info.time?.created,
-              completedAt: info.time?.completed,
+        if (info?.time?.completed) {
+          const meaningful = consumeMeaningfulAssistant(info?.id)
+          if (owner) {
+            let emptyNotice: { count: number; paused: boolean } | undefined
+            await serialize(sessionID, async () => {
+              const goal = await load(sessionID)
+              if (!goal || owner.goalID !== goal.id || goal.usage.seenMessageIDs.includes(info.id)) return
+              const sample = {
+                messageID: info.id,
+                inputTokens: info.tokens?.input,
+                outputTokens: info.tokens?.output,
+                reasoningTokens: info.tokens?.reasoning,
+                cost: info.cost,
+                createdAt: info.time?.created,
+                completedAt: info.time?.completed,
+              }
+              const currentRevision = sameGoalTurn(owner, goalTurnOwner(goal))
+              let next: GoalState
+              if (!meaningful && currentRevision && goal.status === "active") {
+                next = recordEmptyAssistantTurn(goal, sample)
+                emptyNotice = { count: next.emptyTurnCount ?? 0, paused: next.status === "paused" }
+              } else {
+                next = accountAssistantUsage(goal, sample)
+                if (meaningful && currentRevision) next = clearEmptyAssistantTurnStreak(next)
+              }
+              next = observeModelContextUsage(next, info.tokens)
+              await save(next)
             })
-            next = observeModelContextUsage(next, info.tokens)
-            await save(next)
-          })
+            if (emptyNotice) {
+              const message = emptyNotice.paused
+                ? `Goal paused after ${emptyNotice.count} consecutive empty assistant turns.`
+                : "Goal assistant returned no meaningful activity; retrying once."
+              await showGoalToast(client, message, "warning")
+            }
+          }
         }
         return
       }
       if (type === "message.part.updated") {
         const part = properties.part
+        if (assistantPartHasMeaningfulActivity(part)) rememberMeaningfulAssistant(part?.messageID)
         if (part?.type === "tool") {
           ownership.observeToolPart(sessionID, part)
           return

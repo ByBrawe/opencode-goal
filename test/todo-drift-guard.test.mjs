@@ -55,7 +55,7 @@ test("completed Todo regression is surfaced and remains stable across unchanged 
     { id: "b", content: "Implement fix", status: "completed" },
     { id: "c", content: "Run verification", status: "in_progress" },
   ], 400)
-  assert.equal(repaired.todoPlan?.anomalies?.some((item) => item.kind === "completed_regression"), false)
+  assert.equal(Boolean(repaired.todoPlan?.anomalies?.some((item) => item.kind === "completed_regression")), false)
 })
 
 test("substantial same-revision Todo replacement is surfaced without becoming a second planner", () => {
@@ -99,8 +99,8 @@ test("Goal revision changes allow a genuine Todo rebuild without same-revision d
   ], 400)
 
   assert.equal(rebuilt.todoPlan?.goalRevision, 2)
-  assert.equal(rebuilt.todoPlan?.anomalies?.some((item) => item.kind === "completed_regression"), false)
-  assert.equal(rebuilt.todoPlan?.anomalies?.some((item) => item.kind === "substantial_replacement"), false)
+  assert.equal(Boolean(rebuilt.todoPlan?.anomalies?.some((item) => item.kind === "completed_regression")), false)
+  assert.equal(Boolean(rebuilt.todoPlan?.anomalies?.some((item) => item.kind === "substantial_replacement")), false)
 })
 
 test("malformed persisted Todo anomaly metadata invalidates advisory telemetry", () => {

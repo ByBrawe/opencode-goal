@@ -3,6 +3,7 @@ import { createGoal, editGoal, pauseGoal, resumeGoal, waitForUserGoal } from "..
 import type { GoalExecutionContext, GoalState } from "../domain/types.js"
 import { GoalStore, GoalStoreConcurrencyError } from "../persistence/store.js"
 import { accountAssistantUsage } from "../runtime/accounting.js"
+import { formatGoalRuntimeFingerprint } from "../runtime/fingerprint.js"
 import { assistantInfoHasMeaningfulActivity, assistantPartHasMeaningfulActivity, clearEmptyAssistantTurnStreak, recordEmptyAssistantTurn } from "../runtime/empty-turn.js"
 import { reportBlocker } from "../runtime/blocker.js"
 import { CADENCE_BOUNDARY_MESSAGE, isClearlyReadOnlyShellCommand, requiresDistinctGoalTurnCadence } from "../runtime/cadence.js"
@@ -42,7 +43,7 @@ function textFromParts(parts: any[]): string {
 function formatStatus(goal: GoalState | null): string {
   if (!goal) return "No active goal."
   const req = goal.requirements.map((item, i) => `${i + 1}. [${item.status}] ${item.text}`).join("\n")
-  return `Goal: ${goal.objective}\nStatus: ${goal.status}\nRevision: ${goal.revision}\nGoal cumulative usage: ${goal.usage.turns} turns, ${goal.usage.tokens} tokens, cost ${goal.usage.cost.toFixed(4)}\nModel context: ${formatModelContext(goal)}\nRequirements:\n${req}`
+  return `Goal: ${goal.objective}\nStatus: ${goal.status}\nRevision: ${goal.revision}\nRuntime: ${formatGoalRuntimeFingerprint(goal.runtimeFingerprint)}\nGoal cumulative usage: ${goal.usage.turns} turns, ${goal.usage.tokens} tokens, cost ${goal.usage.cost.toFixed(4)}\nModel context: ${formatModelContext(goal)}\nRequirements:\n${req}`
 }
 
 async function sdkPrompt(client: any, sessionID: string, text: string, execution?: GoalExecutionContext) {

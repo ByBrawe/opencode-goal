@@ -2,7 +2,8 @@ import { createHash, randomUUID } from "node:crypto"
 import { promises as fs } from "node:fs"
 import path from "node:path"
 import { isDeepStrictEqual } from "node:util"
-import type { GoalState } from "../domain/types.js"
+import type { GoalRuntimeFingerprint, GoalState } from "../domain/types.js"
+import { stampGoalRuntimeFingerprint } from "../runtime/fingerprint.js"
 import { acquireGoalStoreProcessLock, GoalStoreConcurrencyError } from "./process-lock.js"
 
 export { GoalStoreConcurrencyError }
@@ -59,6 +60,17 @@ function validGeneration(value: unknown): boolean {
   return value === undefined || (Number.isSafeInteger(value) && Number(value) >= 0)
 }
 
+function validRuntimeFingerprint(value: unknown): value is GoalRuntimeFingerprint | undefined {
+  if (value === undefined) return true
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false
+  const fingerprint = value as Partial<GoalRuntimeFingerprint>
+  if (typeof fingerprint.goalVersion !== "string" || !fingerprint.goalVersion.trim()) return false
+  for (const optional of [fingerprint.goalBuild, fingerprint.opencodeVersion, fingerprint.pluginApiVersion, fingerprint.loopVersion]) {
+    if (optional !== undefined && (typeof optional !== "string" || !optional.trim())) return false
+  }
+  return true
+}
+
 function storageGeneration(goal: GoalState | null | undefined): number {
   return goal?.storageGeneration ?? 0
 }
@@ -82,6 +94,7 @@ function validateState(value: unknown): GoalState | null {
   const state = value as Partial<GoalState>
   if (state.schemaVersion !== 1 || typeof state.id !== "string" || typeof state.sessionID !== "string" || typeof state.objective !== "string") return null
   if (!Array.isArray(state.requirements) || !Array.isArray(state.evidence) || !validGeneration(state.storageGeneration)) return null
+  if (!validRuntimeFingerprint(state.runtimeFingerprint)) return null
   if (state.pendingContinuation !== undefined && typeof state.pendingContinuation !== "boolean") return null
   if (state.emptyTurnCount !== undefined && (!Number.isSafeInteger(state.emptyTurnCount) || Number(state.emptyTurnCount) < 0)) return null
   if (state.lastEmptyTurnAt !== undefined && (typeof state.lastEmptyTurnAt !== "number" || !Number.isFinite(state.lastEmptyTurnAt) || state.lastEmptyTurnAt < 0)) return null
@@ -117,6 +130,8 @@ function stateIntegrityDetail(value: unknown): string {
   if (schema !== 1) return `unsupported schemaVersion ${String(schema)}`
   const generation = value && typeof value === "object" ? (value as { storageGeneration?: unknown }).storageGeneration : undefined
   if (!validGeneration(generation)) return `invalid storageGeneration ${String(generation)}`
+  const runtimeFingerprint = value && typeof value === "object" ? (value as { runtimeFingerprint?: unknown }).runtimeFingerprint : undefined
+  if (!validRuntimeFingerprint(runtimeFingerprint)) return "invalid runtimeFingerprint"
   const pendingContinuation = value && typeof value === "object" ? (value as { pendingContinuation?: unknown }).pendingContinuation : undefined
   if (pendingContinuation !== undefined && typeof pendingContinuation !== "boolean") return `invalid pendingContinuation ${String(pendingContinuation)}`
   const emptyTurnCount = value && typeof value === "object" ? (value as { emptyTurnCount?: unknown }).emptyTurnCount : undefined
@@ -336,6 +351,7 @@ export class GoalStore {
         storageGeneration: nextGeneration,
         updatedAt: now,
       }
+      stampGoalRuntimeFingerprint(restored)
       await writeAtomic(this.directory, this.fileFor(sessionID), restored)
       return { ok: true, goal: restored, source }
     })
@@ -356,6 +372,7 @@ export class GoalStore {
             file,
           )
         }
+        stampGoalRuntimeFingerprint(state)
         nextGeneration = 1
       } else if (previous.id === state.id) {
         const currentGeneration = storageGeneration(previous)
@@ -366,6 +383,7 @@ export class GoalStore {
             file,
           )
         }
+        stampGoalRuntimeFingerprint(state)
         if (samePersistedGoalState(previous, state)) {
           state.storageGeneration = currentGeneration
           state.updatedAt = previous.updatedAt
@@ -387,6 +405,7 @@ export class GoalStore {
             file,
           )
         }
+        stampGoalRuntimeFingerprint(state)
         await this.#archive(previous, "replaced")
         nextGeneration = storageGeneration(previous) + 1
       }

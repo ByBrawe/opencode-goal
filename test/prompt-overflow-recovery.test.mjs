@@ -6,6 +6,16 @@ import path from "node:path"
 import OpenCodeGoalPlugin from "../dist/index.js"
 import { GoalStore } from "../dist/persistence/store.js"
 
+const ambiguousOverflowError = {
+  name: "APIError",
+  data: {
+    providerID: "opencode",
+    statusCode: 400,
+    isRetryable: false,
+    message: "[invalid_request_error] The request contains invalid parameters.",
+  },
+}
+
 const overflowError = {
   name: "APIError",
   data: {
@@ -146,6 +156,89 @@ test("a second prompt overflow before any successful Goal-owned turn fails safe 
     assert.match(paused.stopReason, /Run \/compact, then \/goal resume/)
     assert.equal(paused.infrastructureRecovery, undefined)
     assert.equal(paused.skipNextStallCheck, undefined)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+
+test("unsafe host-observed context headroom compacts before the next Goal dispatch", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-preemptive-context-"))
+  const sessionID = "preemptive-context"
+  try {
+    const fake = fakeClient()
+    const hooks = await OpenCodeGoalPlugin({ client: fake.client, directory: root })
+    const store = new GoalStore(root)
+    await createBoundGoal(hooks, sessionID)
+
+    const current = await store.load(sessionID)
+    assert.ok(current)
+    await store.save({
+      ...current,
+      execution: {
+        ...current.execution,
+        modelContext: {
+          contextLimit: 1_048_576,
+          outputLimit: 131_072,
+          lastRequestTokens: 1_012_387,
+          lastInputTokens: 990_000,
+          autoCompaction: true,
+          observedAt: Date.now(),
+        },
+      },
+    })
+
+    await hooks.event({ event: { type: "session.idle", properties: { sessionID } } })
+    await tick()
+
+    const recovered = await store.load(sessionID)
+    assert.equal(fake.summaries.length, 1, "unsafe headroom should compact before another provider request")
+    assert.equal(fake.prompts.length, 1, "exactly one Goal continuation should resume after compaction")
+    assert.equal(recovered.execution.modelContext.lastRequestTokens, undefined, "stale high-pressure telemetry must be cleared after successful compaction")
+    assert.equal(recovered.execution.modelContext.lastInputTokens, undefined)
+    assert.equal(recovered.status, "active")
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("generic invalid-request HTTP 400 uses one-shot compaction when host telemetry is already critical", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-ambiguous-overflow-"))
+  const sessionID = "ambiguous-overflow"
+  try {
+    const fake = fakeClient()
+    const hooks = await OpenCodeGoalPlugin({ client: fake.client, directory: root })
+    const store = new GoalStore(root)
+    await createBoundGoal(hooks, sessionID)
+
+    const current = await store.load(sessionID)
+    assert.ok(current)
+    await store.save({
+      ...current,
+      execution: {
+        ...current.execution,
+        modelContext: {
+          contextLimit: 1_048_576,
+          outputLimit: 131_072,
+          lastRequestTokens: 1_012_387,
+          autoCompaction: true,
+          observedAt: Date.now(),
+        },
+      },
+    })
+
+    await hooks.event({
+      event: {
+        type: "session.error",
+        properties: { sessionID, error: ambiguousOverflowError },
+      },
+    })
+    await tick()
+
+    const recovered = await store.load(sessionID)
+    assert.equal(fake.summaries.length, 1)
+    assert.equal(recovered.status, "active")
+    assert.equal(fake.prompts.length, 1)
   } finally {
     await rm(root, { recursive: true, force: true })
   }

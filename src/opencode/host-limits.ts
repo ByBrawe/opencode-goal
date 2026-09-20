@@ -94,6 +94,7 @@ async function mutateFreshGoal(
 export function installHostLimitHandling(input: PluginInput, hooks: PluginHooks): void {
   if (typeof hooks.event !== "function") return
   const originalEvent = hooks.event
+  const originalAutocontinue = hooks["experimental.compaction.autocontinue"]
   const store = new GoalStore(input.directory)
   const recoveringOverflow = new Set<string>()
   const overflowAttempts = new Map<string, PromptOverflowAttempt>()
@@ -154,7 +155,21 @@ export function installHostLimitHandling(input: PluginInput, hooks: PluginHooks)
     }
   }
 
-  hooks.event = async (eventInput: any) => {
+  if (typeof originalAutocontinue === "function") {
+    hooks["experimental.compaction.autocontinue"] = async (event: any, output: any) => {
+      await originalAutocontinue(event, output)
+      const sessionID = typeof event?.sessionID === "string" ? event.sessionID : undefined
+      if (!sessionID) return
+      await mutateFreshGoal(store, sessionID, (goal) => {
+        if (goal.status !== "active") return null
+        const context = goal.execution?.modelContext
+        if (!context || (context.lastRequestTokens === undefined && context.lastInputTokens === undefined)) return null
+        return clearObservedModelContextUsage(goal)
+      })
+    }
+  }
+
+    hooks.event = async (eventInput: any) => {
     const type = String(eventInput?.event?.type ?? "")
     const properties = eventInput?.event?.properties ?? {}
     const sessionID = eventSessionID(eventInput)

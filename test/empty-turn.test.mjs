@@ -245,7 +245,10 @@ test("two consecutive completed-but-empty Goal turns retry once then pause witho
     await hooks.event({ event: { type: "session.idle", properties: { sessionID: "empty-goal" } } })
     await tick()
     assert.equal(fake.prompts.length, 1, "paused empty-turn fail-safe must stop autonomous dispatch")
-    assert.equal(fake.toasts.length, 2)
+    const emptyToasts = fake.toasts
+      .map((item) => item?.body?.message)
+      .filter((message) => typeof message === "string" && (/no meaningful activity/i.test(message) || /empty assistant turns/i.test(message)))
+    assert.equal(emptyToasts.length, 2, "first empty retry and second empty pause must both be visible")
   } finally {
     await rm(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 50 })
   }

@@ -90,7 +90,7 @@ test("distinct Goal-owned shell actions count as host progress while identical r
     goal = await readOnlyGoal(root)
     assert.equal(goal.progressRevision, before.progressRevision + 2, "a distinct exited shell action counts once even when it reports a diagnostic failure")
   } finally {
-    await rm(root, { recursive: true, force: true })
+    await rm(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 50 })
   }
 })
 
@@ -137,7 +137,7 @@ test("three shell-only continuation turns do not false-pause, while repeated no-
       }
     }
   } finally {
-    await rm(root, { recursive: true, force: true })
+    await rm(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 50 })
   }
 })
 
@@ -167,7 +167,7 @@ test("three distinct timed-out shell turns cannot evade the stall guard", async 
       }
     }
   } finally {
-    await rm(root, { recursive: true, force: true })
+    await rm(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 50 })
   }
 })
 
@@ -199,7 +199,7 @@ test("shell completion from an older Goal revision cannot mark the edited Goal",
     assert.equal(after.revision, 2)
     assert.equal(after.progressRevision, edited.progressRevision, "stale shell work must not mutate the new Goal revision")
   } finally {
-    await rm(root, { recursive: true, force: true })
+    await rm(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 50 })
   }
 })
 
@@ -228,7 +228,7 @@ test("Git shell marker ignores Goal/Loop control-plane churn but observes durabl
     await writeFile(path.join(root, "project-output.txt"), "real work\n")
     assert.notEqual(await shellGitWorkspaceMarker(root), base, "project files must still change the marker")
   } finally {
-    await rm(root, { recursive: true, force: true })
+    await rm(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 50 })
   }
 })
 
@@ -254,6 +254,6 @@ test("distinct read-only shell probes cannot keep a stalled Goal alive", async (
       }
     }
   } finally {
-    await rm(root, { recursive: true, force: true })
+    await rm(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 50 })
   }
 })

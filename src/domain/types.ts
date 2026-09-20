@@ -103,6 +103,17 @@ export interface GoalTodoPlanItem {
   order: number
 }
 
+export type GoalTodoPlanAnomalyKind =
+  | "multiple_in_progress"
+  | "completed_regression"
+  | "substantial_replacement"
+
+export interface GoalTodoPlanAnomaly {
+  kind: GoalTodoPlanAnomalyKind
+  summary: string
+  itemKeys: string[]
+}
+
 /**
  * Advisory telemetry for OpenCode's native session Todo plan.
  *
@@ -121,6 +132,8 @@ export interface GoalTodoPlan {
   cancelled: number
   observedAt: number
   items?: GoalTodoPlanItem[]
+  /** Advisory host-detected drift warnings. They never become completion evidence. */
+  anomalies?: GoalTodoPlanAnomaly[]
 }
 
 export interface FileRequirementInput {

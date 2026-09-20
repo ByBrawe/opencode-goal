@@ -68,6 +68,8 @@ function validateState(value: unknown): GoalState | null {
   if (state.schemaVersion !== 1 || typeof state.id !== "string" || typeof state.sessionID !== "string" || typeof state.objective !== "string") return null
   if (!Array.isArray(state.requirements) || !Array.isArray(state.evidence) || !validGeneration(state.storageGeneration)) return null
   if (state.pendingContinuation !== undefined && typeof state.pendingContinuation !== "boolean") return null
+  if (state.emptyTurnCount !== undefined && (!Number.isSafeInteger(state.emptyTurnCount) || Number(state.emptyTurnCount) < 0)) return null
+  if (state.lastEmptyTurnAt !== undefined && (typeof state.lastEmptyTurnAt !== "number" || !Number.isFinite(state.lastEmptyTurnAt) || state.lastEmptyTurnAt < 0)) return null
   return value as GoalState
 }
 
@@ -102,6 +104,10 @@ function stateIntegrityDetail(value: unknown): string {
   if (!validGeneration(generation)) return `invalid storageGeneration ${String(generation)}`
   const pendingContinuation = value && typeof value === "object" ? (value as { pendingContinuation?: unknown }).pendingContinuation : undefined
   if (pendingContinuation !== undefined && typeof pendingContinuation !== "boolean") return `invalid pendingContinuation ${String(pendingContinuation)}`
+  const emptyTurnCount = value && typeof value === "object" ? (value as { emptyTurnCount?: unknown }).emptyTurnCount : undefined
+  if (emptyTurnCount !== undefined && (!Number.isSafeInteger(emptyTurnCount) || Number(emptyTurnCount) < 0)) return `invalid emptyTurnCount ${String(emptyTurnCount)}`
+  const lastEmptyTurnAt = value && typeof value === "object" ? (value as { lastEmptyTurnAt?: unknown }).lastEmptyTurnAt : undefined
+  if (lastEmptyTurnAt !== undefined && (typeof lastEmptyTurnAt !== "number" || !Number.isFinite(lastEmptyTurnAt) || lastEmptyTurnAt < 0)) return `invalid lastEmptyTurnAt ${String(lastEmptyTurnAt)}`
   return "stored Goal state shape is invalid"
 }
 

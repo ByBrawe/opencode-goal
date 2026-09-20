@@ -1,5 +1,5 @@
 import { tool } from "@opencode-ai/plugin/tool"
-import { createGoal, editGoal, pauseGoal, resumeGoal } from "../domain/goal.js"
+import { createGoal, editGoal, pauseGoal, resumeGoal, waitForUserGoal } from "../domain/goal.js"
 import type { GoalExecutionContext, GoalState } from "../domain/types.js"
 import { GoalStore, GoalStoreConcurrencyError } from "../persistence/store.js"
 import { accountAssistantUsage } from "../runtime/accounting.js"
@@ -627,6 +627,23 @@ export default async function OpenCodeGoalPlugin(input: any, options: OpenCodeGo
             return result.audit.ok ? "Goal completed with host and verifier-backed evidence." : `Completion rejected:\n- ${result.audit.reasons.join("\n- ")}`
           })
         },
+      }),
+      opencode_goal_wait_for_user: tool({
+        description: "Put the active Goal to sleep when required progress genuinely depends on new user input, approval, credentials, production/manual action, or external data the agent cannot obtain. Use this instead of repeatedly polling the same unchanged dependency. The Goal stays persisted and does not auto-continue until the user resumes it.",
+        args: {
+          reason: tool.schema.string(),
+          needed: tool.schema.string().optional(),
+        },
+        execute: async (args: any, context: any) => await serialize(context.sessionID, async () => {
+          const goal = await load(context.sessionID)
+          if (!goal) return "No active goal."
+          const stale = staleToolReason(context, goal)
+          if (stale) return stale
+          if (goal.status !== "active") return `Waiting-user rejected: goal status is ${goal.status}.`
+          const next = waitForUserGoal(goal, args)
+          await save(next)
+          return "Goal is waiting for user input. End this assistant turn without more project work or polling; autonomous Goal continuation is asleep until the user resumes it."
+        }),
       }),
       opencode_goal_blocked: tool({
         description: "Report a genuine blocker. The same blocker must recur on three distinct goal turns before the goal becomes blocked.",

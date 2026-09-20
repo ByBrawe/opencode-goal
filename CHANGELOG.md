@@ -2,6 +2,17 @@
 
 All notable changes to **OpenCode Goals** are documented here.
 
+## 1.3.32 — 2026-09-20
+
+Long-session liveness and Goal/Loop isolation release.
+
+- Add a durable `waiting_user` Goal state and `opencode_goal_wait_for_user` tool so work that genuinely depends on approval, credentials, deployment, manual action, or unavailable external data sleeps instead of burning autonomous turns; natural-language resume wakes it only at the safe idle ownership boundary.
+- Stop Loop control-plane writes under `.opencode/opencode-loop` from manufacturing Goal progress, and make shell progress depend on durable Git/worktree change while read-only probes remain activity rather than stall-resetting progress.
+- Add proactive model-context headroom protection before the next Goal dispatch, clear stale high-pressure telemetry after native compaction, and recover one generic HTTP 400 `invalid_request_error` as suspected context pressure only when independent host telemetry is already critical.
+- Preserve one-shot overflow recovery and fail-safe pause semantics so proactive/native compaction cannot create a double-compaction continuation race.
+- Add regressions modeled on the long Loto Diyarı session: Loop-log churn, repeated read-only shell probes, waiting-user sleep/resume, ~96.5% context pressure, generic invalid-request overflow, and native auto-compaction ownership.
+- Validate the exact feature head across all six required workflows: CI, Release Readiness, Real Host Progress, Real Restart Recovery, Real Loop Coexistence, and Actions Security Gate, including Ubuntu/Windows and minimum/latest OpenCode compatibility lanes.
+
 ## 1.3.31 — 2026-08-28
 
 Durable long-Goal Todo recovery release.

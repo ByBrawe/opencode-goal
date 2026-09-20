@@ -16,7 +16,7 @@ export function auditCompletion(goal: GoalState): CompletionAudit {
   const reasons: string[] = []
   const missingRequirementIDs: string[] = []
 
-  if (!["active", "paused", "blocked", "budget_limited", "usage_limited"].includes(goal.status)) {
+  if (!["active", "paused", "waiting_user", "blocked", "budget_limited", "usage_limited"].includes(goal.status)) {
     reasons.push(`goal status ${goal.status} cannot enter completion audit`)
   }
 

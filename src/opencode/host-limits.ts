@@ -1,6 +1,7 @@
 import type CorePlugin from "./plugin.js"
 import type { GoalState } from "../domain/types.js"
 import { GoalStore, GoalStoreConcurrencyError } from "../persistence/store.js"
+import { clearObservedModelContextUsage, modelContextCompactionReason } from "../runtime/model-context.js"
 import {
   fatalProviderReason,
   hostUsageLimitReason,
@@ -56,7 +57,7 @@ function clearOverflowRecovery(goal: GoalState, now = Date.now()): GoalState {
     skipNextStallCheck: _skipNextStallCheck,
     ...rest
   } = goal
-  return { ...rest, status: "active", skipNextStallCheck: true, updatedAt: now }
+  return clearObservedModelContextUsage({ ...rest, status: "active" as const, skipNextStallCheck: true, updatedAt: now }, now)
 }
 
 /**
@@ -93,6 +94,7 @@ async function mutateFreshGoal(
 export function installHostLimitHandling(input: PluginInput, hooks: PluginHooks): void {
   if (typeof hooks.event !== "function") return
   const originalEvent = hooks.event
+  const originalAutocontinue = hooks["experimental.compaction.autocontinue"]
   const store = new GoalStore(input.directory)
   const recoveringOverflow = new Set<string>()
   const overflowAttempts = new Map<string, PromptOverflowAttempt>()
@@ -153,7 +155,21 @@ export function installHostLimitHandling(input: PluginInput, hooks: PluginHooks)
     }
   }
 
-  hooks.event = async (eventInput: any) => {
+  if (typeof originalAutocontinue === "function") {
+    hooks["experimental.compaction.autocontinue"] = async (event: any, output: any) => {
+      await originalAutocontinue(event, output)
+      const sessionID = typeof event?.sessionID === "string" ? event.sessionID : undefined
+      if (!sessionID) return
+      await mutateFreshGoal(store, sessionID, (goal) => {
+        if (goal.status !== "active") return null
+        const context = goal.execution?.modelContext
+        if (!context || (context.lastRequestTokens === undefined && context.lastInputTokens === undefined)) return null
+        return clearObservedModelContextUsage(goal)
+      })
+    }
+  }
+
+    hooks.event = async (eventInput: any) => {
     const type = String(eventInput?.event?.type ?? "")
     const properties = eventInput?.event?.properties ?? {}
     const sessionID = eventSessionID(eventInput)
@@ -162,6 +178,45 @@ export function installHostLimitHandling(input: PluginInput, hooks: PluginHooks)
       // Never dispatch the oversized pre-compaction history again while the one
       // automatic compaction attempt is still in flight.
       return
+    }
+
+    if (sessionID && type === "session.idle") {
+      const goal = await store.load(sessionID)
+      const pressureReason = goal?.status === "active" ? modelContextCompactionReason(goal) : undefined
+      if (goal?.status === "active" && pressureReason) {
+        const previous = overflowAttempts.get(sessionID)
+        if (previous && sameAttempt(goal, previous) && goal.usage.turns <= previous.baselineTurns) {
+          await pauseOverflow(sessionID, previous, pressureReason)
+          return
+        }
+
+        recoveringOverflow.add(sessionID)
+        let freshAttempt: PromptOverflowAttempt | undefined
+        const marked = await mutateFreshGoal(store, sessionID, (latest) => {
+          if (latest.status !== "active") return null
+          const freshReason = modelContextCompactionReason(latest)
+          if (!freshReason) return null
+          freshAttempt = {
+            goalID: latest.id,
+            revision: latest.revision,
+            baselineTurns: latest.usage.turns,
+          }
+          return markPromptOverflowRecovering(latest, freshReason)
+        })
+        if (!marked?.wrote || !freshAttempt) {
+          recoveringOverflow.delete(sessionID)
+        } else {
+          overflowAttempts.set(sessionID, freshAttempt)
+          await showGoalToast(input.client, "Model context headroom is low; compacting the OpenCode session before the next Goal turn.", "warning")
+          const attempt = freshAttempt
+          try {
+            await recoverPromptOverflow(sessionID, attempt, pressureReason)
+          } catch (error) {
+            await pauseOverflow(sessionID, attempt, `${pressureReason} Automatic compaction recovery failed: ${String(error)}`).catch(() => undefined)
+          }
+          return
+        }
+      }
     }
 
     if (sessionID && type === "session.status") {
@@ -175,7 +230,8 @@ export function installHostLimitHandling(input: PluginInput, hooks: PluginHooks)
     }
 
     if (sessionID && type === "session.error") {
-      const overflowReason = providerPromptOverflowReason(properties.error)
+      const observedGoal = await store.load(sessionID)
+      const overflowReason = providerPromptOverflowReason(properties.error, observedGoal ?? undefined)
       if (overflowReason) {
         if (recoveringOverflow.has(sessionID)) {
           // Duplicate error delivery from the same failed request is not a
@@ -184,7 +240,7 @@ export function installHostLimitHandling(input: PluginInput, hooks: PluginHooks)
           return
         }
 
-        const goal = await store.load(sessionID)
+        const goal = observedGoal
         if (goal?.status === "active") {
           const previous = overflowAttempts.get(sessionID)
           if (previous && sameAttempt(goal, previous) && goal.usage.turns <= previous.baselineTurns) {

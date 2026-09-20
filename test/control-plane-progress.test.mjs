@@ -55,6 +55,8 @@ test("Goal control-plane path matcher handles relative, POSIX, and Windows paths
   assert.equal(isGoalControlPlanePath(".opencode/goals/state.json"), true)
   assert.equal(isGoalControlPlanePath("/work/repo/.opencode/goal-locks/state.lock"), true)
   assert.equal(isGoalControlPlanePath("C:\\work\\repo\\.opencode\\goal-sequences\\queue.json"), true)
+  assert.equal(isGoalControlPlanePath(".opencode/opencode-loop/loop.log"), true)
+  assert.equal(isGoalControlPlanePath("C:\\work\\repo\\.opencode\\opencode-loop\\state.json"), true)
   assert.equal(isGoalControlPlanePath(".opencode/commands/goal.md"), false)
   assert.equal(isGoalControlPlanePath("src/.opencode-helper.ts"), false)
 })
@@ -75,6 +77,11 @@ test("Goal persistence PatchParts cannot manufacture host progress", async () =>
     const afterInternal = await store.load(sessionID)
     assert.equal(afterInternal.progressRevision, before.progressRevision)
     assert.deepEqual(afterInternal.progressFingerprints, before.progressFingerprints)
+
+    const loopLog = path.join(root, ".opencode", "opencode-loop", "loop.log")
+    await patch(hooks, sessionID, "loop-control-only", [loopLog])
+    const afterLoopControl = await store.load(sessionID)
+    assert.equal(afterLoopControl.progressRevision, before.progressRevision, "Loop scheduler/log churn must not manufacture Goal progress")
 
     const projectFile = path.join(root, "src", "real-work.ts")
     await patch(hooks, sessionID, "mixed", [internal, projectFile])

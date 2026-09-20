@@ -1,9 +1,10 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises"
+import { execFileSync } from "node:child_process"
+import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import OpenCodeGoalPlugin, { shellActivityFingerprint, shellProcessExited } from "../dist/index.js"
+import OpenCodeGoalPlugin, { shellActivityFingerprint, shellGitWorkspaceMarker, shellProcessExited } from "../dist/index.js"
 
 function fakeClient() {
   return {
@@ -197,6 +198,61 @@ test("shell completion from an older Goal revision cannot mark the edited Goal",
     const after = await readOnlyGoal(root)
     assert.equal(after.revision, 2)
     assert.equal(after.progressRevision, edited.progressRevision, "stale shell work must not mutate the new Goal revision")
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+
+test("Git shell marker ignores Goal/Loop control-plane churn but observes durable project work", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-shell-git-marker-"))
+  try {
+    execFileSync("git", ["init"], { cwd: root, stdio: "ignore" })
+    execFileSync("git", ["config", "user.email", "goal-test@example.invalid"], { cwd: root })
+    execFileSync("git", ["config", "user.name", "Goal Test"], { cwd: root })
+    await writeFile(path.join(root, "README.md"), "base\n")
+    execFileSync("git", ["add", "README.md"], { cwd: root })
+    execFileSync("git", ["commit", "-m", "base"], { cwd: root, stdio: "ignore" })
+
+    const base = await shellGitWorkspaceMarker(root)
+    assert.match(base, /^[a-f0-9]{64}$/)
+
+    await mkdir(path.join(root, ".opencode", "opencode-loop"), { recursive: true })
+    await writeFile(path.join(root, ".opencode", "opencode-loop", "loop.log"), "session-busy\n")
+    assert.equal(await shellGitWorkspaceMarker(root), base, "Loop scheduler diagnostics must not change the project marker")
+
+    await mkdir(path.join(root, ".opencode", "goals"), { recursive: true })
+    await writeFile(path.join(root, ".opencode", "goals", "state.json"), "{}\n")
+    assert.equal(await shellGitWorkspaceMarker(root), base, "Goal persistence must not change the project marker")
+
+    await writeFile(path.join(root, "project-output.txt"), "real work\n")
+    assert.notEqual(await shellGitWorkspaceMarker(root), base, "project files must still change the marker")
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("distinct read-only shell probes cannot keep a stalled Goal alive", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-shell-readonly-"))
+  try {
+    const hooks = await OpenCodeGoalPlugin({ client: fakeClient(), directory: root })
+    await createGoal(hooks)
+
+    const baseline = (await readOnlyGoal(root)).progressRevision
+    const commands = ["ls", "cat README.md", "Get-Content README.md"]
+    for (const [index, command] of commands.entries()) {
+      await runShell(hooks, { callID: `readonly-${index + 1}`, command })
+      await closeTurn(hooks)
+      const goal = await readOnlyGoal(root)
+      assert.equal(goal.progressRevision, baseline, "read-only probes are activity, not durable project progress")
+      if (index < 2) {
+        assert.equal(goal.status, "active")
+        assert.equal(goal.stalledTurns, index + 1)
+      } else {
+        assert.equal(goal.status, "paused")
+        assert.equal(goal.stalledTurns, 3)
+      }
+    }
   } finally {
     await rm(root, { recursive: true, force: true })
   }

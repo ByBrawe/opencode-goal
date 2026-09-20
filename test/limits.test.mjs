@@ -129,6 +129,41 @@ test("provider prompt overflow is deterministic context pressure, never transien
   assert.equal(isTransientInfrastructureError(JSON.stringify(error)), false)
 })
 
+test("generic HTTP 400 invalid-request errors become context recovery only under independently high host pressure", () => {
+  const error = {
+    name: "APIError",
+    data: {
+      providerID: "opencode",
+      statusCode: 400,
+      isRetryable: false,
+      message: "[invalid_request_error] The request contains invalid parameters.",
+    },
+  }
+  const high = {
+    ...createGoal({ sessionID: "s-pressure-high", objective: "work" }),
+    execution: {
+      model: { providerID: "opencode", modelID: "m" },
+      modelContext: {
+        contextLimit: 1_048_576,
+        outputLimit: 131_072,
+        lastRequestTokens: 1_012_387,
+        autoCompaction: true,
+        observedAt: 1,
+      },
+    },
+  }
+  assert.match(providerPromptOverflowReason(error, high), /Suspected provider prompt\/context limit.*HTTP 400.*96\.5%/i)
+
+  const low = {
+    ...high,
+    execution: {
+      ...high.execution,
+      modelContext: { ...high.execution.modelContext, lastRequestTokens: 400_000 },
+    },
+  }
+  assert.equal(providerPromptOverflowReason(error, low), undefined, "generic 400 must remain a real parameter error without independent context pressure")
+})
+
 test("fatal provider pause clears stale infrastructure retry metadata", () => {
   const goal = {
     ...createGoal({ sessionID: "s-overflow", objective: "work" }),

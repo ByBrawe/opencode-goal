@@ -456,7 +456,7 @@ async function main() {
     lastState = await readGoal(workspace)
 
     const shellFingerprints = lastState.progressFingerprints.filter((item) => /^shell:[a-f0-9]{64}$/.test(item))
-    const shellNotes = lastState.progressNotes.filter((item) => item?.summary?.includes("Goal-owned shell command completed."))
+    const shellNotes = lastState.progressNotes.filter((item) => item?.summary?.includes("Goal-owned shell command"))
 
     if (EXPECT_PAUSE) {
       assert.equal(lastState.status, "paused", `three repeated no-progress shell turns must pause the Goal: ${diagnostics()}`)

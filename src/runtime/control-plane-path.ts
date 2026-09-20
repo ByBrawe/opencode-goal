@@ -2,6 +2,10 @@ const CONTROL_PLANE_ROOTS = [
   ".opencode/goals",
   ".opencode/goal-locks",
   ".opencode/goal-sequences",
+  // Companion Loop scheduler/log state is plugin control-plane churn too. A
+  // Loop busy/deferred log write must never keep an otherwise stalled Goal
+  // alive by masquerading as user-project progress.
+  ".opencode/opencode-loop",
 ] as const
 
 function normalizedPath(value: string): string {

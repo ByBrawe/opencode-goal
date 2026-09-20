@@ -172,6 +172,22 @@ export function pauseGoal(goal: GoalState, reason = "paused by user", now = Date
   return { ...goal, status: "paused", stopReason: reason, updatedAt: now }
 }
 
+export function waitForUserGoal(goal: GoalState, input: { reason: string; needed?: string; now?: number }): GoalState {
+  if (goal.status === "completed") return goal
+  const reason = input.reason.replace(/\\s+/g, " ").trim()
+  const needed = (input.needed ?? "").replace(/\\s+/g, " ").trim()
+  if (!reason) throw new Error("waiting-user reason must not be empty")
+  const { blockerAudit: _blockerAudit, infrastructureRecovery: _infrastructureRecovery, skipNextStallCheck: _skipNextStallCheck, ...rest } = goal
+  return {
+    ...rest,
+    status: "waiting_user",
+    stopReason: `Waiting for user input: ${reason}${needed ? ` Needed: ${needed}` : ""}`,
+    stalledTurns: 0,
+    observedProgressRevision: goal.progressRevision,
+    updatedAt: input.now ?? Date.now(),
+  }
+}
+
 export function resumeGoal(goal: GoalState, now = Date.now()): GoalState {
   if (goal.status === "completed") return goal
   const { blockerAudit: _blocker, stopReason: _reason, pendingContinuation: _pendingContinuation, ...rest } = goal

@@ -1,6 +1,7 @@
 export type GoalStatus =
   | "active"
   | "paused"
+  | "waiting_user"
   | "blocked"
   | "budget_limited"
   | "usage_limited"

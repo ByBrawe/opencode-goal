@@ -1,7 +1,14 @@
 import { pauseGoal } from "../domain/goal.js"
 import type { GoalState } from "../domain/types.js"
+import { modelContextCompactionReason } from "./model-context.js"
 
 const USAGE_LIMIT_REASONS = new Set(["free_tier_limit", "account_rate_limit"])
+
+const AMBIGUOUS_CONTEXT_ERROR_PATTERNS = [
+  /invalid[_ -]?request[_ -]?error/i,
+  /request contains invalid parameters/i,
+  /\\binvalid parameters?\\b/i,
+]
 
 const PROMPT_OVERFLOW_PATTERNS = [
   /prompt exceeds max(?:imum)? length/i,
@@ -57,14 +64,26 @@ export function isProviderPromptOverflowError(value: unknown): boolean {
   return PROMPT_OVERFLOW_PATTERNS.some((pattern) => pattern.test(text))
 }
 
-export function providerPromptOverflowReason(value: unknown): string | undefined {
-  if (!isProviderPromptOverflowError(value)) return undefined
+export function providerPromptOverflowReason(value: unknown, goal?: Pick<GoalState, "execution">): string | undefined {
+  const explicit = isProviderPromptOverflowError(value)
   const error = value && typeof value === "object" ? value as HostSessionError : undefined
   const data = error?.data ?? {}
   const status = typeof data.statusCode === "number" ? data.statusCode : undefined
   const provider = concise(data.providerID, 80)
   const message = concise(data.message, 360) || concise(errorText(value), 360) || "Prompt exceeds the provider context limit"
-  return `Provider prompt/context limit${provider ? ` (${provider})` : ""}${status !== undefined ? ` HTTP ${status}` : ""}: ${message}`
+  if (explicit) {
+    return `Provider prompt/context limit${provider ? ` (${provider})` : ""}${status !== undefined ? ` HTTP ${status}` : ""}: ${message}`
+  }
+
+  // Some OpenAI-compatible/provider bridges collapse context overflow into a
+  // generic HTTP 400 invalid_request_error. Only reinterpret that ambiguous
+  // shape when independent host telemetry already shows unsafe context pressure.
+  if (status !== 400 || data.isRetryable === true || !goal) return undefined
+  const pressure = modelContextCompactionReason(goal, { respectAutoCompaction: false })
+  if (!pressure) return undefined
+  const combined = errorText(value)
+  if (!AMBIGUOUS_CONTEXT_ERROR_PATTERNS.some((pattern) => pattern.test(combined))) return undefined
+  return `Suspected provider prompt/context limit${provider ? ` (${provider})` : ""} HTTP 400: ${message} ${pressure}`
 }
 
 export function hostUsageLimitReason(status: HostRetryStatus): string | undefined {

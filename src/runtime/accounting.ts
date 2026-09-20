@@ -115,14 +115,19 @@ export function settleReachedGoalBudget(goal: GoalState, now = Date.now()): Goal
   return { ...rest, status: "budget_limited", stopReason: reason, updatedAt: now }
 }
 
-export function accountAssistantUsage(goal: GoalState, sample: AssistantUsageSample, now = Date.now()): GoalState {
+export function accountAssistantUsage(
+  goal: GoalState,
+  sample: AssistantUsageSample,
+  now = Date.now(),
+  options: { countTurn?: boolean } = {},
+): GoalState {
   if (!sample.messageID || goal.usage.seenMessageIDs.includes(sample.messageID)) return goal
   const tokens = Math.max(0, sample.inputTokens ?? 0) + Math.max(0, sample.outputTokens ?? 0) + Math.max(0, sample.reasoningTokens ?? 0)
   const runtimeMs = sample.createdAt !== undefined && sample.completedAt !== undefined
     ? Math.max(0, sample.completedAt - sample.createdAt)
     : 0
   const usage = {
-    turns: goal.usage.turns + 1,
+    turns: goal.usage.turns + (options.countTurn === false ? 0 : 1),
     tokens: goal.usage.tokens + tokens,
     cost: goal.usage.cost + Math.max(0, sample.cost ?? 0),
     runtimeMs: goal.usage.runtimeMs + runtimeMs,

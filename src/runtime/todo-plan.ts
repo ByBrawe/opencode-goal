@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import type { GoalState, GoalTodoPlan, GoalTodoPlanItem } from "../domain/types.js"
+import type { GoalState, GoalTodoPlan, GoalTodoPlanAnomaly, GoalTodoPlanItem } from "../domain/types.js"
 
 export type NativeTodoStatus = "pending" | "in_progress" | "completed" | "cancelled"
 
@@ -11,6 +11,7 @@ export interface NativeTodoItem {
 }
 
 const TODO_STATUSES = new Set<NativeTodoStatus>(["pending", "in_progress", "completed", "cancelled"])
+const TODO_ANOMALY_KINDS = new Set(["multiple_in_progress", "completed_regression", "substantial_replacement"])
 export const TODO_MANIFEST_CONTEXT_MAX_CHARS = 8_000
 
 function nonNegativeInteger(value: unknown): value is number {
@@ -70,6 +71,24 @@ function validManifestItems(plan: Partial<GoalTodoPlan>): boolean {
     && counts.cancelled === plan.cancelled
 }
 
+function validPlanAnomalies(plan: Partial<GoalTodoPlan>): boolean {
+  if (plan.anomalies === undefined) return true
+  if (!Array.isArray(plan.anomalies)) return false
+  for (const raw of plan.anomalies) {
+    if (!raw || typeof raw !== "object") return false
+    const anomaly = raw as Partial<GoalTodoPlanAnomaly>
+    if (typeof anomaly.kind !== "string" || !TODO_ANOMALY_KINDS.has(anomaly.kind)) return false
+    if (typeof anomaly.summary !== "string" || !anomaly.summary.trim()) return false
+    if (!Array.isArray(anomaly.itemKeys)) return false
+    const keys = new Set<string>()
+    for (const key of anomaly.itemKeys) {
+      if (typeof key !== "string" || !key.trim() || keys.has(key)) return false
+      keys.add(key)
+    }
+  }
+  return true
+}
+
 export function validGoalTodoPlan(value: unknown): value is GoalTodoPlan {
   if (!value || typeof value !== "object") return false
   const plan = value as Partial<GoalTodoPlan>
@@ -85,6 +104,7 @@ export function validGoalTodoPlan(value: unknown): value is GoalTodoPlan {
     && Number.isFinite(plan.observedAt)
     && plan.total === plan.pending + plan.inProgress + plan.completed + plan.cancelled
     && validManifestItems(plan)
+    && validPlanAnomalies(plan)
 }
 
 export function normalizeNativeTodos(value: unknown): NativeTodoItem[] | null {
@@ -107,6 +127,59 @@ export function normalizeNativeTodos(value: unknown): NativeTodoItem[] | null {
   return result
 }
 
+function multipleInProgressAnomaly(items: GoalTodoPlanItem[]): GoalTodoPlanAnomaly | undefined {
+  const active = items.filter((item) => item.status === "in_progress")
+  if (active.length <= 1) return undefined
+  return {
+    kind: "multiple_in_progress",
+    summary: `${active.length} native Todo items are simultaneously in_progress; expected at most one.`,
+    itemKeys: active.map((item) => item.key),
+  }
+}
+
+function transitionAnomalies(previous: GoalTodoPlan | undefined, next: GoalTodoPlan): GoalTodoPlanAnomaly[] {
+  if (!previous || previous.goalRevision !== next.goalRevision || !Array.isArray(previous.items) || !Array.isArray(next.items)) return []
+
+  const anomalies: GoalTodoPlanAnomaly[] = []
+  const priorCompleted = new Set(previous.items.filter((item) => item.status === "completed").map((item) => item.key))
+  for (const anomaly of previous.anomalies ?? []) {
+    if (anomaly.kind === "completed_regression") {
+      for (const key of anomaly.itemKeys) priorCompleted.add(key)
+    }
+  }
+
+  const regressed = next.items.filter((item) => priorCompleted.has(item.key) && (item.status === "pending" || item.status === "in_progress"))
+  if (regressed.length) {
+    anomalies.push({
+      kind: "completed_regression",
+      summary: `${regressed.length} previously completed Todo item(s) regressed to pending/in_progress in the same Goal revision.`,
+      itemKeys: regressed.map((item) => item.key),
+    })
+  }
+
+  if (previous.items.length >= 4 && next.items.length >= 4) {
+    const previousKeys = new Set(previous.items.map((item) => item.key))
+    const nextKeys = new Set(next.items.map((item) => item.key))
+    const shared = previous.items.filter((item) => nextKeys.has(item.key)).map((item) => item.key)
+    const removed = previous.items.filter((item) => !nextKeys.has(item.key)).map((item) => item.key)
+    const added = next.items.filter((item) => !previousKeys.has(item.key)).map((item) => item.key)
+    const baseline = Math.max(previous.items.length, next.items.length)
+    if (
+      shared.length / baseline < 0.5
+      && removed.length >= Math.ceil(previous.items.length / 2)
+      && added.length >= Math.ceil(next.items.length / 2)
+    ) {
+      anomalies.push({
+        kind: "substantial_replacement",
+        summary: `Native Todo plan changed substantially in the same Goal revision: ${removed.length} removed, ${added.length} added, ${shared.length} retained.`,
+        itemKeys: [...new Set([...removed, ...added])],
+      })
+    }
+  }
+
+  return anomalies
+}
+
 export function summarizeTodoPlan(goalRevision: number, todos: NativeTodoItem[], observedAt = Date.now()): GoalTodoPlan {
   const canonical = todos.map((item) => ({
     content: item.content,
@@ -114,6 +187,8 @@ export function summarizeTodoPlan(goalRevision: number, todos: NativeTodoItem[],
     priority: item.priority ?? "",
   }))
   const digest = `sha256:${createHash("sha256").update(JSON.stringify(canonical)).digest("hex")}`
+  const items = manifestItems(todos)
+  const multipleInProgress = multipleInProgressAnomaly(items)
   return {
     goalRevision,
     digest,
@@ -123,12 +198,13 @@ export function summarizeTodoPlan(goalRevision: number, todos: NativeTodoItem[],
     completed: todos.filter((item) => item.status === "completed").length,
     cancelled: todos.filter((item) => item.status === "cancelled").length,
     observedAt,
-    items: manifestItems(todos),
+    items,
+    ...(multipleInProgress ? { anomalies: [multipleInProgress] } : {}),
   }
 }
 
 export function observeTodoPlan(goal: GoalState, todos: NativeTodoItem[], observedAt = Date.now()): GoalState {
-  const next = summarizeTodoPlan(goal.revision, todos, observedAt)
+  let next = summarizeTodoPlan(goal.revision, todos, observedAt)
   const previous = validGoalTodoPlan(goal.todoPlan) ? goal.todoPlan : undefined
 
   // After a Goal edit, preserve the old Todo snapshot as visibly stale and do
@@ -147,6 +223,9 @@ export function observeTodoPlan(goal: GoalState, todos: NativeTodoItem[], observ
     && previous.cancelled === next.cancelled
     && Array.isArray(previous.items)
   ) return goal
+
+  const anomalies = [...(next.anomalies ?? []), ...transitionAnomalies(previous, next)]
+  if (anomalies.length) next = { ...next, anomalies }
 
   return {
     ...goal,
@@ -168,7 +247,8 @@ export function formatTodoPlan(goal: GoalState): string {
   if (!plan) return goal.todoPlan === undefined ? "not observed" : "invalid advisory telemetry ignored"
   const freshness = plan.goalRevision === goal.revision ? `current r${plan.goalRevision}` : `STALE r${plan.goalRevision}`
   const manifest = Array.isArray(plan.items) ? `; durable manifest ${plan.items.length} items` : "; legacy aggregate only"
-  return `${freshness}; ${plan.total} total (${plan.pending} pending, ${plan.inProgress} in progress, ${plan.completed} completed, ${plan.cancelled} cancelled)${manifest}`
+  const anomaly = plan.anomalies?.length ? `; WARNING ${plan.anomalies.map((item) => item.summary).join(" | ")}` : ""
+  return `${freshness}; ${plan.total} total (${plan.pending} pending, ${plan.inProgress} in progress, ${plan.completed} completed, ${plan.cancelled} cancelled)${manifest}${anomaly}`
 }
 
 export function formatTodoManifest(goal: GoalState, maxChars = TODO_MANIFEST_CONTEXT_MAX_CHARS): string {
@@ -180,6 +260,7 @@ export function formatTodoManifest(goal: GoalState, maxChars = TODO_MANIFEST_CON
 
   const limit = Number.isFinite(maxChars) ? Math.max(256, Math.floor(maxChars)) : TODO_MANIFEST_CONTEXT_MAX_CHARS
   let output = `Todo manifest ${freshness}; ${plan.items.length} items (advisory planning state, never completion evidence):`
+  if (plan.anomalies?.length) output += `\nTodo drift WARNING: ${plan.anomalies.map((item) => item.summary).join(" | ")}`
   for (const [index, item] of plan.items.entries()) {
     const priority = item.priority ? `; priority=${item.priority}` : ""
     const line = `\n${index + 1}. [${item.status}] ${item.content}${priority}`

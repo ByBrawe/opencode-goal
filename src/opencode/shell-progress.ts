@@ -105,8 +105,8 @@ export function installShellProgress(input: PluginInput, hooks: PluginHooks): vo
     }
   }
 
-  hooks["tool.execute.before"] = async (event: any, output: any) => {
-    await beforeHook(event, output)
+  hooks["tool.execute.before"] = async (event: any, output?: any) => {
+    await beforeHook(event)
     if (event?.tool !== SHELL_TOOL) return
 
     const key = callKey(event.sessionID, event.callID)

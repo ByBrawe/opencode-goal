@@ -58,6 +58,7 @@ async function completeOwnedAssistant(hooks, { sessionID = "s1", id = "assistant
           sessionID,
           parentID,
           role: "assistant",
+          content: "Completed owned Goal work.",
           time: { created: 100, completed: 200 },
           tokens: { input: tokens, output: 0, reasoning: 0 },
           cost,

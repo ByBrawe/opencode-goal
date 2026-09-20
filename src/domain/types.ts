@@ -177,8 +177,12 @@ export interface GoalState {
   stalledTurns: number
   /** One-shot host marker: the Goal was activated at an idle boundary and still needs its first continuation dispatch. */
   pendingContinuation?: boolean
-  /** One-shot accounting exemption for a turn consumed only by infrastructure recovery/verification. */
+  /** One-shot accounting exemption for a turn consumed only by infrastructure recovery/verification or empty-turn retry. */
   skipNextStallCheck?: boolean
+  /** Consecutive Goal-owned assistant completions with no meaningful text/tool/file/patch/artifact activity. */
+  emptyTurnCount?: number
+  /** Timestamp of the last empty Goal-owned assistant completion. */
+  lastEmptyTurnAt?: number
   /** Persisted retry state for transient verifier/provider/dispatch failures. */
   infrastructureRecovery?: GoalInfrastructureRecovery | undefined
   /** Native OpenCode Todo-plan telemetry/manifest. Advisory only; never completion evidence. */

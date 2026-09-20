@@ -313,6 +313,7 @@ test("non-goal assistant messages do not consume goal budget", async () => {
             sessionID: "session-1",
             parentID: "user-r1",
             role: "assistant",
+            content: "Completed the owned Goal turn.",
             time: { created: 1, completed: 11 },
             tokens: { input: 10, output: 5, reasoning: 2 },
             cost: 0.01,

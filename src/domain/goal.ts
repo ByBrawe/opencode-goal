@@ -190,6 +190,14 @@ export function waitForUserGoal(goal: GoalState, input: { reason: string; needed
 
 export function resumeGoal(goal: GoalState, now = Date.now()): GoalState {
   if (goal.status === "completed") return goal
-  const { blockerAudit: _blocker, stopReason: _reason, pendingContinuation: _pendingContinuation, ...rest } = goal
+  const {
+    blockerAudit: _blocker,
+    stopReason: _reason,
+    pendingContinuation: _pendingContinuation,
+    emptyTurnCount: _emptyTurnCount,
+    lastEmptyTurnAt: _lastEmptyTurnAt,
+    skipNextStallCheck: _skipNextStallCheck,
+    ...rest
+  } = goal
   return { ...rest, status: "active", stalledTurns: 0, observedProgressRevision: goal.progressRevision, updatedAt: now }
 }

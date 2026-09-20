@@ -71,6 +71,60 @@ export function observeModelContextUsage(goal: GoalState, tokens: any, now = Dat
   }, now)
 }
 
+function positive(value: unknown): number | undefined {
+  const number = nonNegative(value)
+  return number !== undefined && number > 0 ? number : undefined
+}
+
+/**
+ * Return a compactable pressure reason when the last host-observed request no
+ * longer leaves safe room for the model's output/reserved context. This is a
+ * pre-dispatch guard, not Goal-budget accounting.
+ */
+export function modelContextCompactionReason(
+  goal: Pick<GoalState, "execution">,
+  options: { respectAutoCompaction?: boolean } = {},
+): string | undefined {
+  const context = goal.execution?.modelContext
+  if (!context) return undefined
+  if (options.respectAutoCompaction !== false && context.autoCompaction === false) return undefined
+
+  const contextLimit = positive(context.contextLimit)
+  const request = positive(context.lastRequestTokens)
+  if (contextLimit && request) {
+    const explicitReserve = Math.max(
+      positive(context.outputLimit) ?? 0,
+      positive(context.compactionReserved) ?? 0,
+    )
+    const minimumReserve = Math.max(8_192, Math.floor(contextLimit * 0.10))
+    const reserve = Math.max(explicitReserve, minimumReserve)
+    if (request + reserve >= contextLimit) {
+      const percent = ((request / contextLimit) * 100).toFixed(1)
+      return `Host-observed model context pressure is ${percent}% (${Math.round(request)} / ${Math.round(contextLimit)} tokens) with ${Math.round(reserve)} tokens of required output/compaction headroom.`
+    }
+  }
+
+  const inputLimit = positive(context.inputLimit)
+  const input = positive(context.lastInputTokens)
+  if (inputLimit && input && input >= inputLimit * 0.90) {
+    const percent = ((input / inputLimit) * 100).toFixed(1)
+    return `Host-observed model input pressure is ${percent}% (${Math.round(input)} / ${Math.round(inputLimit)} tokens).`
+  }
+  return undefined
+}
+
+export function clearObservedModelContextUsage(goal: GoalState, now = Date.now()): GoalState {
+  const execution = goal.execution
+  const context = execution?.modelContext
+  if (!execution || !context) return goal
+  const { lastRequestTokens: _lastRequestTokens, lastInputTokens: _lastInputTokens, ...rest } = context
+  return {
+    ...goal,
+    execution: { ...execution, modelContext: { ...rest, observedAt: now } },
+    updatedAt: now,
+  }
+}
+
 function formatNumber(value: number): string {
   return Math.round(value).toLocaleString("en-US")
 }

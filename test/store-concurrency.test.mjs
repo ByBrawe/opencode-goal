@@ -188,3 +188,65 @@ test("dead process lease is reclaimed without stealing a live owner", async () =
     await rm(root, { recursive: true, force: true })
   }
 })
+
+
+test("semantic no-op saves preserve storage generation and persisted timestamp", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-noop-save-"))
+  try {
+    const sessionID = "noop-save-session"
+    const store = new GoalStore(root)
+    const initial = createGoal({ sessionID, objective: "avoid write churn", now: 100 })
+    await store.save(initial)
+    assert.equal(initial.storageGeneration, 1)
+
+    const snapshot = await store.load(sessionID)
+    assert.ok(snapshot)
+    const persistedUpdatedAt = snapshot.updatedAt
+    snapshot.updatedAt = persistedUpdatedAt + 10_000
+
+    await store.save(snapshot)
+
+    assert.equal(snapshot.storageGeneration, 1, "no-op save must not advance storage generation")
+    assert.equal(snapshot.updatedAt, persistedUpdatedAt, "caller snapshot should reconcile to the persisted timestamp")
+
+    const persisted = await store.load(sessionID)
+    assert.ok(persisted)
+    assert.equal(persisted.storageGeneration, 1)
+    assert.equal(persisted.updatedAt, persistedUpdatedAt)
+
+    snapshot.stopReason = "real semantic change"
+    snapshot.updatedAt = persistedUpdatedAt + 20_000
+    await store.save(snapshot)
+
+    assert.equal(snapshot.storageGeneration, 2, "real state changes must still advance storage generation")
+    assert.equal((await store.load(sessionID)).stopReason, "real semantic change")
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("stale snapshots cannot bypass generation checks through semantic no-op detection", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-noop-stale-"))
+  try {
+    const sessionID = "noop-stale-session"
+    const store = new GoalStore(root)
+    const initial = createGoal({ sessionID, objective: "keep optimistic concurrency authoritative", now: 100 })
+    await store.save(initial)
+
+    const stale = await store.load(sessionID)
+    const current = await store.load(sessionID)
+    current.stopReason = "writer advanced state"
+    current.updatedAt += 1
+    await store.save(current)
+    assert.equal(current.storageGeneration, 2)
+
+    stale.updatedAt += 2
+    await assert.rejects(
+      () => store.save(stale),
+      (error) => error instanceof GoalStoreConcurrencyError && error.kind === "stale_write",
+    )
+    assert.equal((await store.load(sessionID)).storageGeneration, 2)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})

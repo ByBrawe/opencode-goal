@@ -153,6 +153,19 @@ export interface GoalExecutionContext {
   modelContext?: GoalModelContext
 }
 
+export interface GoalRuntimeFingerprint {
+  /** Exact OpenCode Goal package version when discoverable from the loaded artifact. */
+  goalVersion: string
+  /** Content/build identity for the loaded Goal runtime. */
+  goalBuild?: string
+  /** OpenCode host package version when the runtime can resolve or explicitly receives it. */
+  opencodeVersion?: string
+  /** @opencode-ai/plugin API package version used by the loaded runtime when resolvable. */
+  pluginApiVersion?: string
+  /** Companion OpenCode Loop package version when resolvable or explicitly supplied. */
+  loopVersion?: string
+}
+
 export interface GoalState {
   schemaVersion: 1
   id: string
@@ -166,6 +179,8 @@ export interface GoalState {
   evidence: EvidenceRecord[]
   checks: string[]
   execution?: GoalExecutionContext
+  /** Runtime identity that most recently persisted this Goal. Older schema-v1 snapshots may omit it. */
+  runtimeFingerprint?: GoalRuntimeFingerprint
   usage: GoalUsage
   /** Completed-turn counter captured when the current revision started. Older snapshots default to 0. */
   revisionTurnBaseline?: number

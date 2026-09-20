@@ -105,21 +105,22 @@ export function installShellProgress(input: PluginInput, hooks: PluginHooks): vo
     }
   }
 
-  hooks["tool.execute.before"] = async (event: any) => {
-    await beforeHook(event)
+  hooks["tool.execute.before"] = async (event: any, output: any) => {
+    await beforeHook(event, output)
     if (event?.tool !== SHELL_TOOL) return
 
     const key = callKey(event.sessionID, event.callID)
-    const command = text(event?.args?.command)
+    const command = text(event?.args?.command) ?? text(output?.args?.command)
     if (!key || !command) return
 
     const goal = await store.load(event.sessionID)
     if (!goal || goal.status !== "active") return
+    const gitMarker = await shellGitWorkspaceMarker(input.directory)
     remember(key, {
       goalID: goal.id,
       revision: goal.revision,
       command,
-      ...(await shellGitWorkspaceMarker(input.directory) ? { gitMarker: await shellGitWorkspaceMarker(input.directory) } : {}),
+      ...(gitMarker === undefined ? {} : { gitMarker }),
     })
   }
 

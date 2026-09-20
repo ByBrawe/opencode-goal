@@ -2,6 +2,17 @@
 
 All notable changes to **OpenCode Goals** are documented here.
 
+## 1.3.33 — 2026-09-20
+
+Goal empty-turn fail-safe release.
+
+- Treat a Goal-owned assistant completion as meaningful only when it produced non-empty text or tool/file/patch/artifact activity; reasoning-only or whitespace-only completions no longer masquerade as successful Goal turns.
+- Preserve real token, cost, and runtime accounting for empty provider attempts while refunding the logical Goal-turn count so `--max-turns`, cadence, and temporal completion evidence are not consumed by blank responses.
+- Persist consecutive empty-turn state across reloads, retry one empty completion, then pause safely on the second consecutive empty completion with visible Goal UX instead of continuing indefinitely.
+- Keep tool-only work meaningful even when the final assistant text is blank, reset the empty streak after meaningful work or explicit resume, and validate persisted empty-turn state fail-closed.
+- Add focused regressions for blank/whitespace replies, tool/file/patch/artifact activity, bounded retry/pause, usage accounting, explicit resume reset, and tool-then-blank tails.
+- Extend npm publish verification windows for both registry metadata and clean-installer visibility so successful trusted publishes are not reported failed solely because npm propagation takes longer than the previous 30-second window.
+
 ## 1.3.32 — 2026-09-20
 
 Long-session liveness and Goal/Loop isolation release.

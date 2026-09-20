@@ -405,6 +405,7 @@ export default async function OpenCodeGoalPlugin(input: any, options: OpenCodeGo
     },
 
     "tool.execute.before": async (event: any) => {
+      rememberMeaningfulAssistant(ownership.activeMessageID(event.sessionID))
       if (event.tool === SHELL_TOOL) {
         if (isClearlyReadOnlyShellCommand(event?.args?.command)) return
         await serialize(event.sessionID, async () => {

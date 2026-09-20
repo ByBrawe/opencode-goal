@@ -3,6 +3,7 @@ import { pauseGoal } from "../domain/goal.js"
 import type { GoalState } from "../domain/types.js"
 import { GoalStore } from "../persistence/store.js"
 import { parseGoalCommand, type ParsedGoalCommand } from "./command.js"
+import { createGoalTransitionNotifier } from "./notify.js"
 import { showGoalToast } from "./toast.js"
 
 type PluginInput = Parameters<typeof CorePlugin>[0]
@@ -87,7 +88,7 @@ export function installRestrictedAgentSafety(input: PluginInput, hooks: PluginHo
   const eventHook = hooks.event
   if (typeof commandHook !== "function" || typeof chatHook !== "function" || typeof eventHook !== "function") return
 
-  const store = new GoalStore(input.directory)
+  const store = new GoalStore(input.directory, { onTransition: createGoalTransitionNotifier(input.directory) })
   const pendingActions = new Map<string, GoalAction>()
 
   hooks["command.execute.before"] = async (event: any, output: any) => {

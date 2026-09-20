@@ -211,6 +211,7 @@ Repeatable contract flags define success and hard boundaries:
 --non-goal "..."
 --check "..."
 --contains "file::required text"
+--notify "<command>"
 --max-turns <n>
 --max-tokens <n>
 --max-minutes <n>
@@ -218,6 +219,8 @@ Repeatable contract flags define success and hard boundaries:
 ```
 
 New Goals have no cumulative token cap by default (`maxTokens: 0`). Use `--max-tokens` or `/goal budget --max-tokens` only when you want an explicit total-work runaway guard; this cumulative budget is separate from the selected model's current context/input window.
+
+`--notify "<command>"` runs a fire-and-forget local command after each persisted Goal status transition (`completed`, `blocked`, `paused` — including budget/usage stops, verifier outages, restricted-agent pauses, and restart recovery) and after a completion attempt fails its audit (`rejected`). The command runs through a shell in the project directory with a 60-second timeout; `{goal}` is replaced by the Goal id and `{reason}` by the transition reason. Delivery is advisory and cannot affect the Goal, its completion, or its state.
 
 The full objective always remains a required semantic requirement. Narrow checks add proof obligations; they never replace the broader outcome.
 

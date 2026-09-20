@@ -9,6 +9,7 @@ export type { GoalStoreConcurrencyKind } from "./process-lock.js"
 
 export type GoalArchiveReason = "cleared" | "replaced"
 export type GoalStoreIntegrityKind = "invalid_json" | "invalid_state" | "invalid_archive" | "unsafe_path"
+export type GoalStoreTransitionReason = "completed" | "blocked" | "paused"
 
 export class GoalStoreIntegrityError extends Error {
   readonly code = "GOAL_STORE_INTEGRITY"
@@ -48,10 +49,19 @@ export type GoalRestoreResult =
 
 export interface GoalStoreOptions {
   processLockTimeoutMs?: number
+  /** Advisory sink for persisted status transitions. It must never affect persistence. */
+  onTransition?: (goal: GoalState, reason: GoalStoreTransitionReason) => void
 }
 
 function shard(value: string): string {
   return createHash("sha256").update(value).digest("hex").slice(0, 32)
+}
+
+function transitionReason(status: GoalState["status"]): GoalStoreTransitionReason | undefined {
+  if (status === "completed") return "completed"
+  if (status === "blocked") return "blocked"
+  if (status === "paused" || status === "budget_limited" || status === "usage_limited") return "paused"
+  return undefined
 }
 
 function validGeneration(value: unknown): boolean {
@@ -218,6 +228,7 @@ export class GoalStore {
   readonly root: string
   readonly locksRoot: string
   readonly processLockTimeoutMs: number
+  readonly onTransition: ((goal: GoalState, reason: GoalStoreTransitionReason) => void) | undefined
   #locks = new Map<string, Promise<unknown>>()
 
   constructor(directory: string, options: GoalStoreOptions = {}) {
@@ -226,6 +237,7 @@ export class GoalStore {
     this.locksRoot = path.join(this.directory, ".opencode", "goal-locks")
     this.processLockTimeoutMs = options.processLockTimeoutMs ?? 5_000
     if (!Number.isFinite(this.processLockTimeoutMs) || this.processLockTimeoutMs < 1) throw new Error("processLockTimeoutMs must be positive")
+    this.onTransition = options.onTransition
   }
 
   fileFor(sessionID: string): string {
@@ -316,6 +328,7 @@ export class GoalStore {
         updatedAt: now,
       }
       await writeAtomic(this.directory, this.fileFor(sessionID), restored)
+      this.#emitTransition(current, restored)
       return { ok: true, goal: restored, source }
     })
   }
@@ -368,6 +381,7 @@ export class GoalStore {
       const persisted: GoalState = { ...state, storageGeneration: nextGeneration }
       await writeAtomic(this.directory, file, persisted)
       state.storageGeneration = nextGeneration
+      this.#emitTransition(previous, persisted)
     })
   }
 
@@ -377,6 +391,24 @@ export class GoalStore {
       if (current) await this.#archive(current, "cleared")
       await removeStorageFile(this.directory, this.fileFor(sessionID))
     })
+  }
+
+  /**
+   * Announce only a real persisted status transition. Repeated saves of the
+   * same status stay silent, while a later terminal-to-terminal change (edited
+   * or restored Goals) is still announced. The callback is advisory: it runs
+   * after the state is durable and can never fail save().
+   */
+  #emitTransition(previous: GoalState | null, persisted: GoalState): void {
+    if (!this.onTransition) return
+    if (previous && previous.id === persisted.id && previous.status === persisted.status) return
+    const reason = transitionReason(persisted.status)
+    if (!reason) return
+    try {
+      this.onTransition(persisted, reason)
+    } catch {
+      // A broken notification sink must never affect Goal persistence.
+    }
   }
 
   async #history(sessionID: string): Promise<GoalArchiveRecord[]> {

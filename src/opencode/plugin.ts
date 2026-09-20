@@ -14,6 +14,7 @@ import { completeGoal } from "../verification/audit.js"
 import { verifyDeclaredFiles } from "../verification/contracts.js"
 import { proveRequirementsFromEvidence, recordFileEvidence } from "../verification/evidence.js"
 import { parseGoalCommand } from "./command.js"
+import { completionNotificationReason, createGoalTransitionNotifier, notifyGoal } from "./notify.js"
 import { TurnOwnership, goalTurnOwner, sameGoalTurn } from "./ownership.js"
 import { compactionContext, continuationPrompt } from "./prompt.js"
 import { createSemanticVerifierRuntime, SemanticVerifierUnavailableError } from "./verifier.js"
@@ -76,7 +77,7 @@ function optionNumber(value: unknown): number | undefined {
 
 export default async function OpenCodeGoalPlugin(input: any, options: OpenCodeGoalPluginOptions = {}) {
   const { client, directory } = input
-  const store = new GoalStore(directory)
+  const store = new GoalStore(directory, { onTransition: createGoalTransitionNotifier(directory) })
   const semanticVerifier = createSemanticVerifierRuntime(client, directory, {
     model: optionText(options.verifierModel) ?? optionText(process.env.OPENCODE_GOAL_VERIFIER_MODEL),
     timeoutMs: optionNumber(options.verifierTimeoutMs) ?? optionNumber(process.env.OPENCODE_GOAL_VERIFIER_TIMEOUT_MS),
@@ -286,6 +287,7 @@ export default async function OpenCodeGoalPlugin(input: any, options: OpenCodeGo
             ...(parsed.acceptance.length ? { acceptance: parsed.acceptance } : {}),
             ...(parsed.checks.length ? { checks: parsed.checks } : {}),
             ...(parsed.files.length ? { files: parsed.files } : {}),
+            ...(parsed.notifyCommand ? { notifyCommand: parsed.notifyCommand } : {}),
             ...(execution ? { execution } : {}),
           })
           if (sameGoalTurn(ownership.activeOwner(event.sessionID), previousOwner) || dispatching.has(event.sessionID)) abortControl = "edit"
@@ -297,6 +299,7 @@ export default async function OpenCodeGoalPlugin(input: any, options: OpenCodeGo
             acceptance: parsed.acceptance,
             checks: parsed.checks,
             files: parsed.files,
+            ...(parsed.notifyCommand ? { notifyCommand: parsed.notifyCommand } : {}),
             ...(execution ? { execution } : {}),
             budget: {
               ...(parsed.maxTurns ? { maxTurns: parsed.maxTurns } : {}),
@@ -624,6 +627,8 @@ export default async function OpenCodeGoalPlugin(input: any, options: OpenCodeGo
             const merged = settleCurrentProgress(mergeAuditEvaluation(latest, evaluated))
             const result = completeGoal(merged, args.summary)
             await save(result.goal)
+            const rejection = completionNotificationReason(result.goal, result.audit)
+            if (rejection) notifyGoal(directory, result.goal, rejection)
             return result.audit.ok ? "Goal completed with host and verifier-backed evidence." : `Completion rejected:\n- ${result.audit.reasons.join("\n- ")}`
           })
         },

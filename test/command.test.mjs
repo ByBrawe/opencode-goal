@@ -122,6 +122,23 @@ test("goal restore requires exactly one id prefix", () => {
   assert.throws(() => parseGoalCommand("restore --latest"), /unknown goal option/)
 })
 
+test("goal notify command parses as a Goal Contract flag", () => {
+  const parsed = parseGoalCommand('ship release --check "npm test" --notify "mytool {reason} {goal}" --max-turns 5')
+  assert.equal(parsed.notifyCommand, "mytool {reason} {goal}")
+  assert.deepEqual(parsed.checks, ["npm test"])
+  assert.equal(parsed.maxTurns, 5)
+  assert.equal(parseGoalCommand('edit new objective --notify "tool {goal}"').notifyCommand, "tool {goal}")
+  assert.equal(parseGoalCommand('add queued objective --notify "tool {goal}"').notifyCommand, "tool {goal}")
+})
+
+test("goal notify requires a value, stays out of budget, and stays literal in pasted work", () => {
+  assert.throws(() => parseGoalCommand("ship --notify"), /unknown goal option/)
+  assert.throws(() => parseGoalCommand('budget --notify "mytool {goal}"'), /accepts only/)
+  const pasted = parseGoalCommand("Ship it\nRun tool --notify literal")
+  assert.equal(pasted.notifyCommand, undefined)
+  assert.match(pasted.objective, /--notify literal/)
+})
+
 test("budget command rejects contract mutation flags", () => {
   assert.throws(() => parseGoalCommand('budget --constraint "no dependency changes"'), /accepts only/)
   assert.throws(() => parseGoalCommand('budget --success "tests pass"'), /accepts only/)

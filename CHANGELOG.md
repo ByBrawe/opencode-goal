@@ -2,6 +2,12 @@
 
 All notable changes to **OpenCode Goals** are documented here.
 
+## Unreleased
+
+- Add the Goal Contract flag `--notify "<command>"` (create/edit/add/queue): a fire-and-forget shell command run in the project directory after each persisted status transition to `completed`, `blocked`, or `paused` (including budget/usage stops, verifier-unavailable pauses, continuation-dispatch failures, restricted-agent pauses, restart recovery, and user `/goal pause`), and after a completion attempt fails its audit (`rejected`).
+- Substitute `{reason}` and `{goal}` exactly like OpenCode Loop, run with a 60-second bounded kill timer, and treat notification delivery as advisory: a failing, hanging, or missing command can never affect the Goal, its completion, or its state.
+- Announce transitions from the persistence choke point only on a real status change, so repeated saves stay silent while later terminal-to-terminal changes still notify; older state files without the field load and round-trip unchanged.
+
 ## 1.3.31 — 2026-08-28
 
 Durable long-Goal Todo recovery release.

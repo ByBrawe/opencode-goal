@@ -4,6 +4,7 @@ import type { GoalExecutionContext, GoalState } from "../domain/types.js"
 import { scanRecoverableGoalStates } from "../persistence/diagnostics.js"
 import { GoalStore } from "../persistence/store.js"
 import { isRestrictedGoalAgent, restrictedAgentStopReason } from "./agent-boundary.js"
+import { createGoalTransitionNotifier } from "./notify.js"
 
 type PluginInput = Parameters<typeof CorePlugin>[0]
 type PluginHooks = Awaited<ReturnType<typeof CorePlugin>>
@@ -92,7 +93,7 @@ async function sdkRecoveryPrompt(
 }
 
 export async function captureStartupGoals(directory: string): Promise<GoalState[]> {
-  const store = new GoalStore(directory)
+  const store = new GoalStore(directory, { onTransition: createGoalTransitionNotifier(directory) })
   const active = (await scanRecoverableGoalStates(directory)).filter((goal) => goal.status === "active")
   const recoverable: GoalState[] = []
   for (const goal of active) {
@@ -186,7 +187,7 @@ async function recoverStartupGoals(
   host: RecoveryGate,
   runtime: RecoveryRuntime,
 ): Promise<void> {
-  const store = new GoalStore(input.directory)
+  const store = new GoalStore(input.directory, { onTransition: createGoalTransitionNotifier(input.directory) })
   const commandHook = hooks["command.execute.before"]
 
   for (const startup of startupGoals) {

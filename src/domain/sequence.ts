@@ -7,6 +7,7 @@ export interface QueuedGoalSpec {
   constraints: string[]
   checks: string[]
   files: FileRequirementInput[]
+  notifyCommand?: string
   budget: Partial<GoalBudget>
   createdAt: number
   activating?: boolean
@@ -26,6 +27,7 @@ export interface QueueGoalInput {
   constraints?: string[]
   checks?: string[]
   files?: FileRequirementInput[]
+  notifyCommand?: string
   budget?: Partial<GoalBudget>
   now?: number
 }

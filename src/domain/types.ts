@@ -164,6 +164,8 @@ export interface GoalState {
   requirements: GoalRequirement[]
   evidence: EvidenceRecord[]
   checks: string[]
+  /** Optional fire-and-forget local command run on persisted status transitions. Older snapshots may omit it. */
+  notifyCommand?: string
   execution?: GoalExecutionContext
   usage: GoalUsage
   /** Completed-turn counter captured when the current revision started. Older snapshots default to 0. */

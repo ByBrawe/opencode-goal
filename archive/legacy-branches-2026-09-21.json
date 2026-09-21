@@ -1,0 +1,462 @@
+{
+  "generatedAt": "2026-09-21",
+  "repository": "ByBrawe/opencode-goal",
+  "sourceMain": {
+    "sha": "e3a372ade46087223807ab044a9c8a8a15ff5631",
+    "tree": "ef9c27e03e32ea8bd776d81f493e4f99140590bc"
+  },
+  "archiveBranch": "archive/legacy-branches-2026-09-21",
+  "excludedOpenPrBranches": [
+    "feat/goal-notify-current"
+  ],
+  "archivedBranches": [
+    {
+      "name": "chore/pr-ci-concurrency",
+      "sha": "3255b5dd33bbd11aeaa29d0cea2abdfa0e766f08"
+    },
+    {
+      "name": "chore/pr-ci-concurrency-clean",
+      "sha": "92bb92695120e6a3721a966ac8211206cedc1618"
+    },
+    {
+      "name": "ci/cancel-stale-pr-runs",
+      "sha": "b3672a2da1924227163270e5c870d86bb5e8cb95"
+    },
+    {
+      "name": "ci/cancel-stale-workflow-runs",
+      "sha": "324119aa160bc7febe573880328790d1852eab2a"
+    },
+    {
+      "name": "diag/opencode2-beta17498-name-replace",
+      "sha": "d18e6851d7242da63b789a6c65a980ff6870dc15"
+    },
+    {
+      "name": "diagnostic/opencode2-beta-contract-17498",
+      "sha": "233c9937c8349d2eb8bfd9b7c9acb48b751382cd"
+    },
+    {
+      "name": "docs/changelog-1.3.9-1.3.17",
+      "sha": "470ca215e582463ad4a02913082340208cfe704d"
+    },
+    {
+      "name": "docs/install-loop-compat-1.3.2",
+      "sha": "0a867b17ee08f7fa2841ba7c6b65c8ab82e8ce4f"
+    },
+    {
+      "name": "dummy",
+      "sha": "cf22df0334b3ea470020b3abeef612ec361975bd"
+    },
+    {
+      "name": "feat/competitive-action-adapters",
+      "sha": "f176eb5d90572221e3ad38e2fa43e76c5516fe8a"
+    },
+    {
+      "name": "feat/goal-draft",
+      "sha": "1544d040931970ba595b42ab11f70da7773ca5cc"
+    },
+    {
+      "name": "feat/goal-sequences-tui-probe",
+      "sha": "d83f3723e3a1ac51f3dda8f71181066c1c03a9d9"
+    },
+    {
+      "name": "feat/goal-sequences-tui-probe2",
+      "sha": "d83f3723e3a1ac51f3dda8f71181066c1c03a9d9"
+    },
+    {
+      "name": "feat/goal-sequences-tui-probe3",
+      "sha": "d83f3723e3a1ac51f3dda8f71181066c1c03a9d9"
+    },
+    {
+      "name": "fix-v2-local-plugin-discovery",
+      "sha": "5c95aff24d110efc70e1531fcdfcb8be5fa95070"
+    },
+    {
+      "name": "fix/no-active-goal-diagnostics",
+      "sha": "223363f5f39d2f6be4b6e9f0c7863fe4b8c96cd6"
+    },
+    {
+      "name": "fix/npm-latest-monotonic-guard",
+      "sha": "d8ceb3417f38939d45d2e86d14a6a462d229d3a6"
+    },
+    {
+      "name": "fix/npm-server-entry-1.3.4",
+      "sha": "8f81f3e68dc097d2590b10a43b3d26a802f263e3"
+    },
+    {
+      "name": "fix/opencode-2-0-11-plugin-entry",
+      "sha": "f73ef84e1637ebb76db2da5bfbfd1b7e5bea9729"
+    },
+    {
+      "name": "fix/opencode2-activation-contracts",
+      "sha": "fb036c9e9bed4118eb168c58f0a6d1901b6e71aa"
+    },
+    {
+      "name": "fix/opencode2-activation-contracts-final",
+      "sha": "0a43007c9bf09576301b1b1491a1e5a034c80653"
+    },
+    {
+      "name": "fix/opencode2-activation-current-main",
+      "sha": "7e6e5c4248d921a4cee562d13a271dbb896f28f3"
+    },
+    {
+      "name": "fix/opencode2-activation-failclosed-final",
+      "sha": "4fc9693a83115ae42f4a2abf914d7cf6c7de9236"
+    },
+    {
+      "name": "fix/opencode2-activation-final",
+      "sha": "a2074bbfe35f8239235dbd060fd3a0a5e6bd7b52"
+    },
+    {
+      "name": "fix/opencode2-activation-minimal-current",
+      "sha": "f6a87ce2d5829bfc8e55fde39007589e9d7fca90"
+    },
+    {
+      "name": "fix/opencode2-activation-post-1.3.19",
+      "sha": "dfbf811977099f0f60b9e8a7ec8d888f3bd65921"
+    },
+    {
+      "name": "fix/opencode2-beta17498-contract",
+      "sha": "de10669d6c1dde2e17a0c6c656fce7b735e4d6db"
+    },
+    {
+      "name": "fix/opencode2-command-capability-gate",
+      "sha": "b12a06b31754d28eade0b0948781243b8c8bb8d3"
+    },
+    {
+      "name": "fix/opencode2-command-capability-replay",
+      "sha": "8d2334a29b4c7e4764cadfbb3a52938043bf9375"
+    },
+    {
+      "name": "fix/opencode2-context-hook",
+      "sha": "48fa2f6677d1ae8216ef400f23b9122b201eaaa0"
+    },
+    {
+      "name": "fix/opencode2-context-hook-contract",
+      "sha": "4e4b5c4c5f2125155d66e094c0682a25b162d261"
+    },
+    {
+      "name": "fix/opencode2-context-hook-current",
+      "sha": "dfc747b117831eea7d8294e4dacd02329fdc43d6"
+    },
+    {
+      "name": "fix/opencode2-control-capability",
+      "sha": "94a6ef27e1ea85b990e0fab3e54f046cf8d0f637"
+    },
+    {
+      "name": "fix/opencode2-control-nonreplay-host",
+      "sha": "87b4ae9a9d1bcc99e107e69fdd42ef2da6744bb2"
+    },
+    {
+      "name": "fix/opencode2-control-replay",
+      "sha": "5b621e4a1d5c02d21f3ee0ed344c135edebe60e1"
+    },
+    {
+      "name": "fix/opencode2-current-contracts",
+      "sha": "931a4d3730e43ffeecab60b76a03c28146cb34b9"
+    },
+    {
+      "name": "fix/opencode2-current-host-activation",
+      "sha": "9cf506616ba2ef0464e7560762e6e991375d0adb"
+    },
+    {
+      "name": "fix/opencode2-documented-context-hook",
+      "sha": "014e47b1811741a4429045590310eb44842f6a14"
+    },
+    {
+      "name": "fix/opencode2-missing-command-after-1.3.19",
+      "sha": "34ccfe94d14f522493a929c2de6f745c35e7be96"
+    },
+    {
+      "name": "fix/opencode2-missing-goal-command",
+      "sha": "931a4d3730e43ffeecab60b76a03c28146cb34b9"
+    },
+    {
+      "name": "fix/opencode2-missing-goal-current",
+      "sha": "adcf8ae168457d1a131230c6a8b9a67edb852428"
+    },
+    {
+      "name": "fix/opencode2-plugin-readiness",
+      "sha": "fe854e2678efa2a2983056a7502beff5c56481f4"
+    },
+    {
+      "name": "fix/opencode2-readiness-window",
+      "sha": "5e66876a6e60c2ddae1acc3452494a09b4351798"
+    },
+    {
+      "name": "fix/opencode2-real-single-use",
+      "sha": "bb95472346f11b2d8602ca62273b0eb37610fbae"
+    },
+    {
+      "name": "fix/opencode2-single-use-capability-clean",
+      "sha": "689e49c0f6f2e0bb700d79d6dd844a82e6e13d43"
+    },
+    {
+      "name": "fix/opencode2-single-use-command-capability",
+      "sha": "cf8bf43c192623e710dd972578cd71d13ffac54f"
+    },
+    {
+      "name": "fix/opencode2-terminal-control-capability",
+      "sha": "7608119191444f89fbc671b21900561bce8a9677"
+    },
+    {
+      "name": "fix/paused-chat-resume-guidance-v2",
+      "sha": "1036862ca5177a64d02b2b50f6004ec64f5edcff"
+    },
+    {
+      "name": "fix/pending-continuation-integrity",
+      "sha": "4937c0010b967d0956b065b506f811626bb45de6"
+    },
+    {
+      "name": "fix/shell-observed-progress",
+      "sha": "ffca8266395a3768bfe59a7f6bce5a79f0d583c6"
+    },
+    {
+      "name": "fix/shell-timeout-progress",
+      "sha": "117f826b54921d710563ba469470c4e53f40f551"
+    },
+    {
+      "name": "fix/shell-timeout-progress-v2",
+      "sha": "29183bb32e9e0f4103148ea99e9936a39a3d5705"
+    },
+    {
+      "name": "fix/user-authorized-goal-rebase",
+      "sha": "5a1c99d9e680750cca289c7e9f75f99230bb3e32"
+    },
+    {
+      "name": "fix/v2-command-capability-turn",
+      "sha": "2bdddfd690f7a60e7fb94cd96c656fef38c67514"
+    },
+    {
+      "name": "fix/windows-lock-lstat-retry-final",
+      "sha": "c81e144614c1a486b0d128ad29f8f4fc2b5d820b"
+    },
+    {
+      "name": "probe/opencode2-plugin-readiness",
+      "sha": "be46272e74ba96757848726a52c094166ebf0433"
+    },
+    {
+      "name": "release-1.3.16-20260814",
+      "sha": "a968fcd12fd6f60257863ec3a54f317d6e4a63be"
+    },
+    {
+      "name": "release/1.3.17",
+      "sha": "2e9ab83b99555425dc5a3c6a6726466808b53d72"
+    },
+    {
+      "name": "release/1.3.19",
+      "sha": "dc80a6a2f5d5dfe2ed84b66ff326588b92d02cda"
+    },
+    {
+      "name": "release/1.3.19-clean",
+      "sha": "ae6ca4d873da2ffb76a580ca30f699c8a0125b4f"
+    },
+    {
+      "name": "release/1.3.19-current",
+      "sha": "9ff70e01e87078e57042ceafff6edcf81164f3b7"
+    },
+    {
+      "name": "release/1.3.19-final",
+      "sha": "e58f40252e67c4afaa34cd2372875969a92dc024"
+    },
+    {
+      "name": "release/1.3.19-final-current",
+      "sha": "6db30b9dc5208fa6f104b837448bd58ace004407"
+    },
+    {
+      "name": "release/1.3.19-lock-final",
+      "sha": "df5b6420c69cc9d7f76a8897bb28367bd4e314e0"
+    },
+    {
+      "name": "release/1.3.19-stable",
+      "sha": "91bc1ae35e37f1020b5da7a1367bb4b04cbff8bb"
+    },
+    {
+      "name": "release/1.3.19-verified",
+      "sha": "c0447a761bb57f0c704a139d6c7c90870a06aa41"
+    },
+    {
+      "name": "release/1.3.26-prep",
+      "sha": "3057896e00bca4f093c6847310de7d22b42ba326"
+    },
+    {
+      "name": "security/pin-actions",
+      "sha": "4cb181d5af51cbbebdaf3df4b625a011ccf97a1c"
+    },
+    {
+      "name": "stage/1.3.19-final",
+      "sha": "6370dbd386fb1575a1880fba4aa36cd3a928df7b"
+    },
+    {
+      "name": "test/npm-1.3.24-public-canary",
+      "sha": "ab8245baa7a3473329a41846e051bd7fb01ee075"
+    },
+    {
+      "name": "test/opencode2-activation-readiness",
+      "sha": "493b0237006388ba09c85b012608d4fe312fd55b"
+    },
+    {
+      "name": "test/opencode2-api-surface-probe",
+      "sha": "9e964b7486f79e37448aabd6e2e677920c784647"
+    },
+    {
+      "name": "test/opencode2-behavior-after-readiness",
+      "sha": "074b28944f50033825c0758850e5fb404f3ed425"
+    },
+    {
+      "name": "test/opencode2-behavior-canary",
+      "sha": "9972d4fdf589f3f406484f69578f31dae7edbef0"
+    },
+    {
+      "name": "test/opencode2-behavior-current-main",
+      "sha": "3fb94d70c935efb60474590a644f8514b04f8fa9"
+    },
+    {
+      "name": "test/opencode2-behavior-current-main-v2",
+      "sha": "6110a75b63777815110cc239f4a67a1353afdfeb"
+    },
+    {
+      "name": "test/opencode2-behavior-e2e",
+      "sha": "b0119cac1910d985359d1d6295693a1a719145ab"
+    },
+    {
+      "name": "test/opencode2-behavior-evidence",
+      "sha": "48f400322d52000c35c854e84db9b4164869780b"
+    },
+    {
+      "name": "test/opencode2-behavior-gate-final",
+      "sha": "fae45b9aaecac32c067ce5dae302c3b83adf8a97"
+    },
+    {
+      "name": "test/opencode2-behavior-host",
+      "sha": "8066c42a1f79f40a091035eeac5f344da1841eec"
+    },
+    {
+      "name": "test/opencode2-behavior-on-activation",
+      "sha": "56461310d0a134e0390610ac532830c0238419a5"
+    },
+    {
+      "name": "test/opencode2-behavior-on-minimal-activation",
+      "sha": "c91aaa9ba0d8c3a8d07fa1f8da6d75a1deba70a0"
+    },
+    {
+      "name": "test/opencode2-command-behavior",
+      "sha": "52b606457326bcd3d6fb7b70a79a329b48e948b2"
+    },
+    {
+      "name": "test/opencode2-command-control-host",
+      "sha": "4f0f26c396b824bd4e475d5e853783bb09c72086"
+    },
+    {
+      "name": "test/opencode2-command-transform-host",
+      "sha": "687158fb7bc67e77fe154adc88139122a94764d3"
+    },
+    {
+      "name": "test/opencode2-command-transform-real-host",
+      "sha": "9985884b2f1fb2cf7286eb97018770746691a0a5"
+    },
+    {
+      "name": "test/opencode2-global-discovery-canary",
+      "sha": "103c08f3a783a99b6097ca01a06fe58257aa08dc"
+    },
+    {
+      "name": "test/opencode2-goal-behavior-canary",
+      "sha": "a86f60f8f9d4edad5479679c4a1b8cfd69f153c9"
+    },
+    {
+      "name": "test/opencode2-goal-behavior-current-beta",
+      "sha": "e6e134e724b4c0d6b00311fd3d44139e21e57309"
+    },
+    {
+      "name": "test/opencode2-readiness-single-retry",
+      "sha": "577fce7d9f80bf15e7df47a749f66ec43cc36e6c"
+    },
+    {
+      "name": "test/opencode2-real-command-gate",
+      "sha": "bf7e97aff630f7a7fbb0118dafaf61d50402fcdb"
+    },
+    {
+      "name": "test/opencode2-real-host-canary",
+      "sha": "7cd664cabc5debba88203139f6a5f55421b99c23"
+    },
+    {
+      "name": "test/opencode2-setup-boundary-diagnostic",
+      "sha": "043c5ecfc78db2bd7eadc2ba62d32a4a9874eaf2"
+    },
+    {
+      "name": "test/opencode2-setup-stage-diagnostic",
+      "sha": "46ba83d24be93b1ebaeb2b2e01357f3695e0f84f"
+    },
+    {
+      "name": "test/real-host-shell-progress",
+      "sha": "fc25851778522845e628c1d0d0380eb3c8392b8b"
+    },
+    {
+      "name": "test/real-npm-server-entry",
+      "sha": "be7dbfc4c3a3ef4a3b99d8c2b98345b0c5ea4e9b"
+    },
+    {
+      "name": "test/v2-command-registry-canary",
+      "sha": "60251f9dd92358f3fa9ac80b72f0781b93fe3483"
+    },
+    {
+      "name": "test/v2-command-registry-host",
+      "sha": "1d53452a35c579e47d60f071b6b81b0f89f8950a"
+    },
+    {
+      "name": "tmp-noop",
+      "sha": "f838324daffc9bcd65f0f3a90831657dcd2916eb"
+    },
+    {
+      "name": "tmp-unused-copy",
+      "sha": "c85f95aa606f58b41c22ac437d1450601d92c5bd"
+    },
+    {
+      "name": "tmp/noop",
+      "sha": "42c6749ca1138070f36882909dc5a8a372d40a70"
+    },
+    {
+      "name": "tmp/noop2",
+      "sha": "42c6749ca1138070f36882909dc5a8a372d40a70"
+    },
+    {
+      "name": "tmp/noop3",
+      "sha": "42c6749ca1138070f36882909dc5a8a372d40a70"
+    },
+    {
+      "name": "verify/npm-1.3.17",
+      "sha": "cf22df0334b3ea470020b3abeef612ec361975bd"
+    },
+    {
+      "name": "verify/npm-1.3.17-registry",
+      "sha": "c21ec1a94476774d8f8e1b4b4fe49fe179cc4f11"
+    },
+    {
+      "name": "verify/npm-1.3.17-registry-clean",
+      "sha": "afe0da6fca6e139722166dcb29b4843b9de49927"
+    },
+    {
+      "name": "verify/npm-1.3.18",
+      "sha": "3ddcb4393ae6937a4548253c5c844d71d3613613"
+    },
+    {
+      "name": "verify/npm-1.3.18-latest",
+      "sha": "3ddcb4393ae6937a4548253c5c844d71d3613613"
+    },
+    {
+      "name": "verify/npm-1.3.18-registry",
+      "sha": "1585dbb1aaa4ee209d7f4ef2c268205eec9ce3b3"
+    },
+    {
+      "name": "verify/npm-1.3.19-latest",
+      "sha": "2e50cb3986617e8b13bda3938bd94517a093ca27"
+    },
+    {
+      "name": "verify/npm-1.3.19-published",
+      "sha": "7d648f6a4f582b1946893b9cb144f8e77b3e5ecb"
+    },
+    {
+      "name": "verify/windows-lock-lstat-node20",
+      "sha": "299d0aeb34216fd099992f743733000b9c2fd6e4"
+    }
+  ]
+}

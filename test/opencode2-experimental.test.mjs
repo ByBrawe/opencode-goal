@@ -270,6 +270,16 @@ test("V2 presentation hooks remove stale control and never mutate persisted stat
     assert.match(contextEvent.system[1], /Model-visible V2 lifecycle mutation remains read-only/i)
     assert.deepEqual(await new GoalStore(root).load(sessionID), before, "Plan/context presentation must not pause or otherwise mutate Goal state")
 
+    const currentContextEvent = await runHook(host, "context", {
+      sessionID,
+      agent: "build",
+      system: [{ type: "text", text: "base system" }],
+    })
+    assert.deepEqual(currentContextEvent.system[0], { type: "text", text: "base system" })
+    assert.equal(currentContextEvent.system[1]?.type, "text")
+    assert.match(currentContextEvent.system[1]?.text ?? "", /OpenCode Goals experimental V2 persisted state/)
+    assert.match(currentContextEvent.system[1]?.text ?? "", /Objective: ship context/)
+
     const requestEvent = await runHook(host, "request", {
       sessionID,
       agent: "build",

@@ -8,6 +8,8 @@ import path from "node:path"
 import process from "node:process"
 
 const COMMAND = "goal-promotion-probe"
+const MANAGED_GOAL_COMMAND = "goal"
+const MANAGED_GOAL_SENTINEL = "MANAGED_GOAL_DIRECT_SENTINEL"
 const IDENTITY_COMMAND = "goal-prompt-identity-probe"
 const CAPABILITY_COMMAND = "goal-capability-probe"
 const TOOL = "opencode_goal_v2_promotion_probe"
@@ -322,6 +324,7 @@ function pluginSource() {
 
 const traceFile = process.env.OPENCODE_GOAL_V2_PROMOTION_TRACE
 const commandName = ${JSON.stringify(COMMAND)}
+const managedGoalCommandName = ${JSON.stringify(MANAGED_GOAL_COMMAND)}
 const identityCommandName = ${JSON.stringify(IDENTITY_COMMAND)}
 const capabilityCommandName = ${JSON.stringify(CAPABILITY_COMMAND)}
 const toolName = ${JSON.stringify(TOOL)}
@@ -338,6 +341,19 @@ export default {
     const capabilities = new Map()
 
     const commandRegistration = await ctx.command.transform((editor) => {
+      editor.add({
+        name: managedGoalCommandName,
+        description: "OpenCode Goal managed /goal collision probe",
+        async execute(input) {
+          await trace({
+            phase: "managed-goal.command.execute",
+            sessionID: input?.sessionID,
+            delivery: input?.delivery,
+            prompt: input?.prompt,
+          })
+        },
+      })
+
       editor.add({
         name: commandName,
         description: "OpenCode Goal V2 direct command origin probe",
@@ -633,6 +649,7 @@ async function main() {
   let server
   let serverLog = ""
   let apiPrefix = null
+  let managedGoalSessionID = ""
   let commandSessionID = ""
   let promptSessionID = ""
   let identitySessionID = ""
@@ -644,12 +661,16 @@ async function main() {
   await Promise.all([
     mkdir(pluginDir, { recursive: true }),
     mkdir(path.join(home, ".config"), { recursive: true }),
+    mkdir(path.join(home, ".config", "opencode", "commands"), { recursive: true }),
     mkdir(path.join(home, ".local", "share"), { recursive: true }),
     mkdir(path.join(home, ".local", "state"), { recursive: true }),
     mkdir(path.join(home, ".cache"), { recursive: true }),
   ])
 
   await writeFile(path.join(pluginDir, "opencode-goal-v2-promotion-probe.js"), pluginSource(), "utf8")
+  // OpenCode 2 installer mode intentionally leaves commands/goal.md absent.
+  // A markdown command with the same name shadows the plugin-native command on
+  // exact 2.0.11, so this canary exercises the production V2 post-install shape.
   await writeFile(path.join(workspace, "README.md"), "# OpenCode Goal V2 promotion capability canary\n", "utf8")
   await writeFile(path.join(workspace, "opencode.json"), `${JSON.stringify({
     $schema: "https://opencode.ai/config.json",
@@ -697,6 +718,7 @@ async function main() {
     return [
       `apiPrefix=${String(apiPrefix)}`,
       `commands=${JSON.stringify([...latestCommands])}`,
+      `managedGoalSessionID=${managedGoalSessionID || "none"}`,
       `commandSessionID=${commandSessionID || "none"}`,
       `promptSessionID=${promptSessionID || "none"}`,
       `identitySessionID=${identitySessionID || "none"}`,
@@ -775,7 +797,8 @@ async function main() {
       const response = await request(`${apiPrefix}/command`, { method: "GET" }, 5_000)
       if (!response.ok) return false
       latestCommands = commandNames(response.body)
-      return latestCommands.has(COMMAND)
+      return latestCommands.has(MANAGED_GOAL_COMMAND)
+        && latestCommands.has(COMMAND)
         && latestCommands.has(IDENTITY_COMMAND)
         && latestCommands.has(CAPABILITY_COMMAND)
     }, "direct probe command registration", diagnostics, 30_000)
@@ -791,6 +814,32 @@ async function main() {
       assert.ok(id, `session ID missing: ${response.text}`)
       return id
     }
+
+    managedGoalSessionID = await createSession("OpenCode Goal V2 plugin-native goal command")
+    const managedGoalDirect = await request(
+      `${apiPrefix}/session/${encodeURIComponent(managedGoalSessionID)}/command`,
+      {
+        method: "POST",
+        body: JSON.stringify({ name: MANAGED_GOAL_COMMAND, text: MANAGED_GOAL_SENTINEL }),
+      },
+      60_000,
+    )
+    assert.ok(
+      managedGoalDirect.ok,
+      `plugin-native /goal direct command failed: HTTP ${managedGoalDirect.status} ${managedGoalDirect.text}\n${await diagnostics()}`,
+    )
+    await waitFor(async () => {
+      const trace = await readTrace(traceFile)
+      return trace.some(
+        (item) => item.phase === "managed-goal.command.execute" && item.sessionID === managedGoalSessionID,
+      )
+    }, "managed /goal direct plugin callback", diagnostics, 15_000)
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    assert.equal(
+      provider.stats.requests.length,
+      0,
+      `managed /goal command fell through to model execution\n${await diagnostics()}`,
+    )
 
     commandSessionID = await createSession("OpenCode Goal V2 direct command origin")
     const direct = await request(`${apiPrefix}/session/${encodeURIComponent(commandSessionID)}/command`, {
@@ -1029,12 +1078,15 @@ async function main() {
       ok: true,
       version,
       apiPrefix,
+      managedGoalSessionID,
       commandSessionID,
       promptSessionID,
       identitySessionID,
       identitySpoofSessionID,
       capabilitySessionID,
       capabilitySpoofSessionID,
+      managedGoalCommand: MANAGED_GOAL_COMMAND,
+      managedGoalDirectIntercepted: true,
       registeredCommand: COMMAND,
       identityCommand: IDENTITY_COMMAND,
       capabilityCommand: CAPABILITY_COMMAND,

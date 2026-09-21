@@ -12,11 +12,11 @@ const packageVersion = JSON.parse(await readFile(path.join(root, "package.json")
 const packageSpec = `@bybrawe/opencode-goal@${packageVersion}`
 const managedCommandMarker = "<!-- managed-by:@bybrawe/opencode-goal -->"
 
-async function runInstaller(configDir, args = []) {
+async function runInstaller(configDir, args = [], env = {}) {
   return await new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [installer, ...args], {
       cwd: root,
-      env: { ...process.env, OPENCODE_CONFIG_DIR: configDir },
+      env: { ...process.env, OPENCODE_CONFIG_DIR: configDir, ...env },
       windowsHide: true,
     })
     const stdout = []
@@ -81,6 +81,60 @@ test("installer creates global OpenCode config, exact package pin, and discovera
     assert.equal(config.$schema, "https://opencode.ai/config.json")
     assert.deepEqual(config.plugin, [packageSpec])
     await assertManagedGoalCommand(configDir)
+  } finally {
+    await rm(temp, { recursive: true, force: true })
+  }
+})
+
+test("explicit OpenCode 2 lifecycle preview installs the plugin without the managed /goal bridge", async () => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-installer-v2-preview-new-"))
+  const configDir = path.join(temp, "config")
+  try {
+    const result = await runInstaller(configDir, [], { OPENCODE_GOAL_V2_DIRECT_LIFECYCLE: "1" })
+    assert.equal(result.code, 0, result.stderr)
+    assert.match(result.stdout, /direct lifecycle preview/i)
+    const config = JSON.parse(await readFile(path.join(configDir, "opencode.json"), "utf8"))
+    assert.deepEqual(config.plugin, [packageSpec])
+    assert.equal(await exists(path.join(configDir, "commands", "goal.md")), false)
+  } finally {
+    await rm(temp, { recursive: true, force: true })
+  }
+})
+
+test("explicit OpenCode 2 lifecycle preview removes only an existing marker-owned /goal bridge", async () => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-installer-v2-preview-update-"))
+  const configDir = path.join(temp, "config")
+  try {
+    const stable = await runInstaller(configDir)
+    assert.equal(stable.code, 0, stable.stderr)
+    await assertManagedGoalCommand(configDir)
+
+    const preview = await runInstaller(configDir, [], { OPENCODE_GOAL_V2_DIRECT_LIFECYCLE: "true" })
+    assert.equal(preview.code, 0, preview.stderr)
+    assert.match(preview.stdout, /Removed managed \/goal command for OpenCode 2 direct lifecycle preview/i)
+    assert.equal(await exists(path.join(configDir, "commands", "goal.md")), false)
+
+    const config = JSON.parse(await readFile(path.join(configDir, "opencode.json"), "utf8"))
+    assert.deepEqual(config.plugin, [packageSpec])
+  } finally {
+    await rm(temp, { recursive: true, force: true })
+  }
+})
+
+test("explicit OpenCode 2 lifecycle preview fails closed on a user-owned /goal command", async () => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-installer-v2-preview-user-command-"))
+  const configDir = path.join(temp, "config")
+  const commandPath = path.join(configDir, "commands", "goal.md")
+  try {
+    await mkdir(path.dirname(commandPath), { recursive: true })
+    const custom = "---\ndescription: user-owned goal command\n---\ncustom\n"
+    await writeFile(commandPath, custom, "utf8")
+
+    const result = await runInstaller(configDir, [], { OPENCODE_GOAL_V2_DIRECT_LIFECYCLE: "on" })
+    assert.notEqual(result.code, 0)
+    assert.match(result.stderr, /Refusing to overwrite user-owned OpenCode command/)
+    assert.equal(await readFile(commandPath, "utf8"), custom)
+    assert.equal(await exists(path.join(configDir, "opencode.json")), false)
   } finally {
     await rm(temp, { recursive: true, force: true })
   }

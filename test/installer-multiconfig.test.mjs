@@ -110,7 +110,12 @@ test("multi-config OpenCode 2 lifecycle preview removes the managed bridge after
     assert.deepEqual(json.plugin, ["other-plugin", packageSpec])
     const jsonc = await readFile(path.join(configDir, "opencode.jsonc"), "utf8")
     assert.match(jsonc, /Preserve this config/)
-    assert.match(jsonc, new RegExp(packageSpec.replace(/[.*+?^${}()|[\]\\]/g, "\\test("multi-config install stages every rewrite before mutating real config", async () => {")))
+    assert.match(jsonc, new RegExp(packageSpec.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))
+  } finally {
+    await rm(temp, { recursive: true, force: true })
+  }
+})
+test("multi-config install stages every rewrite before mutating real config", async () => {")))
   } finally {
     await rm(temp, { recursive: true, force: true })
   }

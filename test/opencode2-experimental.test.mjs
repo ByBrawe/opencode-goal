@@ -246,9 +246,11 @@ test("V2 direct lifecycle preview mutates only through the host-native command b
       assert.equal(host.interrupts.length, 0)
       assert.equal(host.prompts[0].sessionID, sessionID)
       assert.match(host.prompts[0].text, /ship docs/i)
-      assert.equal(host.prompts[0].metadata?.opencode_goal_v2_direct_command, true)
+      assert.equal(host.prompts[0].delivery, "steer")
+      assert.equal(host.prompts[0].metadata, undefined)
       assert.equal(host.prompts[0].resume, false)
       assert.equal(host.prompts[1].id, "prompt-1")
+      assert.equal(host.prompts[1].delivery, "steer")
       assert.equal(host.prompts[1].resume, true)
 
       const modelControl = await executeOpenCode2GoalControl(host.ctx, "pause", { sessionID, agent: "build" })

@@ -358,7 +358,7 @@ async function main() {
     const command = async (text, expectOK = true) => {
       const response = await request(`${apiPrefix}/session/${encodeURIComponent(sessionID)}/command`, {
         method: "POST",
-        body: JSON.stringify({ name: "goal", text, delivery: "steer" }),
+        body: JSON.stringify({ name: "goal", text }),
       }, 90_000)
       if (expectOK) assert.ok(response.ok, `/goal ${text} failed: HTTP ${response.status} ${response.text}\n${await diagnostics()}`)
       return response

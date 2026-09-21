@@ -43,6 +43,62 @@
       "testFile": "test/opencode2-sequence-boundary.test.mjs",
       "testName": "V2 sequence and lifecycle controls stay read-only and never create or advance Goal state",
       "expected": "Experimental V2 queue, next, create, edit, pause, resume, clear, and related mutation requests never create or advance stable Goal/sequence state while the host promotion gate is blocked."
+    },
+    {
+      "id": "opencode2.capability-single-use-persistence",
+      "category": "opencode2-experimental",
+      "weight": 4,
+      "testFile": "test/opencode2-experimental.test.mjs",
+      "testName": "direct lifecycle command mints host-message capability without persisting until the one-use tool consumes it",
+      "expected": "A direct command creates no Goal state by itself; only the exact host-message capability exposes mutating control, one tool call persists the Goal, replay fails, and post-tool continuation hides mutating control."
+    },
+    {
+      "id": "opencode2.capability-mismatch-no-persistence",
+      "category": "opencode2-experimental",
+      "weight": 4,
+      "testFile": "test/opencode2-experimental.test.mjs",
+      "testName": "mismatched lifecycle arguments consume the capability before persistence and cannot be retried",
+      "expected": "Model-supplied lifecycle arguments that differ from the authenticated direct command consume and revoke the capability before any Goal persistence, and the authorized command cannot be retried with that capability."
+    },
+    {
+      "id": "opencode2.capability-plan-spoof-no-mutation",
+      "category": "opencode2-experimental",
+      "weight": 4,
+      "testFile": "test/opencode2-experimental.test.mjs",
+      "testName": "ordinary prompt text and Plan contexts cannot arm or reuse lifecycle mutation",
+      "expected": "Ordinary command-like prompt text cannot mint control, Plan cannot expose mutating lifecycle control, and switching back to Build cannot reuse the revoked capability."
+    },
+    {
+      "id": "opencode2.capability-workspace-change-no-persistence",
+      "category": "opencode2-experimental",
+      "weight": 4,
+      "testFile": "test/opencode2-experimental.test.mjs",
+      "testName": "workspace changes fail closed after capability consumption and before Goal persistence",
+      "expected": "A capability bound to one session workspace is consumed and rejected if the session workspace changes before persistence, with no Goal written in either workspace."
+    },
+    {
+      "id": "opencode2.host-directory-mismatch-no-access",
+      "category": "opencode2-experimental",
+      "weight": 4,
+      "testFile": "test/opencode2-experimental.test.mjs",
+      "testName": "active host directory mismatch fails closed before Goal reads or writes",
+      "expected": "If the session location and active host directory disagree, V2 rejects Goal access before any read or write in either location."
+    },
+    {
+      "id": "opencode2.unavailable-location-no-access",
+      "category": "opencode2-experimental",
+      "weight": 4,
+      "testFile": "test/opencode2-experimental.test.mjs",
+      "testName": "unavailable session directory fails closed before Goal reads or writes",
+      "expected": "If the resolved session location no longer exists, V2 refuses Goal access rather than falling back to another directory."
+    },
+    {
+      "id": "opencode2.capability-full-lifecycle",
+      "category": "opencode2-experimental",
+      "weight": 4,
+      "testFile": "test/opencode2-experimental.test.mjs",
+      "testName": "authorized capability applies create pause resume edit and clear with one fresh host identity per mutation",
+      "expected": "Each lifecycle mutation requires a fresh host-authenticated capability and persists the expected create, pause, resume, edit revision, clear, and archive behavior."
     }
   ]
 }

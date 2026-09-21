@@ -115,11 +115,7 @@ test("multi-config OpenCode 2 lifecycle preview removes the managed bridge after
     await rm(temp, { recursive: true, force: true })
   }
 })
-test("multi-config install stages every rewrite before mutating real config", async () => {")))
-  } finally {
-    await rm(temp, { recursive: true, force: true })
-  }
-})
+
 test("multi-config install stages every rewrite before mutating real config", async () => {
   const temp = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-multi-config-fail-"))
   const configDir = path.join(temp, "config")

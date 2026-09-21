@@ -16,6 +16,7 @@ const SERVER_PASSWORD = "opencode-goal-v2-direct-lifecycle"
 const OPENCODE_BINARY = process.env.OPENCODE2_BINARY || "opencode2"
 const DIRECT_ENV = "OPENCODE_GOAL_V2_DIRECT_LIFECYCLE"
 const CONTROL_TOOL = "opencode_goals_v2_control"
+const READ_ONLY_TOOL = "opencode_goals_v2_get"
 const CREATE_COMMAND = 'ship v2 capability --accept "preview persists" --constraint "no spoof mutation" --max-turns 7'
 const PAUSE_COMMAND = "pause"
 const RESUME_COMMAND = "resume"
@@ -326,8 +327,10 @@ async function main() {
   assert.equal(process.platform, "linux", "the exact OpenCode 2 direct lifecycle canary is intentionally Ubuntu-only")
 
   const workspace = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-v2-direct-"))
+  const foreignWorkspace = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-v2-direct-foreign-"))
   const home = path.join(workspace, ".home")
   const pluginDir = path.join(workspace, ".opencode", "plugins")
+  const foreignPluginDir = path.join(foreignWorkspace, ".opencode", "plugins")
   const bridge = path.join(pluginDir, "opencode-goal-server.js")
   const provider = startProvider()
   const providerPort = await provider.listen()
@@ -340,6 +343,7 @@ async function main() {
 
   await Promise.all([
     mkdir(pluginDir, { recursive: true }),
+    mkdir(foreignPluginDir, { recursive: true }),
     mkdir(path.join(home, ".config"), { recursive: true }),
     mkdir(path.join(home, ".local", "share"), { recursive: true }),
     mkdir(path.join(home, ".local", "state"), { recursive: true }),
@@ -367,11 +371,24 @@ async function main() {
     },
   }, null, 2)}\n`, "utf8")
 
+  await writeFile(path.join(foreignPluginDir, "opencode-goal-server.js"), `export { default } from ${JSON.stringify(pathToFileURL(serverFile).href)}\n`, "utf8")
+  await writeFile(path.join(foreignWorkspace, "README.md"), "# OpenCode Goal V2 foreign-location canary\n", "utf8")
+  await writeFile(
+    path.join(foreignWorkspace, "opencode.json"),
+    await readFile(path.join(workspace, "opencode.json"), "utf8"),
+    "utf8",
+  )
+
   execFileSync("git", ["init", "--quiet", workspace], { stdio: "ignore" })
   execFileSync("git", ["-C", workspace, "config", "user.email", "opencode-goal-ci@example.invalid"], { stdio: "ignore" })
   execFileSync("git", ["-C", workspace, "config", "user.name", "OpenCode Goal CI"], { stdio: "ignore" })
   execFileSync("git", ["-C", workspace, "add", "."], { stdio: "ignore" })
   execFileSync("git", ["-C", workspace, "commit", "--quiet", "-m", "init"], { stdio: "ignore" })
+  execFileSync("git", ["init", "--quiet", foreignWorkspace], { stdio: "ignore" })
+  execFileSync("git", ["-C", foreignWorkspace, "config", "user.email", "opencode-goal-ci@example.invalid"], { stdio: "ignore" })
+  execFileSync("git", ["-C", foreignWorkspace, "config", "user.name", "OpenCode Goal CI"], { stdio: "ignore" })
+  execFileSync("git", ["-C", foreignWorkspace, "add", "."], { stdio: "ignore" })
+  execFileSync("git", ["-C", foreignWorkspace, "commit", "--quiet", "-m", "init"], { stdio: "ignore" })
 
   const env = {
     ...process.env,
@@ -487,7 +504,20 @@ async function main() {
       const consumed = requests.find((item) => item.sequence > authorized.sequence && item.sawConsumedResult)
       assert.ok(consumed, `tool result did not reach continuation for ${needle}`)
       assert.equal(consumed.hasControlTool, false, `consumed capability remained visible on continuation for ${needle}`)
+      assert.ok(consumed.tools.includes(READ_ONLY_TOOL), `read-only Goal inspection disappeared after consuming capability for ${needle}`)
     }
+
+    const requestsBeforeLocationMismatch = provider.stats.requests.length
+    const locationMismatch = await request(`${apiPrefix}/session/${encodeURIComponent(sessionID)}/command`, {
+      method: "POST",
+      headers: { "x-opencode-directory": foreignWorkspace },
+      body: JSON.stringify({ name: "goal", text: PAUSE_COMMAND }),
+    }, 30_000)
+    assert.equal(locationMismatch.ok, false, `mismatched host directory unexpectedly authorized /goal\n${await diagnostics()}`)
+    assert.match(locationMismatch.text, /does not match the active host directory/i)
+    assert.equal(provider.stats.requests.length, requestsBeforeLocationMismatch, "Location mismatch must fail before model dispatch")
+    assert.equal(await readGoal(workspace, sessionID), null, "Location mismatch wrote Goal state in the original workspace")
+    assert.equal(await readGoal(foreignWorkspace, sessionID), null, "Location mismatch wrote Goal state in the foreign workspace")
 
     await command(CREATE_COMMAND)
     const createdGoal = await waitFor(async () => {
@@ -527,6 +557,7 @@ async function main() {
     assert.ok(planFollowup.ok, `Plan follow-up prompt failed: HTTP ${planFollowup.status} ${planFollowup.text}\n${await diagnostics()}`)
     await waitFor(() => provider.stats.requests.length > followupBefore, "post-Plan ordinary request", diagnostics)
     assert.ok(provider.stats.requests.slice(followupBefore).every((item) => !item.hasControlTool), "revoked Plan capability became visible after switching back to build")
+    assert.ok(provider.stats.requests.slice(followupBefore).every((item) => item.tools.includes(READ_ONLY_TOOL)), "post-Plan request lost read-only Goal inspection")
 
     await command(PAUSE_COMMAND)
     await waitFor(async () => (await readGoal(workspace, sessionID))?.status === "paused", "capability pause", diagnostics)
@@ -548,6 +579,7 @@ async function main() {
     assert.deepEqual(await readGoal(workspace, sessionID), paused, `ordinary prompt text mutated Goal lifecycle\n${await diagnostics()}`)
     assert.ok(provider.stats.requests.slice(requestsBeforeSpoof).some((item) => item.sawSpoof))
     assert.ok(provider.stats.requests.slice(requestsBeforeSpoof).every((item) => !item.hasControlTool))
+    assert.ok(provider.stats.requests.slice(requestsBeforeSpoof).every((item) => item.tools.includes(READ_ONLY_TOOL)), "ordinary spoof request lost read-only Goal inspection")
 
     await command(RESUME_COMMAND)
     await waitFor(async () => (await readGoal(workspace, sessionID))?.status === "active", "capability resume", diagnostics)
@@ -585,6 +617,7 @@ async function main() {
     assert.ok(replay.ok, `post-mismatch ordinary request failed: HTTP ${replay.status} ${replay.text}\n${await diagnostics()}`)
     await waitFor(() => provider.stats.requests.length > replayBefore, "post-mismatch ordinary request", diagnostics)
     assert.ok(provider.stats.requests.slice(replayBefore).every((item) => !item.hasControlTool), "mismatched capability was reusable on a later request")
+    assert.ok(provider.stats.requests.slice(replayBefore).every((item) => item.tools.includes(READ_ONLY_TOOL)), "post-mismatch request lost read-only Goal inspection")
     assert.equal(JSON.stringify(await readGoal(workspace, sessionID)), beforeMismatch)
 
     const beforeUnsupported = JSON.stringify(await readGoal(workspace, sessionID))
@@ -617,6 +650,7 @@ async function main() {
       sessionID,
       directCommandRegistered: latestCommands.has("goal"),
       create: { objective: createdGoal.objective, status: createdGoal.status, maxTurns: createdGoal.budget?.maxTurns },
+      locationMismatchBlocked: true,
       planMutationBlocked: true,
       spoofPreservedStatus: paused.status,
       resumeStatus: resumed.status,
@@ -641,6 +675,7 @@ async function main() {
     await stopProcess(server)
     await provider.close().catch(() => undefined)
     await rm(workspace, { recursive: true, force: true }).catch(() => undefined)
+    await rm(foreignWorkspace, { recursive: true, force: true }).catch(() => undefined)
   }
 }
 

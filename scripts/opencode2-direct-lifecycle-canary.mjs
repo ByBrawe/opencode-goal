@@ -108,14 +108,19 @@ function messageText(body) {
   }).join("\n")
 }
 
-function latestUserText(body) {
+function latestUserTurn(body) {
   const messages = Array.isArray(body?.messages) ? body.messages : []
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index]
     if (String(message?.role || "").toLowerCase() !== "user") continue
-    return contentText(message?.content)
+    return {
+      userText: contentText(message?.content),
+      turnText: messages.slice(index).map((item) => {
+        return `${String(item?.role || "")}: ${contentText(item?.content)}`
+      }).join("\n"),
+    }
   }
-  return ""
+  return { userText: "", turnText: "" }
 }
 
 function toolNames(body) {
@@ -246,9 +251,10 @@ function startProvider() {
     const sequence = stats.requests.length + 1
     const tools = toolNames(body)
     const text = messageText(body)
-    const currentUserText = latestUserText(body)
+    const currentTurn = latestUserTurn(body)
+    const currentUserText = currentTurn.userText
     const hasControlTool = tools.includes(CONTROL_TOOL)
-    const sawConsumedResult = /single-use capability is consumed/i.test(text)
+    const sawConsumedResult = /single-use capability is consumed/i.test(currentTurn.turnText)
     const command = hasControlTool && !sawConsumedResult ? authorizedCommandFromText(currentUserText) : ""
 
     stats.requests.push({

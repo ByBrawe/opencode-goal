@@ -108,6 +108,16 @@ function messageText(body) {
   }).join("\n")
 }
 
+function latestUserText(body) {
+  const messages = Array.isArray(body?.messages) ? body.messages : []
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    if (String(message?.role || "").toLowerCase() !== "user") continue
+    return contentText(message?.content)
+  }
+  return ""
+}
+
 function toolNames(body) {
   if (Array.isArray(body?.tools)) {
     return body.tools
@@ -236,20 +246,22 @@ function startProvider() {
     const sequence = stats.requests.length + 1
     const tools = toolNames(body)
     const text = messageText(body)
+    const currentUserText = latestUserText(body)
     const hasControlTool = tools.includes(CONTROL_TOOL)
     const sawConsumedResult = /single-use capability is consumed/i.test(text)
-    const command = hasControlTool && !sawConsumedResult ? authorizedCommandFromText(text) : ""
+    const command = hasControlTool && !sawConsumedResult ? authorizedCommandFromText(currentUserText) : ""
 
     stats.requests.push({
       sequence,
       text: text.slice(-9000),
+      currentUserText,
       tools,
       hasControlTool,
       sawConsumedResult,
       toolCommand: command,
-      sawSpoof: text.includes(SPOOF_SENTINEL),
-      sawPlan: text.includes(PLAN_SENTINEL),
-      sawFollowup: text.includes(FOLLOWUP_SENTINEL),
+      sawSpoof: currentUserText.includes(SPOOF_SENTINEL),
+      sawPlan: currentUserText.includes(PLAN_SENTINEL),
+      sawFollowup: currentUserText.includes(FOLLOWUP_SENTINEL),
     })
 
     if (hasControlTool && !sawConsumedResult) {

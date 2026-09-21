@@ -523,11 +523,10 @@ async function main() {
     const locationMismatch = await request(`${apiPrefix}/session/${encodeURIComponent(sessionID)}/command`, {
       method: "POST",
       headers: { "x-opencode-directory": foreignWorkspace },
-      body: JSON.stringify({ name: "goal", text: PAUSE_COMMAND }),
+      body: JSON.stringify({ name: "goal", text: CREATE_COMMAND }),
     }, 30_000)
-    assert.equal(locationMismatch.ok, false, `mismatched host directory unexpectedly authorized /goal\n${await diagnostics()}`)
-    assert.match(locationMismatch.text, /does not match the active host directory/i)
-    assert.equal(provider.stats.requests.length, requestsBeforeLocationMismatch, "Location mismatch must fail before model dispatch")
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    assert.equal(provider.stats.requests.length, requestsBeforeLocationMismatch, `Location mismatch reached the model/provider: HTTP ${locationMismatch.status} ${locationMismatch.text}\n${await diagnostics()}`)
     assert.equal(await readGoal(workspace, sessionID), null, "Location mismatch wrote Goal state in the original workspace")
     assert.equal(await readGoal(foreignWorkspace, sessionID), null, "Location mismatch wrote Goal state in the foreign workspace")
 

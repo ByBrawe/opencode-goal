@@ -137,14 +137,33 @@ function experimentalContext(goal: GoalState): string {
 
 function appendSystemContext(event: any, text: string): void {
   if (Array.isArray(event?.system)) {
-    if (!event.system.includes(text)) event.system.push(text)
+    const hasStructuredParts = event.system.some((part: unknown) => {
+      const item = record(part)
+      return item?.type === "text" && typeof item?.text === "string"
+    })
+    const alreadyPresent = event.system.some((part: unknown) => {
+      if (typeof part === "string") return part === text
+      const item = record(part)
+      return item?.type === "text" && item?.text === text
+    })
+    if (alreadyPresent) return
+
+    // OpenCode 2.0.11 models session.context.system as SystemPart[].
+    // Historical beta/synthetic adapters used string[]. Preserve an existing
+    // string-array shape, but use the current structured shape for empty or
+    // already-structured arrays so request validation succeeds on 2.0.11.
+    if (hasStructuredParts || event.system.length === 0) {
+      event.system.push({ type: "text", text })
+    } else {
+      event.system.push(text)
+    }
     return
   }
   if (typeof event?.system === "string") {
     if (!event.system.includes(text)) event.system = event.system ? `${event.system}\n\n${text}` : text
     return
   }
-  if (event && event.system === undefined) event.system = text
+  if (event && event.system === undefined) event.system = { type: "text", text }
 }
 
 function removeControlTool(event: any): void {

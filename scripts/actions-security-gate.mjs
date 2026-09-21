@@ -43,14 +43,20 @@ function validPermissions(name, text) {
     return /^permissions:\s*\n\s{2}contents:\s*read\s*\n\s{2}id-token:\s*write\s*$/m.test(text)
   }
   if (name === branchHygieneWorkflow) {
-    return /^permissions:\s*\n\s{2}contents:\s*write\s*\n\s{2}pull-requests:\s*read\s*$/m.test(text)
+    return /^permissions:\s*\n\s{2}contents:\s*read\s*$/m.test(text)
   }
   return /^permissions:\s*\n\s{2}contents:\s*read\s*$/m.test(text)
     && !/^\s*id-token\s*:\s*write\s*$/m.test(text)
 }
 
 function validBranchHygieneWorkflow(text) {
-  return /^on:\s*\n\s{2}push:\s*\n\s{4}branches:\s*\[main\]\s*\n\s{2}workflow_dispatch:\s*$/m.test(text)
+  return /^\s{2}pull_request:\s*$/m.test(text)
+    && /^\s{2}push:\s*\n\s{4}branches:\s*\[main\]\s*$/m.test(text)
+    && /^\s{2}workflow_dispatch:\s*$/m.test(text)
+    && /^\s{4}if:\s*github\.event_name == 'pull_request'\s*$/m.test(text)
+    && /^\s{4}if:\s*github\.event_name != 'pull_request'\s*$/m.test(text)
+    && /^\s{10}BRANCH_HYGIENE_DRY_RUN:\s*"1"\s*$/m.test(text)
+    && /^\s{6}contents:\s*write\s*$/m.test(text)
     && /^\s*run:\s*node scripts\/branch-hygiene\.mjs\s*$/m.test(text)
 }
 
@@ -67,7 +73,7 @@ async function main() {
       failures.push(name === npmPublishWorkflow
         ? `${name}: npm publisher must declare exactly contents: read plus id-token: write`
         : name === branchHygieneWorkflow
-          ? `${name}: branch hygiene must declare exactly contents: write plus pull-requests: read`
+          ? `${name}: branch hygiene must keep top-level permissions read-only and isolate write access to its cleanup job`
           : `${name}: workflow must declare exactly top-level permissions:\n  contents: read`)
     }
 
@@ -95,7 +101,7 @@ async function main() {
   }
 
   console.log(`GitHub Actions security gate PASS (${names.length} workflow files)`)
-  console.log("Policy: read-only contents token by default; OIDC write is limited to publish-npm.yml; branch-hygiene.yml alone may write contents for exact merged-head cleanup; no persisted checkout credentials, target/workflow-run privilege boundary, workflow push/merge, or inline GitHub API mutation commands.")
+  console.log("Policy: read-only contents token by default; OIDC write is limited to publish-npm.yml; branch-hygiene.yml may grant contents: write only inside its non-PR cleanup job while PR validation stays dry-run/read-only; no persisted checkout credentials, target/workflow-run privilege boundary, workflow push/merge, or inline GitHub API mutation commands.")
 }
 
 main().catch((error) => {

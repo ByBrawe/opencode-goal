@@ -18,6 +18,9 @@ const goalCommandContent = `---\ndescription: Set or manage a persistent evidenc
 const configCandidates = ["opencode.json", "opencode.jsonc", "config.json", "config.jsonc"]
 const installerArgs = process.argv.slice(2)
 const uninstallRequested = installerArgs.length === 1 && ["--uninstall", "uninstall", "--remove"].includes(installerArgs[0] ?? "")
+const directLifecyclePreview = ["1", "true", "yes", "on"].includes(
+  String(process.env.OPENCODE_GOAL_V2_DIRECT_LIFECYCLE ?? "").trim().toLowerCase(),
+)
 
 if (installerArgs.includes("--help") || installerArgs.includes("-h")) {
   console.log(`OpenCode Goals installer/updater\n\nUsage:\n  opencode-goal\n  npx -y @bybrawe/opencode-goal@latest\n  npx -y @bybrawe/opencode-goal@latest --uninstall\n\nInstall/update adds ${packageName} to the global OpenCode config, pins the exact package version,\nand installs a managed global commands/goal.md so /goal is discoverable in current OpenCode CLI/TUI.\nUninstall removes OpenCode Goals package/local plugin registrations and the managed /goal command\nbut preserves project Goal state and any user-owned goal.md file.\n\nSet OPENCODE_CONFIG_DIR to target a non-default OpenCode config directory.`)
@@ -471,6 +474,17 @@ async function installOrUpdate(): Promise<void> {
     const updated = rewritePluginConfig(source, "install")
     if (updated.changed) await writeAtomic(target, updated.content)
     console.log(`${updated.changed ? "Installed/updated" : "Already configured"} OpenCode Goals ${packageVersion} in ${target}`)
+  }
+
+  if (directLifecyclePreview) {
+    const removedCommand = await removeManagedGoalCommand()
+    await removeLegacyLocalCopies()
+    console.log(`Pinned plugin spec: ${packageSpec}`)
+    console.log(removedCommand
+      ? `Removed managed /goal command for OpenCode 2 direct lifecycle preview: ${goalCommandPath}`
+      : `OpenCode 2 direct lifecycle preview leaves managed /goal command absent: ${goalCommandPath}`)
+    console.log("Fully restart OpenCode. The host-native Goal plugin command now owns /goal while the preview env remains enabled.")
+    return
   }
 
   await installManagedGoalCommand()

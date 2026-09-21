@@ -242,7 +242,7 @@ test("V2 direct lifecycle preview mutates only through the host-native command b
       assert.equal(goal?.status, "active")
       assert.equal(goal?.budget?.maxTurns, 7)
       assert.deepEqual(goal?.constraints, ["no unrelated mutation"])
-      assert.equal(host.prompts.length, 4)
+      assert.equal(host.prompts.length, 2)
       assert.equal(host.interrupts.length, 0)
       assert.equal(host.prompts[0].sessionID, sessionID)
       assert.match(host.prompts[0].text, /ship docs/i)
@@ -273,7 +273,7 @@ test("V2 direct lifecycle preview mutates only through the host-native command b
       })
       goal = await store.load(sessionID)
       assert.equal(goal?.status, "active")
-      assert.equal(host.prompts.length, 2)
+      assert.equal(host.prompts.length, 4)
 
       const beforeRevision = goal?.revision
       await command.execute({

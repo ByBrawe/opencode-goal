@@ -55,6 +55,7 @@ export function createGoal(input: {
   constraints?: string[]
   checks?: string[]
   files?: FileRequirementInput[]
+  notifyCommand?: string
   execution?: GoalExecutionContext
   budget?: Partial<GoalBudget>
   now?: number
@@ -66,6 +67,7 @@ export function createGoal(input: {
   const constraints = (input.constraints ?? []).map((item) => item.trim()).filter(Boolean)
   const checks = (input.checks ?? []).map((item) => item.trim()).filter(Boolean)
   const files = (input.files ?? []).filter((item) => item.file.trim())
+  const notifyCommand = input.notifyCommand?.trim()
   const requirements: GoalRequirement[] = [
     requirement({ text: `Objective achieved: ${objective}`, verification: "semantic", source: "objective" }),
   ]
@@ -96,6 +98,7 @@ export function createGoal(input: {
     requirements,
     evidence: [],
     checks,
+    ...(notifyCommand ? { notifyCommand } : {}),
     ...(input.execution ? { execution: input.execution } : {}),
     runtimeFingerprint: currentGoalRuntimeFingerprint(),
     usage: { turns: 0, tokens: 0, cost: 0, runtimeMs: 0, seenMessageIDs: [] },
@@ -118,12 +121,14 @@ export function editGoal(goal: GoalState, input: {
   constraints?: string[]
   checks?: string[]
   files?: FileRequirementInput[]
+  notifyCommand?: string
   execution?: GoalExecutionContext
   now?: number
 }): GoalState {
   const existingFiles = goal.requirements
     .filter((item) => item.verification === "file" && item.file)
     .map((item) => ({ file: item.file!, ...(item.contains ? { contains: item.contains } : {}) }))
+  const notifyCommand = input.notifyCommand ?? goal.notifyCommand
   const next = createGoal({
     sessionID: goal.sessionID,
     objective: input.objective,
@@ -131,6 +136,7 @@ export function editGoal(goal: GoalState, input: {
     constraints: input.constraints ?? existingConstraints(goal),
     checks: input.checks ?? goal.checks,
     files: input.files ?? existingFiles,
+    ...(notifyCommand ? { notifyCommand } : {}),
     ...((input.execution ?? goal.execution) ? { execution: input.execution ?? goal.execution } : {}),
     budget: goal.budget,
     ...(input.now === undefined ? {} : { now: input.now }),

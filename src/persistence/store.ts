@@ -11,6 +11,7 @@ export type { GoalStoreConcurrencyKind } from "./process-lock.js"
 
 export type GoalArchiveReason = "cleared" | "replaced"
 export type GoalStoreIntegrityKind = "invalid_json" | "invalid_state" | "invalid_archive" | "unsafe_path"
+export type GoalStoreTransitionReason = "completed" | "blocked" | "paused"
 
 export class GoalStoreIntegrityError extends Error {
   readonly code = "GOAL_STORE_INTEGRITY"
@@ -50,6 +51,14 @@ export type GoalRestoreResult =
 
 export interface GoalStoreOptions {
   processLockTimeoutMs?: number
+  onTransition?: (goal: GoalState, reason: GoalStoreTransitionReason) => void
+}
+
+function transitionReason(status: GoalState["status"]): GoalStoreTransitionReason | undefined {
+  if (status === "completed") return "completed"
+  if (status === "blocked") return "blocked"
+  if (status === "paused" || status === "waiting_user" || status === "budget_limited" || status === "usage_limited") return "paused"
+  return undefined
 }
 
 function shard(value: string): string {
@@ -94,6 +103,7 @@ function validateState(value: unknown): GoalState | null {
   const state = value as Partial<GoalState>
   if (state.schemaVersion !== 1 || typeof state.id !== "string" || typeof state.sessionID !== "string" || typeof state.objective !== "string") return null
   if (!Array.isArray(state.requirements) || !Array.isArray(state.evidence) || !validGeneration(state.storageGeneration)) return null
+  if (state.notifyCommand !== undefined && (typeof state.notifyCommand !== "string" || !state.notifyCommand.trim())) return null
   if (!validRuntimeFingerprint(state.runtimeFingerprint)) return null
   if (state.pendingContinuation !== undefined && typeof state.pendingContinuation !== "boolean") return null
   if (state.emptyTurnCount !== undefined && (!Number.isSafeInteger(state.emptyTurnCount) || Number(state.emptyTurnCount) < 0)) return null
@@ -130,6 +140,8 @@ function stateIntegrityDetail(value: unknown): string {
   if (schema !== 1) return `unsupported schemaVersion ${String(schema)}`
   const generation = value && typeof value === "object" ? (value as { storageGeneration?: unknown }).storageGeneration : undefined
   if (!validGeneration(generation)) return `invalid storageGeneration ${String(generation)}`
+  const notifyCommand = value && typeof value === "object" ? (value as { notifyCommand?: unknown }).notifyCommand : undefined
+  if (notifyCommand !== undefined && (typeof notifyCommand !== "string" || !notifyCommand.trim())) return "invalid notifyCommand"
   const runtimeFingerprint = value && typeof value === "object" ? (value as { runtimeFingerprint?: unknown }).runtimeFingerprint : undefined
   if (!validRuntimeFingerprint(runtimeFingerprint)) return "invalid runtimeFingerprint"
   const pendingContinuation = value && typeof value === "object" ? (value as { pendingContinuation?: unknown }).pendingContinuation : undefined
@@ -254,6 +266,7 @@ export class GoalStore {
   readonly root: string
   readonly locksRoot: string
   readonly processLockTimeoutMs: number
+  readonly onTransition: ((goal: GoalState, reason: GoalStoreTransitionReason) => void) | undefined
   #locks = new Map<string, Promise<unknown>>()
 
   constructor(directory: string, options: GoalStoreOptions = {}) {
@@ -262,6 +275,7 @@ export class GoalStore {
     this.locksRoot = path.join(this.directory, ".opencode", "goal-locks")
     this.processLockTimeoutMs = options.processLockTimeoutMs ?? 5_000
     if (!Number.isFinite(this.processLockTimeoutMs) || this.processLockTimeoutMs < 1) throw new Error("processLockTimeoutMs must be positive")
+    this.onTransition = options.onTransition
   }
 
   fileFor(sessionID: string): string {
@@ -353,6 +367,7 @@ export class GoalStore {
       }
       stampGoalRuntimeFingerprint(restored)
       await writeAtomic(this.directory, this.fileFor(sessionID), restored)
+      this.#emitTransition(current, restored)
       return { ok: true, goal: restored, source }
     })
   }
@@ -413,6 +428,7 @@ export class GoalStore {
       const persisted: GoalState = { ...state, storageGeneration: nextGeneration }
       await writeAtomic(this.directory, file, persisted)
       state.storageGeneration = nextGeneration
+      this.#emitTransition(previous, persisted)
     })
   }
 
@@ -422,6 +438,18 @@ export class GoalStore {
       if (current) await this.#archive(current, "cleared")
       await removeStorageFile(this.directory, this.fileFor(sessionID))
     })
+  }
+
+  #emitTransition(previous: GoalState | null, persisted: GoalState): void {
+    if (!this.onTransition) return
+    if (previous && previous.id === persisted.id && previous.status === persisted.status) return
+    const reason = transitionReason(persisted.status)
+    if (!reason) return
+    try {
+      this.onTransition(persisted, reason)
+    } catch {
+      // Advisory notification sinks cannot affect durable persistence.
+    }
   }
 
   async #history(sessionID: string): Promise<GoalArchiveRecord[]> {

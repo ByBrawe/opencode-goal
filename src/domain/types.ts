@@ -191,6 +191,8 @@ export interface GoalState {
   requirements: GoalRequirement[]
   evidence: EvidenceRecord[]
   checks: string[]
+  /** Optional user-authored fire-and-forget local command for lifecycle notifications. */
+  notifyCommand?: string
   execution?: GoalExecutionContext
   /** Runtime identity that most recently persisted this Goal. Older schema-v1 snapshots may omit it. */
   runtimeFingerprint?: GoalRuntimeFingerprint

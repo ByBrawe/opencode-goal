@@ -117,6 +117,7 @@ export function installGoalSequence(input: PluginInput, hooks: PluginHooks): voi
         constraints: parsed.constraints,
         checks: parsed.checks,
         files: parsed.files,
+        ...(parsed.notifyCommand ? { notifyCommand: parsed.notifyCommand } : {}),
         budget: budgetPatch(parsed),
       })
       shown = `Queued Goal ${shortID(result.item.id)} at position ${result.sequence.items.length}: ${result.item.objective}\nPending Goals: ${result.sequence.items.length}`

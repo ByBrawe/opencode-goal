@@ -239,7 +239,7 @@ test("V2 status and contract stay readable while every lifecycle mutation fails 
       "next",
     ]) {
       const result = await executeOpenCode2GoalControl(host.ctx, command, { sessionID, agent: "build" })
-      assert.match(result.content, /read-only on current hosts/i, `${command} must fail closed in V2`)
+      assert.match(result.content, /model-visible lifecycle control remains read-only/i, `${command} must fail closed in V2`)
       assert.match(result.content, /No Goal state was changed/i)
       assert.deepEqual(await new GoalStore(root).load(sessionID), before, `${command} must not mutate Goal state`)
     }

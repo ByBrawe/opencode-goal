@@ -687,7 +687,7 @@ export const OpenCode2GoalsExperimental = {
         const key = lastUserMessageID ? directCapabilityKey(sessionID, lastUserMessageID) : undefined
         const capability = key ? runtime.capabilities.get(key) : undefined
 
-        if (!capability || capability.expiresAt < Date.now() || isReadOnlyAgent(event?.agent)) {
+        if (!key || !capability || capability.expiresAt < Date.now() || isReadOnlyAgent(event?.agent)) {
           if (capability) revokeCapability(runtime, capability)
           deleteSessionCapabilities(runtime, sessionID)
           removeControlTool(event)
@@ -697,7 +697,9 @@ export const OpenCode2GoalsExperimental = {
         } else {
           deleteSessionCapabilities(runtime, sessionID, key)
           capability.state = "armed"
-          capability.agent = firstString(event?.agent)
+          const agent = firstString(event?.agent)
+          if (agent) capability.agent = agent
+          else delete capability.agent
           runtime.armedBySession.set(sessionID, key)
           appendSystemContext(event, authorizationContext(capability))
         }

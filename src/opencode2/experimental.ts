@@ -198,7 +198,7 @@ async function promptDirectGoal(
     ...input.prompt,
     sessionID: input.sessionID,
     text,
-    delivery: input.delivery,
+    ...(input.delivery !== undefined ? { delivery: input.delivery } : {}),
   }
   const admitted = await ctx.session.prompt({
     ...prompt,

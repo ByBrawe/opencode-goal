@@ -8,14 +8,18 @@ on:
     branches: [main]
     paths:
       - "src/opencode2/**"
+      - "src/server.ts"
       - "scripts/opencode2-host-canary.mjs"
+      - "scripts/opencode2-server-entry-canary.mjs"
       - "scripts/run-opencode2-host-ci.mjs"
       - ".github/workflows/opencode2-canary.yml"
       - "package.json"
   pull_request:
     paths:
       - "src/opencode2/**"
+      - "src/server.ts"
       - "scripts/opencode2-host-canary.mjs"
+      - "scripts/opencode2-server-entry-canary.mjs"
       - "scripts/run-opencode2-host-ci.mjs"
       - ".github/workflows/opencode2-canary.yml"
       - "package.json"
@@ -39,3 +43,22 @@ jobs:
         with:
           node-version: "24"
       - run: node scripts/run-opencode2-host-ci.mjs
+
+  exact-server-entry:
+    name: OpenCode 2.0.11 package server entry
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Install exact OpenCode 2.0.11
+        run: npm install -g @opencode/cli@2.0.11
+      - name: Verify dual server entry on exact host
+        run: node scripts/opencode2-server-entry-canary.mjs

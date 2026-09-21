@@ -296,7 +296,10 @@ export default {
 
           const admitted = await ctx.session.prompt({
             sessionID: input.sessionID,
-            prompt: input.prompt,
+            text: input.prompt?.text ?? "",
+            files: input.prompt?.files,
+            agents: input.prompt?.agents,
+            skills: input.prompt?.skills,
             delivery: input.delivery,
             resume: false,
           })
@@ -313,7 +316,10 @@ export default {
           const resumed = await ctx.session.prompt({
             sessionID: input.sessionID,
             id: messageID,
-            prompt: input.prompt,
+            text: input.prompt?.text ?? "",
+            files: input.prompt?.files,
+            agents: input.prompt?.agents,
+            skills: input.prompt?.skills,
             delivery: input.delivery,
             resume: true,
           })

@@ -55,8 +55,7 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: "24"
-          cache: npm
-      - run: npm ci
+      - run: npm install
       - run: npm run build
       - name: Install exact OpenCode 2.0.11
         run: npm install -g @opencode/cli@2.0.11

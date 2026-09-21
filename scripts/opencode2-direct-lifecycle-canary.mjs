@@ -340,6 +340,7 @@ async function main() {
   let apiPrefix = null
   let sessionID = ""
   let latestCommands = new Set()
+  let foreignCommands = new Set()
 
   await Promise.all([
     mkdir(pluginDir, { recursive: true }),
@@ -413,6 +414,7 @@ async function main() {
     return [
       `apiPrefix=${String(apiPrefix)}`,
       `commands=${JSON.stringify([...latestCommands])}`,
+      `foreignCommands=${JSON.stringify([...foreignCommands])}`,
       `sessionID=${sessionID || "none"}`,
       `goal=${JSON.stringify(goal)}`,
       `goalFiles=${JSON.stringify(goalFiles)}`,
@@ -506,6 +508,16 @@ async function main() {
       assert.equal(consumed.hasControlTool, false, `consumed capability remained visible on continuation for ${needle}`)
       assert.ok(consumed.tools.includes(READ_ONLY_TOOL), `read-only Goal inspection disappeared after consuming capability for ${needle}`)
     }
+
+    await waitFor(async () => {
+      const response = await request(`${apiPrefix}/command`, {
+        method: "GET",
+        headers: { "x-opencode-directory": foreignWorkspace },
+      }, 5_000)
+      if (!response.ok) return false
+      foreignCommands = commandNames(response.body)
+      return foreignCommands.has("goal")
+    }, "foreign workspace direct goal command registration", diagnostics, 30_000)
 
     const requestsBeforeLocationMismatch = provider.stats.requests.length
     const locationMismatch = await request(`${apiPrefix}/session/${encodeURIComponent(sessionID)}/command`, {

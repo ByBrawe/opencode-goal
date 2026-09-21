@@ -2,6 +2,17 @@
 
 All notable changes to **OpenCode Goals** are documented here.
 
+## 1.3.34 — 2026-09-21
+
+Long-session diagnostics and Todo-integrity hardening release.
+
+- Suppress semantic no-op GoalStore saves so metadata-only `updatedAt` / `storageGeneration` churn no longer rewrites persistent state, while optimistic generation checks still reject stale writers before no-op detection.
+- Persist an optional schema-v1-compatible runtime fingerprint with the exact Goal package version and a SHA-256 identity of the shipped compiled runtime; record OpenCode host, plugin API, and Loop companion versions only when they are safely discoverable.
+- Keep legacy Goal reads non-mutating: older snapshots remain readable without migration writes, and the first real save under a newer runtime stamps the fingerprint once. Stable and experimental read-only status surfaces expose the identity for long-session diagnostics.
+- Detect suspicious native Todo drift without making Goal a second planner: warn on multiple simultaneous `in_progress` items, same-revision `completed` regressions, and substantial same-revision plan replacement.
+- Keep Todo drift advisory and non-evidentiary: warnings never manufacture Goal evidence or host progress, unfinished current Todos still veto completion, and a genuine plan rebuild after a Goal revision change remains allowed.
+- Add focused persistence/migration/corruption and Todo-drift regressions, preserving the existing long-session, restart, semantic-completion, Loop-coexistence, minimum/latest OpenCode, and package-smoke gates.
+
 ## 1.3.33 — 2026-09-20
 
 Goal empty-turn fail-safe release.

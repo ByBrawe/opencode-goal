@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url"
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const workflowsRoot = path.join(root, ".github", "workflows")
 const npmPublishWorkflow = "publish-npm.yml"
+const branchHygieneWorkflow = "branch-hygiene.yml"
 
 const forbidden = [
   ["pull_request_target trigger", /^\s*pull_request_target\s*:/m],
@@ -41,8 +42,22 @@ function validPermissions(name, text) {
   if (name === npmPublishWorkflow) {
     return /^permissions:\s*\n\s{2}contents:\s*read\s*\n\s{2}id-token:\s*write\s*$/m.test(text)
   }
+  if (name === branchHygieneWorkflow) {
+    return /^permissions:\s*\n\s{2}contents:\s*read\s*$/m.test(text)
+  }
   return /^permissions:\s*\n\s{2}contents:\s*read\s*$/m.test(text)
     && !/^\s*id-token\s*:\s*write\s*$/m.test(text)
+}
+
+function validBranchHygieneWorkflow(text) {
+  return /^\s{2}pull_request:\s*$/m.test(text)
+    && /^\s{2}push:\s*\n\s{4}branches:\s*\[main\]\s*$/m.test(text)
+    && /^\s{2}workflow_dispatch:\s*$/m.test(text)
+    && /^\s{4}if:\s*github\.event_name == 'pull_request'\s*$/m.test(text)
+    && /^\s{4}if:\s*github\.event_name != 'pull_request'\s*$/m.test(text)
+    && /^\s{10}BRANCH_HYGIENE_DRY_RUN:\s*"1"\s*$/m.test(text)
+    && /^\s{6}contents:\s*write\s*$/m.test(text)
+    && /^\s*run:\s*node scripts\/branch-hygiene\.mjs\s*$/m.test(text)
 }
 
 async function main() {
@@ -57,10 +72,17 @@ async function main() {
     if (!validPermissions(name, text)) {
       failures.push(name === npmPublishWorkflow
         ? `${name}: npm publisher must declare exactly contents: read plus id-token: write`
-        : `${name}: workflow must declare exactly top-level permissions:\n  contents: read`)
+        : name === branchHygieneWorkflow
+          ? `${name}: branch hygiene must keep top-level permissions read-only and isolate write access to its cleanup job`
+          : `${name}: workflow must declare exactly top-level permissions:\n  contents: read`)
+    }
+
+    if (name === branchHygieneWorkflow && !validBranchHygieneWorkflow(text)) {
+      failures.push(`${name}: write access is allowed only for push-to-main/workflow_dispatch cleanup via scripts/branch-hygiene.mjs`)
     }
 
     for (const [label, pattern] of forbidden) {
+      if (name === branchHygieneWorkflow && label === "write token permission") continue
       if (pattern.test(text)) failures.push(`${name}: forbidden ${label}`)
     }
 
@@ -79,7 +101,7 @@ async function main() {
   }
 
   console.log(`GitHub Actions security gate PASS (${names.length} workflow files)`)
-  console.log("Policy: read-only contents token everywhere; OIDC write is limited to publish-npm.yml; no persisted checkout credentials, target/workflow-run privilege boundary, workflow push/merge, or GitHub API mutation commands.")
+  console.log("Policy: read-only contents token by default; OIDC write is limited to publish-npm.yml; branch-hygiene.yml may grant contents: write only inside its non-PR cleanup job while PR validation stays dry-run/read-only; no persisted checkout credentials, target/workflow-run privilege boundary, workflow push/merge, or inline GitHub API mutation commands.")
 }
 
 main().catch((error) => {

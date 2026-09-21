@@ -245,24 +245,6 @@ async function interruptDirectGoalTurn(ctx: OpenCode2ExperimentalContext, sessio
   await ctx.session.interrupt({ sessionID, resume: false })
 }
 
-async function emitDirectGoalNotice(
-  ctx: OpenCode2ExperimentalContext,
-  input: OpenCode2DirectCommandInvocation,
-  text: string,
-): Promise<void> {
-  if (typeof ctx.session.synthetic !== "function") {
-    throw new Error("OpenCode Goals V2 direct lifecycle preview requires session.synthetic() for deterministic command output.")
-  }
-  await ctx.session.synthetic({
-    sessionID: input.sessionID,
-    text,
-    description: "OpenCode Goal",
-    metadata: { opencode_goal_v2_direct_command: true, opencode_goal_v2_notice: true },
-    delivery: input.delivery ?? "steer",
-    resume: false,
-  })
-}
-
 async function dispatchDirectGoalContinuation(
   ctx: OpenCode2ExperimentalContext,
   input: OpenCode2DirectCommandInvocation,
@@ -311,16 +293,6 @@ async function dispatchContinuationOrPause(
     ) {
       await store.save(pauseGoal(latest, `OpenCode 2 continuation dispatch failed: ${String(error)}`))
     }
-    try {
-      await emitDirectGoalNotice(
-        ctx,
-        input,
-        `Goal paused because OpenCode 2 could not dispatch its continuation: ${String(error)}`,
-      )
-    } catch {
-      // The original transport error is authoritative; a notice failure cannot
-      // turn a fail-closed paused Goal back into active execution.
-    }
     throw error
   }
 }
@@ -331,10 +303,7 @@ function requireDirectLifecycleCapabilities(
   ctx: OpenCode2ExperimentalContext,
   action: ReturnType<typeof parseGoalCommand>["action"],
 ): void {
-  if (typeof ctx.session.synthetic !== "function") {
-    throw new Error(`OpenCode Goals V2 direct lifecycle preview requires session.synthetic() before /goal ${action} can run.`)
-  }
-  if (["create", "edit", "resume"].includes(action) && typeof ctx.session.prompt !== "function") {
+  if (["create", "edit", "resume", "status", "contract"].includes(action) && typeof ctx.session.prompt !== "function") {
     throw new Error(`OpenCode Goals V2 direct lifecycle preview requires session.prompt() before /goal ${action} can run.`)
   }
   if (["edit", "pause", "clear"].includes(action) && typeof ctx.session.interrupt !== "function") {
@@ -368,11 +337,19 @@ export async function executeOpenCode2DirectGoalCommand(
   let goal = await store.load(input.sessionID)
 
   if (parsed.action === "status") {
-    await emitDirectGoalNotice(ctx, input, formatStatus(goal))
+    await dispatchDirectGoalContinuation(
+      ctx,
+      input,
+      `${formatStatus(goal)}\nRespond with this status only; do not perform work.`,
+    )
     return { action: parsed.action, goal }
   }
   if (parsed.action === "contract") {
-    await emitDirectGoalNotice(ctx, input, formatContract(goal))
+    await dispatchDirectGoalContinuation(
+      ctx,
+      input,
+      `${formatContract(goal)}\nRespond with this Goal Contract only; do not perform work.`,
+    )
     return { action: parsed.action, goal }
   }
 
@@ -382,14 +359,12 @@ export async function executeOpenCode2DirectGoalCommand(
       goal = pauseGoal(goal)
       await store.save(goal)
     }
-    await emitDirectGoalNotice(ctx, input, formatStatus(goal))
     return { action: parsed.action, goal }
   }
 
   if (parsed.action === "clear") {
     if (goal) await interruptDirectGoalTurn(ctx, input.sessionID)
     await store.clear(input.sessionID)
-    await emitDirectGoalNotice(ctx, input, "Goal cleared.")
     return { action: parsed.action, goal: null }
   }
 
@@ -397,14 +372,14 @@ export async function executeOpenCode2DirectGoalCommand(
 
   if (parsed.action === "resume") {
     if (!goal) {
-      await emitDirectGoalNotice(ctx, input, "No goal exists.")
+      await dispatchDirectGoalContinuation(ctx, input, "No goal exists. Respond only with that fact; do not perform work.")
       return { action: parsed.action, goal: null }
     }
     if (goal.status === "budget_limited" && budgetLimitHits(goal.usage, goal.budget).length) {
-      await emitDirectGoalNotice(
+      await dispatchDirectGoalContinuation(
         ctx,
         input,
-        `${formatStatus(goal)}\nBudget is still exhausted. Increase or clear the reached limit before resuming.`,
+        `${formatStatus(goal)}\nBudget is still exhausted. Report that the reached limit must be increased or cleared before resuming; do not perform work.`,
       )
       return { action: parsed.action, goal }
     }
@@ -413,7 +388,6 @@ export async function executeOpenCode2DirectGoalCommand(
     if (isRestrictedGoalAgent(agent)) {
       goal = pauseGoal(goal, restrictedAgentStopReason(agent))
       await store.save(goal)
-      await emitDirectGoalNotice(ctx, input, planBoundaryMessage(goal, agent))
       return { action: parsed.action, goal }
     }
 
@@ -444,7 +418,6 @@ export async function executeOpenCode2DirectGoalCommand(
     if (isRestrictedGoalAgent(agent)) {
       goal = pauseGoal(goal, restrictedAgentStopReason(agent))
       await store.save(goal)
-      await emitDirectGoalNotice(ctx, input, planBoundaryMessage(goal, agent))
       return { action: parsed.action, goal }
     }
     await store.save(goal)

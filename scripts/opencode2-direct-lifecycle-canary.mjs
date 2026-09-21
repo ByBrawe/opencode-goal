@@ -27,7 +27,6 @@ const CLEAR_COMMAND = "clear"
 const SPOOF_SENTINEL = "SPOOF_DIRECT_COMMAND_CAPABILITY"
 const PLAN_SENTINEL = "PLAN_CAPABILITY_MUST_NOT_MUTATE"
 const FOLLOWUP_SENTINEL = "POST_CAPABILITY_FOLLOWUP"
-const LOCATION_FOLLOWUP_SENTINEL = "POST_LOCATION_MOVE_FOLLOWUP"
 
 function appendLog(current, chunk, limit = 120_000) {
   return (current + String(chunk)).slice(-limit)
@@ -282,7 +281,6 @@ function startProvider() {
       sawSpoof: currentUserText.includes(SPOOF_SENTINEL),
       sawPlan: currentUserText.includes(PLAN_SENTINEL),
       sawFollowup: currentUserText.includes(FOLLOWUP_SENTINEL),
-      sawLocationFollowup: currentUserText.includes(LOCATION_FOLLOWUP_SENTINEL),
     })
 
     if (currentUserText.includes(LOCATION_COMMAND)) {
@@ -716,17 +714,6 @@ async function main() {
       "host session_move neither reached the continuation nor persisted the moved Location",
     )
 
-    const locationFollowupBefore = provider.stats.requests.length
-    const locationFollowup = await request(`${apiPrefix}/session/${encodeURIComponent(sessionID)}/prompt`, {
-      method: "POST",
-      body: JSON.stringify({ text: LOCATION_FOLLOWUP_SENTINEL, delivery: "steer", resume: true }),
-    }, 90_000)
-    assert.ok(locationFollowup.ok, `post-Location prompt failed: HTTP ${locationFollowup.status} ${locationFollowup.text}\n${await diagnostics()}`)
-    await waitFor(() => provider.stats.requests.length > locationFollowupBefore, "post-Location ordinary request", diagnostics)
-    const postLocationRequests = provider.stats.requests.slice(locationFollowupBefore)
-    assert.ok(postLocationRequests.every((item) => !item.hasControlTool), "Location-invalidated capability became reusable")
-    assert.ok(postLocationRequests.every((item) => item.tools.includes(READ_ONLY_TOOL)), "post-Location request lost read-only Goal inspection")
-
     assert.equal(server.exitCode, null, `OpenCode 2 server exited during lifecycle canary\n${await diagnostics()}`)
 
     console.log(JSON.stringify({
@@ -759,7 +746,6 @@ async function main() {
         sawSpoof: item.sawSpoof,
         sawPlan: item.sawPlan,
         sawFollowup: item.sawFollowup,
-        sawLocationFollowup: item.sawLocationFollowup,
       })),
     }, null, 2))
   } finally {

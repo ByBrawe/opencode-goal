@@ -16,7 +16,12 @@ async function runInstaller(configDir, args = [], envPatch = {}) {
   return await new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [installer, ...args], {
       cwd: root,
-      env: { ...process.env, OPENCODE_CONFIG_DIR: configDir, ...envPatch },
+      env: {
+        ...process.env,
+        OPENCODE_CONFIG_DIR: configDir,
+        OPENCODE_GOAL_HOST_VERSION: "1.17.15",
+        ...envPatch,
+      },
       windowsHide: true,
     })
     const stdout = []

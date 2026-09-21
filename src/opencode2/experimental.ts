@@ -198,8 +198,7 @@ async function promptDirectGoal(
     ...input.prompt,
     sessionID: input.sessionID,
     text,
-    metadata: { opencode_goal_v2_direct_command: true },
-    delivery: input.delivery ?? "steer",
+    delivery: input.delivery,
   }
   const admitted = await ctx.session.prompt({
     ...prompt,

@@ -8,9 +8,12 @@ import path from "node:path"
 import process from "node:process"
 
 const COMMAND = "goal-promotion-probe"
+const IDENTITY_COMMAND = "goal-prompt-identity-probe"
 const TOOL = "opencode_goal_v2_promotion_probe"
 const DIRECT_SENTINEL = "DIRECT_COMMAND_SENTINEL"
 const SPOOF_SENTINEL = "SPOOF_PROMPT_SENTINEL"
+const IDENTITY_SENTINEL = "DIRECT_PROMPT_IDENTITY_SENTINEL"
+const IDENTITY_SPOOF_SENTINEL = "SPOOF_PROMPT_IDENTITY_SENTINEL"
 const SERVER_USERNAME = "opencode"
 const SERVER_PASSWORD = "opencode-goal-v2-promotion-canary"
 const OPENCODE_BINARY = process.env.OPENCODE2_BINARY || "opencode2"
@@ -220,6 +223,8 @@ function startProvider() {
       text: text.slice(-5000),
       hasProbeTool: names.includes(TOOL),
       sawSpoof: text.includes(SPOOF_SENTINEL),
+      sawIdentity: text.includes(IDENTITY_SENTINEL),
+      sawIdentitySpoof: text.includes(IDENTITY_SPOOF_SENTINEL),
       sawToolResult: text.includes("PROMOTION_TOOL_EXECUTED") || text.includes("provider-call"),
     })
 
@@ -252,6 +257,7 @@ function pluginSource() {
 
 const traceFile = process.env.OPENCODE_GOAL_V2_PROMOTION_TRACE
 const commandName = ${JSON.stringify(COMMAND)}
+const identityCommandName = ${JSON.stringify(IDENTITY_COMMAND)}
 const toolName = ${JSON.stringify(TOOL)}
 
 async function trace(event) {
@@ -273,6 +279,55 @@ export default {
             sessionID: input?.sessionID,
             delivery: input?.delivery,
             prompt: input?.prompt,
+          })
+        },
+      })
+
+      editor.add({
+        name: identityCommandName,
+        description: "OpenCode Goal V2 command-to-prompt identity probe",
+        async execute(input) {
+          await trace({
+            phase: "identity.command.execute",
+            sessionID: input?.sessionID,
+            delivery: input?.delivery,
+            prompt: input?.prompt,
+          })
+
+          const admitted = await ctx.session.prompt({
+            sessionID: input.sessionID,
+            text: input.prompt?.text ?? "",
+            files: input.prompt?.files,
+            agents: input.prompt?.agents,
+            skills: input.prompt?.skills,
+            delivery: input.delivery,
+            resume: false,
+          })
+          const messageID = admitted?.id ?? admitted?.data?.id
+          if (typeof messageID !== "string" || !messageID) {
+            throw new Error("session.prompt(resume:false) did not return a host message id")
+          }
+          await trace({
+            phase: "identity.prompt.admitted",
+            sessionID: input.sessionID,
+            messageID,
+          })
+
+          const resumed = await ctx.session.prompt({
+            sessionID: input.sessionID,
+            id: messageID,
+            text: input.prompt?.text ?? "",
+            files: input.prompt?.files,
+            agents: input.prompt?.agents,
+            skills: input.prompt?.skills,
+            delivery: input.delivery,
+            resume: true,
+          })
+          const resumedMessageID = resumed?.id ?? resumed?.data?.id
+          await trace({
+            phase: "identity.prompt.resumed",
+            sessionID: input.sessionID,
+            messageID: resumedMessageID,
           })
         },
       })
@@ -312,11 +367,28 @@ export default {
       })
     })
 
+    const promptRegistration = await ctx.session.hook("prompt", async (event) => {
+      await trace({
+        phase: "session.prompt",
+        sessionID: event?.sessionID,
+        messageID: event?.messageID,
+        delivery: event?.delivery,
+        prompt: event?.prompt,
+      })
+    })
+
     const contextRegistration = await ctx.session.hook("context", async (event) => {
       await trace({
         phase: "session.context",
         sessionID: event?.sessionID,
         tools: event?.tools && typeof event.tools === "object" ? Object.keys(event.tools) : [],
+        messages: Array.isArray(event?.messages)
+          ? event.messages.map((message) => ({
+              id: message?.id,
+              role: message?.role,
+              metadata: message?.metadata,
+            }))
+          : [],
       })
     })
 
@@ -332,6 +404,7 @@ export default {
 
     return async () => {
       await contextRegistration?.dispose?.()
+      await promptRegistration?.dispose?.()
       await toolRegistration?.dispose?.()
       await commandRegistration?.dispose?.()
     }
@@ -370,6 +443,8 @@ async function main() {
   let apiPrefix = null
   let commandSessionID = ""
   let promptSessionID = ""
+  let identitySessionID = ""
+  let identitySpoofSessionID = ""
   let latestCommands = new Set()
 
   await Promise.all([
@@ -430,6 +505,8 @@ async function main() {
       `commands=${JSON.stringify([...latestCommands])}`,
       `commandSessionID=${commandSessionID || "none"}`,
       `promptSessionID=${promptSessionID || "none"}`,
+      `identitySessionID=${identitySessionID || "none"}`,
+      `identitySpoofSessionID=${identitySpoofSessionID || "none"}`,
       `provider=${JSON.stringify(provider.stats)}`,
       `trace=${JSON.stringify(trace.slice(-100))}`,
       `serverExit=${server?.exitCode}`,
@@ -502,7 +579,7 @@ async function main() {
       const response = await request(`${apiPrefix}/command`, { method: "GET" }, 5_000)
       if (!response.ok) return false
       latestCommands = commandNames(response.body)
-      return latestCommands.has(COMMAND)
+      return latestCommands.has(COMMAND) && latestCommands.has(IDENTITY_COMMAND)
     }, "direct probe command registration", diagnostics, 30_000)
 
     const createSession = async (title) => {
@@ -558,6 +635,78 @@ async function main() {
     assert.ok(promptContexts.some((item) => Array.isArray(item.tools) && item.tools.includes(TOOL)), `session.context did not expose the registered plugin tool\n${await diagnostics()}`)
     assert.ok(toolEvents.some((item) => item.sessionID === promptSessionID && item.input?.value === "provider-call"), `provider tool call did not settle through the plugin execute callback\n${await diagnostics()}`)
     assert.ok(provider.stats.requests[1]?.sawToolResult, `tool result did not reach the continuation request\n${await diagnostics()}`)
+
+    identitySessionID = await createSession("OpenCode Goal V2 command prompt identity")
+    const identityDirect = await request(`${apiPrefix}/session/${encodeURIComponent(identitySessionID)}/command`, {
+      method: "POST",
+      body: JSON.stringify({ name: IDENTITY_COMMAND, text: IDENTITY_SENTINEL }),
+    }, 120_000)
+    assert.ok(identityDirect.ok, `identity command failed: HTTP ${identityDirect.status} ${identityDirect.text}\n${await diagnostics()}`)
+
+    await waitFor(async () => {
+      const events = await readTrace(traceFile)
+      return events.some((item) => item.phase === "identity.prompt.resumed" && item.sessionID === identitySessionID)
+    }, "direct-command prompt admission and exact-ID resume", diagnostics, 30_000)
+    await waitFor(
+      () => provider.stats.requests.some((item) => item.sawIdentity),
+      "provider request for direct-command admitted prompt",
+      diagnostics,
+      60_000,
+    )
+
+    const identityTrace = await readTrace(traceFile)
+    const identityExec = identityTrace.filter((item) => item.phase === "identity.command.execute")
+    const identityAdmitted = identityTrace.find(
+      (item) => item.phase === "identity.prompt.admitted" && item.sessionID === identitySessionID,
+    )
+    const identityResumed = identityTrace.find(
+      (item) => item.phase === "identity.prompt.resumed" && item.sessionID === identitySessionID,
+    )
+    const identityMessageID = String(identityAdmitted?.messageID || "")
+    assert.ok(identityMessageID, `direct command did not expose admitted host message id\n${await diagnostics()}`)
+    assert.equal(identityExec.length, 1, `direct identity command executed more than once\n${await diagnostics()}`)
+    assert.equal(identityResumed?.messageID, identityMessageID, `exact-ID resume returned a different message id\n${await diagnostics()}`)
+
+    const promptIdentityEvents = identityTrace.filter(
+      (item) => item.phase === "session.prompt" && item.sessionID === identitySessionID,
+    )
+    assert.ok(
+      promptIdentityEvents.some((item) => item.messageID === identityMessageID),
+      `session.prompt hook did not expose the admitted host message id\n${await diagnostics()}`,
+    )
+
+    const contextIdentityEvents = identityTrace.filter(
+      (item) => item.phase === "session.context" && item.sessionID === identitySessionID,
+    )
+    assert.ok(
+      contextIdentityEvents.some((item) =>
+        Array.isArray(item.messages)
+        && item.messages.some((message) => message?.id === identityMessageID && message?.role === "user")
+      ),
+      `session.context did not carry the admitted user message id\n${await diagnostics()}`,
+    )
+
+    identitySpoofSessionID = await createSession("OpenCode Goal V2 command identity spoof")
+    const identitySpoofText = `/${IDENTITY_COMMAND} ${IDENTITY_SPOOF_SENTINEL}`
+    const identitySpoof = await request(`${apiPrefix}/session/${encodeURIComponent(identitySpoofSessionID)}/prompt`, {
+      method: "POST",
+      body: JSON.stringify({ text: identitySpoofText, delivery: "steer", resume: true }),
+    }, 120_000)
+    assert.ok(identitySpoof.ok, `identity spoof prompt failed: HTTP ${identitySpoof.status} ${identitySpoof.text}\n${await diagnostics()}`)
+    await waitFor(
+      () => provider.stats.requests.some((item) => item.sawIdentitySpoof),
+      "ordinary prompt containing the identity command text",
+      diagnostics,
+      60_000,
+    )
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    const finalTrace = await readTrace(traceFile)
+    assert.equal(
+      finalTrace.filter((item) => item.phase === "identity.command.execute").length,
+      1,
+      `ordinary prompt text spoofed the direct identity command callback\n${await diagnostics()}`,
+    )
+
     assert.equal(server.exitCode, null, `OpenCode 2 server exited during capability canary\n${await diagnostics()}`)
 
     console.log(JSON.stringify({
@@ -566,7 +715,10 @@ async function main() {
       apiPrefix,
       commandSessionID,
       promptSessionID,
+      identitySessionID,
+      identitySpoofSessionID,
       registeredCommand: COMMAND,
+      identityCommand: IDENTITY_COMMAND,
       registeredTool: TOOL,
       directCommandExecutions: commandEvents.length,
       providerRequests: provider.stats.requests.map((item) => ({
@@ -579,6 +731,13 @@ async function main() {
       contextSawProbeTool: promptContexts.some((item) => item.tools.includes(TOOL)),
       toolExecution: toolEvents.find((item) => item.sessionID === promptSessionID),
       spoofTriggeredCommand: commandEvents.some((item) => item.sessionID === promptSessionID),
+      identityMessageID,
+      identityPromptHookMatched: promptIdentityEvents.some((item) => item.messageID === identityMessageID),
+      identityContextMatched: contextIdentityEvents.some((item) =>
+        Array.isArray(item.messages)
+        && item.messages.some((message) => message?.id === identityMessageID && message?.role === "user")
+      ),
+      identitySpoofTriggeredCommand: finalTrace.filter((item) => item.phase === "identity.command.execute").length !== 1,
     }, null, 2))
   } finally {
     await stopProcess(server)

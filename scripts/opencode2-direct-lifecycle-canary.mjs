@@ -21,11 +21,13 @@ const CREATE_COMMAND = 'ship v2 capability --accept "preview persists" --constra
 const PAUSE_COMMAND = "pause"
 const RESUME_COMMAND = "resume"
 const EDIT_COMMAND = 'edit ship v2 capability revised --constraint "preserve API" --max-turns 9'
+const LOCATION_COMMAND = 'edit ship v2 capability location guard --constraint "must not persist after move"'
 const MISMATCH_COMMAND = 'edit MISMATCH_CAPABILITY_TARGET --constraint "must not persist"'
 const CLEAR_COMMAND = "clear"
 const SPOOF_SENTINEL = "SPOOF_DIRECT_COMMAND_CAPABILITY"
 const PLAN_SENTINEL = "PLAN_CAPABILITY_MUST_NOT_MUTATE"
 const FOLLOWUP_SENTINEL = "POST_CAPABILITY_FOLLOWUP"
+const LOCATION_FOLLOWUP_SENTINEL = "POST_LOCATION_MOVE_FOLLOWUP"
 
 function appendLog(current, chunk, limit = 120_000) {
   return (current + String(chunk)).slice(-limit)
@@ -221,7 +223,7 @@ function streamText(res, sequence, text = `DIRECT_LIFECYCLE_PROVIDER_${sequence}
 
 function authorizedCommandFromText(text) {
   if (text.includes(MISMATCH_COMMAND)) return "clear"
-  for (const command of [CREATE_COMMAND, PAUSE_COMMAND, RESUME_COMMAND, EDIT_COMMAND, CLEAR_COMMAND]) {
+  for (const command of [CREATE_COMMAND, PAUSE_COMMAND, RESUME_COMMAND, EDIT_COMMAND, LOCATION_COMMAND, CLEAR_COMMAND]) {
     if (text.includes(command)) return command
   }
   return ""
@@ -229,6 +231,8 @@ function authorizedCommandFromText(text) {
 
 function startProvider() {
   const stats = { requests: [] }
+  let releaseLocationControl
+  const locationControlGate = new Promise((resolve) => { releaseLocationControl = resolve })
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1")
     if (req.method === "GET" && url.pathname.endsWith("/models")) {
@@ -269,6 +273,7 @@ function startProvider() {
       sawSpoof: currentUserText.includes(SPOOF_SENTINEL),
       sawPlan: currentUserText.includes(PLAN_SENTINEL),
       sawFollowup: currentUserText.includes(FOLLOWUP_SENTINEL),
+      sawLocationFollowup: currentUserText.includes(LOCATION_FOLLOWUP_SENTINEL),
     })
 
     if (hasControlTool && !sawConsumedResult) {
@@ -276,6 +281,7 @@ function startProvider() {
         streamText(res, sequence, "CONTROL_TOOL_VISIBLE_WITHOUT_RECOGNIZED_COMMAND")
         return
       }
+      if (command === LOCATION_COMMAND) await locationControlGate
       streamToolCall(res, sequence, command)
       return
     }
@@ -284,6 +290,10 @@ function startProvider() {
 
   return {
     stats,
+    releaseLocationControl() {
+      releaseLocationControl?.()
+      releaseLocationControl = undefined
+    },
     async listen() {
       await new Promise((resolve, reject) => {
         server.once("error", reject)
@@ -327,10 +337,9 @@ async function main() {
   assert.equal(process.platform, "linux", "the exact OpenCode 2 direct lifecycle canary is intentionally Ubuntu-only")
 
   const workspace = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-v2-direct-"))
-  const foreignWorkspace = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-v2-direct-foreign-"))
+  const movedDirectory = path.join(workspace, "moved-session")
   const home = path.join(workspace, ".home")
   const pluginDir = path.join(workspace, ".opencode", "plugins")
-  const foreignPluginDir = path.join(foreignWorkspace, ".opencode", "plugins")
   const bridge = path.join(pluginDir, "opencode-goal-server.js")
   const provider = startProvider()
   const providerPort = await provider.listen()
@@ -340,11 +349,10 @@ async function main() {
   let apiPrefix = null
   let sessionID = ""
   let latestCommands = new Set()
-  let foreignCommands = new Set()
 
   await Promise.all([
     mkdir(pluginDir, { recursive: true }),
-    mkdir(foreignPluginDir, { recursive: true }),
+    mkdir(movedDirectory, { recursive: true }),
     mkdir(path.join(home, ".config"), { recursive: true }),
     mkdir(path.join(home, ".local", "share"), { recursive: true }),
     mkdir(path.join(home, ".local", "state"), { recursive: true }),
@@ -372,25 +380,13 @@ async function main() {
     },
   }, null, 2)}\n`, "utf8")
 
-  await writeFile(path.join(foreignPluginDir, "opencode-goal-server.js"), `export { default } from ${JSON.stringify(pathToFileURL(serverFile).href)}\n`, "utf8")
-  await writeFile(path.join(foreignWorkspace, "README.md"), "# OpenCode Goal V2 foreign-location canary\n", "utf8")
-  await writeFile(
-    path.join(foreignWorkspace, "opencode.json"),
-    await readFile(path.join(workspace, "opencode.json"), "utf8"),
-    "utf8",
-  )
+  await writeFile(path.join(movedDirectory, "README.md"), "# Moved session destination\n", "utf8")
 
   execFileSync("git", ["init", "--quiet", workspace], { stdio: "ignore" })
   execFileSync("git", ["-C", workspace, "config", "user.email", "opencode-goal-ci@example.invalid"], { stdio: "ignore" })
   execFileSync("git", ["-C", workspace, "config", "user.name", "OpenCode Goal CI"], { stdio: "ignore" })
   execFileSync("git", ["-C", workspace, "add", "."], { stdio: "ignore" })
   execFileSync("git", ["-C", workspace, "commit", "--quiet", "-m", "init"], { stdio: "ignore" })
-  execFileSync("git", ["init", "--quiet", foreignWorkspace], { stdio: "ignore" })
-  execFileSync("git", ["-C", foreignWorkspace, "config", "user.email", "opencode-goal-ci@example.invalid"], { stdio: "ignore" })
-  execFileSync("git", ["-C", foreignWorkspace, "config", "user.name", "OpenCode Goal CI"], { stdio: "ignore" })
-  execFileSync("git", ["-C", foreignWorkspace, "add", "."], { stdio: "ignore" })
-  execFileSync("git", ["-C", foreignWorkspace, "commit", "--quiet", "-m", "init"], { stdio: "ignore" })
-
   const env = {
     ...process.env,
     HOME: home,
@@ -414,7 +410,6 @@ async function main() {
     return [
       `apiPrefix=${String(apiPrefix)}`,
       `commands=${JSON.stringify([...latestCommands])}`,
-      `foreignCommands=${JSON.stringify([...foreignCommands])}`,
       `sessionID=${sessionID || "none"}`,
       `goal=${JSON.stringify(goal)}`,
       `goalFiles=${JSON.stringify(goalFiles)}`,
@@ -497,6 +492,24 @@ async function main() {
       return response
     }
 
+    const moveSessionTo = async (directory) => {
+      let last
+      const paths = [...new Set([`${apiPrefix}/experimental/control-plane/move-session`, "/experimental/control-plane/move-session"])]
+      for (const pathname of paths) {
+        const response = await request(pathname, {
+          method: "POST",
+          body: JSON.stringify({
+            sessionID,
+            destination: { directory },
+            moveChanges: false,
+          }),
+        }, 30_000)
+        if (response.ok) return response
+        last = response
+      }
+      assert.fail(`session move failed: HTTP ${last?.status} ${last?.text}\n${await diagnostics()}`)
+    }
+
     const requestsFor = (needle) => provider.stats.requests.filter((item) => item.currentUserText.includes(needle))
     const assertAuthorizedTurn = (needle) => {
       const requests = requestsFor(needle)
@@ -509,27 +522,6 @@ async function main() {
       assert.ok(consumed.tools.includes(READ_ONLY_TOOL), `read-only Goal inspection disappeared after consuming capability for ${needle}`)
     }
 
-    await waitFor(async () => {
-      const response = await request(`${apiPrefix}/command`, {
-        method: "GET",
-        headers: { "x-opencode-directory": foreignWorkspace },
-      }, 5_000)
-      if (!response.ok) return false
-      foreignCommands = commandNames(response.body)
-      return foreignCommands.has("goal")
-    }, "foreign workspace direct goal command registration", diagnostics, 30_000)
-
-    const requestsBeforeLocationMismatch = provider.stats.requests.length
-    const locationMismatch = await request(`${apiPrefix}/session/${encodeURIComponent(sessionID)}/command`, {
-      method: "POST",
-      headers: { "x-opencode-directory": foreignWorkspace },
-      body: JSON.stringify({ name: "goal", text: CREATE_COMMAND }),
-    }, 30_000)
-    await new Promise((resolve) => setTimeout(resolve, 300))
-    assert.equal(provider.stats.requests.length, requestsBeforeLocationMismatch, `Location mismatch reached the model/provider: HTTP ${locationMismatch.status} ${locationMismatch.text}\n${await diagnostics()}`)
-    assert.equal(await readGoal(workspace, sessionID), null, "Location mismatch wrote Goal state in the original workspace")
-    assert.equal(await readGoal(foreignWorkspace, sessionID), null, "Location mismatch wrote Goal state in the foreign workspace")
-
     await command(CREATE_COMMAND)
     const createdGoal = await waitFor(async () => {
       const goal = await readGoal(workspace, sessionID)
@@ -539,6 +531,42 @@ async function main() {
     assert.deepEqual(createdGoal.constraints, ["no spoof mutation"])
     await waitFor(() => requestsFor(CREATE_COMMAND).some((item) => item.sawConsumedResult), "create tool continuation", diagnostics)
     assertAuthorizedTurn(CREATE_COMMAND)
+
+    const beforeLocationMove = JSON.stringify(await readGoal(workspace, sessionID))
+    const locationCommandPending = command(LOCATION_COMMAND, false)
+    await waitFor(
+      () => requestsFor(LOCATION_COMMAND).some((item) => item.hasControlTool && item.toolCommand === LOCATION_COMMAND),
+      "Location-bound capability exposure",
+      diagnostics,
+    )
+
+    let moved = false
+    try {
+      await moveSessionTo(movedDirectory)
+      moved = true
+    } finally {
+      provider.releaseLocationControl()
+    }
+    await locationCommandPending
+    await new Promise((resolve) => setTimeout(resolve, 300))
+
+    assert.equal(JSON.stringify(await readGoal(workspace, sessionID)), beforeLocationMove, "session move allowed Location-bound capability to mutate original Goal persistence")
+    assert.equal(await readGoal(movedDirectory, sessionID), null, "session move allowed Location-bound capability to persist in the destination")
+    assert.ok(requestsFor(LOCATION_COMMAND).some((item) => item.hasControlTool), "Location test never exposed the authenticated control tool")
+
+    if (moved) await moveSessionTo(workspace)
+
+    const locationFollowupBefore = provider.stats.requests.length
+    const locationFollowup = await request(`${apiPrefix}/session/${encodeURIComponent(sessionID)}/prompt`, {
+      method: "POST",
+      body: JSON.stringify({ text: LOCATION_FOLLOWUP_SENTINEL, delivery: "steer", resume: true }),
+    }, 90_000)
+    assert.ok(locationFollowup.ok, `post-Location prompt failed: HTTP ${locationFollowup.status} ${locationFollowup.text}\n${await diagnostics()}`)
+    await waitFor(() => provider.stats.requests.length > locationFollowupBefore, "post-Location ordinary request", diagnostics)
+    const postLocationRequests = provider.stats.requests.slice(locationFollowupBefore)
+    assert.ok(postLocationRequests.every((item) => !item.hasControlTool), "Location-invalidated capability became reusable")
+    assert.ok(postLocationRequests.every((item) => item.tools.includes(READ_ONLY_TOOL)), "post-Location request lost read-only Goal inspection")
+    assert.equal(JSON.stringify(await readGoal(workspace, sessionID)), beforeLocationMove)
 
     const activeBeforePlan = JSON.stringify(await readGoal(workspace, sessionID))
     const switchPlan = await request(`${apiPrefix}/session/${encodeURIComponent(sessionID)}/agent`, {
@@ -661,7 +689,7 @@ async function main() {
       sessionID,
       directCommandRegistered: latestCommands.has("goal"),
       create: { objective: createdGoal.objective, status: createdGoal.status, maxTurns: createdGoal.budget?.maxTurns },
-      locationMismatchBlocked: true,
+      locationMoveBlocked: true,
       planMutationBlocked: true,
       spoofPreservedStatus: paused.status,
       resumeStatus: resumed.status,
@@ -680,13 +708,13 @@ async function main() {
         sawSpoof: item.sawSpoof,
         sawPlan: item.sawPlan,
         sawFollowup: item.sawFollowup,
+        sawLocationFollowup: item.sawLocationFollowup,
       })),
     }, null, 2))
   } finally {
     await stopProcess(server)
     await provider.close().catch(() => undefined)
     await rm(workspace, { recursive: true, force: true }).catch(() => undefined)
-    await rm(foreignWorkspace, { recursive: true, force: true }).catch(() => undefined)
   }
 }
 

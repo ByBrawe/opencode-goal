@@ -12,6 +12,7 @@ on:
       - "scripts/opencode2-host-canary.mjs"
       - "scripts/opencode2-server-entry-canary.mjs"
       - "scripts/opencode2-promotion-capability-canary.mjs"
+      - "scripts/opencode2-direct-lifecycle-canary.mjs"
       - "scripts/run-opencode2-host-ci.mjs"
       - ".github/workflows/opencode2-canary.yml"
       - "package.json"
@@ -22,6 +23,7 @@ on:
       - "scripts/opencode2-host-canary.mjs"
       - "scripts/opencode2-server-entry-canary.mjs"
       - "scripts/opencode2-promotion-capability-canary.mjs"
+      - "scripts/opencode2-direct-lifecycle-canary.mjs"
       - "scripts/run-opencode2-host-ci.mjs"
       - ".github/workflows/opencode2-canary.yml"
       - "package.json"
@@ -82,3 +84,22 @@ jobs:
       - name: Prove direct command origin and model tool settlement
         run: node scripts/opencode2-promotion-capability-canary.mjs
 
+  direct-lifecycle-preview:
+    name: OpenCode 2.0.11 direct Goal lifecycle preview
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+      - run: npm install
+      - run: npm run build
+      - name: Install exact OpenCode 2.0.11
+        run: npm install -g @opencode/cli@2.0.11
+      - name: Check direct lifecycle canary syntax
+        run: node --check scripts/opencode2-direct-lifecycle-canary.mjs
+      - name: Prove direct Goal lifecycle, Plan boundary, and spoof resistance
+        run: node scripts/opencode2-direct-lifecycle-canary.mjs

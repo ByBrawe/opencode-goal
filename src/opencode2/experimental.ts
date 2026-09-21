@@ -623,7 +623,14 @@ function addExperimentalTool(tools: any, name: string, definition: any): void {
   // add(name, definition, options), so retain that shape only when the host
   // explicitly exposes a multi-argument function.
   if (add.length === 1) {
-    add.call(tools, { ...definition, name, codemode: false })
+    add.call(tools, {
+      ...definition,
+      name,
+      options: definition?.options ?? { codemode: false },
+      // Older beta adapters read this legacy top-level hint while current
+      // OpenCode 2 Tool.Info reads options.codemode.
+      codemode: false,
+    })
     return
   }
   add.call(tools, name, definition, { codemode: false })

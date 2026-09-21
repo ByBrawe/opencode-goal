@@ -54,7 +54,7 @@ npm run package:smoke -- --json package-smoke-report.json
 2. Align `package.json`, `CHANGELOG.md`, README/release documentation, benchmark pins when applicable, and `.github/workflows/publish-npm.yml`.
 3. Confirm every module imported by the compiled npm plugin at runtime is declared in production `dependencies`; do not rely on a peer/dev-only package being present in OpenCode's isolated plugin cache.
 4. Confirm `engines.opencode` declares the supported host range.
-5. Confirm `@bybrawe/opencode-goal/server` default-exports exactly one OpenCode plugin module with a callable `server` function.
+5. Confirm `@bybrawe/opencode-goal/server` default-exports exactly one dual OpenCode plugin module with callable `server` and `setup` functions; stable V1 uses `server`, while V2 `setup` remains safety-gated.
 6. Confirm npm Trusted Publishing is authorized for this repository/workflow and package.
 7. Inspect package-smoke evidence and `npm pack --dry-run` output.
 8. For installer releases, verify install/update and `--uninstall` against an isolated config directory.
@@ -69,7 +69,7 @@ npm run package:smoke -- --json package-smoke-report.json
 The current one-shot stable guard is:
 
 ```text
-1.3.34
+1.3.35
 ```
 
 Before `npm publish`, the workflow:
@@ -78,7 +78,7 @@ Before `npm publish`, the workflow:
 2. verifies the trusted-publishing npm runtime;
 3. checks that `package.json` equals the expected one-shot version;
 4. checks the npm registry and skips publication if the exact version already exists while still running registry/installer verification;
-5. when publication is still needed, requires the predecessor release (`1.3.33`) to exist and remain authoritative as npm `latest` with the expected installer bin before allowing `1.3.34` to publish.
+5. when publication is still needed, requires the predecessor release (`1.3.34`) to exist and remain authoritative as npm `latest` with the expected installer bin before allowing `1.3.35` to publish.
 
 Publication uses npm Trusted Publishing/OIDC under the `latest` tag; no long-lived npm token is stored in the workflow.
 
@@ -86,10 +86,10 @@ Publication uses npm Trusted Publishing/OIDC under the `latest` tag; no long-liv
 
 The workflow itself must verify all of these before the release is considered published:
 
-- the exact `1.3.34` package version is visible in the npm registry;
-- npm `latest` resolves to `1.3.34`;
+- the exact `1.3.35` package version is visible in the npm registry;
+- npm `latest` resolves to `1.3.35`;
 - `bin.opencode-goal` resolves to the expected `bin/opencode-goal.js` path;
-- a clean consumer can run `npm exec --yes --package=@bybrawe/opencode-goal@1.3.34 -- opencode-goal --version` and receives `1.3.34`.
+- a clean consumer can run `npm exec --yes --package=@bybrawe/opencode-goal@1.3.35 -- opencode-goal --version` and receives `1.3.35`.
 
 Then, from a clean config directory, run the public installer and verify:
 

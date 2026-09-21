@@ -302,8 +302,14 @@ test("direct lifecycle command mints host-message capability without persisting 
       assert.equal(dispatched.emitted[1].id, dispatched.messageID)
       assert.equal(await new GoalStore(root).load(sessionID), null, "direct callback must not persist Goal state")
 
+      const auxiliary = await runHook(host, "context", {
+        sessionID,
+        messages: [],
+      })
+      assert.equal(auxiliary.tools.opencode_goals_v2_control, undefined, "auxiliary context without a user message must hide control")
+
       const context = await armCapability(host, sessionID, dispatched.messageID)
-      assert.ok(context.tools.opencode_goals_v2_control, "authorized request must expose the mutating tool")
+      assert.ok(context.tools.opencode_goals_v2_control, "authorized request must expose the mutating tool after auxiliary context")
       assert.match(context.system.join("\n"), /host-authenticated lifecycle command/i)
       assert.match(context.system.join("\n"), /exactly once/i)
 

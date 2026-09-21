@@ -144,6 +144,7 @@ async function main() {
       if (JSON.stringify(Object.keys(server)) !== JSON.stringify(["default"])) throw new Error("server entrypoint must export only the plugin module");
       if (server.default?.id !== "@bybrawe/opencode-goal") throw new Error("server plugin id is incorrect");
       if (typeof server.default?.server !== "function") throw new Error("server plugin export is missing");
+      if (typeof server.default?.setup !== "function") throw new Error("OpenCode 2 setup export is missing");
       if (server.default.server !== mod.default) throw new Error("server entrypoint does not delegate to the public plugin implementation");
       const toolModule = await import("@opencode-ai/plugin/tool");
       if (typeof toolModule.tool !== "function") throw new Error("runtime OpenCode tool dependency is missing");

@@ -163,7 +163,7 @@ function appendSystemContext(event: any, text: string): void {
     if (!event.system.includes(text)) event.system = event.system ? `${event.system}\n\n${text}` : text
     return
   }
-  if (event && event.system === undefined) event.system = { type: "text", text }
+  if (event && event.system === undefined) event.system = [{ type: "text", text }]
 }
 
 function removeControlTool(event: any): void {

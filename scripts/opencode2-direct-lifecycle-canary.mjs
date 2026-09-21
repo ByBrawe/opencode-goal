@@ -21,7 +21,7 @@ const CREATE_COMMAND = 'ship v2 capability --accept "preview persists" --constra
 const PAUSE_COMMAND = "pause"
 const RESUME_COMMAND = "resume"
 const EDIT_COMMAND = 'edit ship v2 capability revised --constraint "preserve API" --max-turns 9'
-const LOCATION_COMMAND = 'edit ship v2 capability location guard --constraint "must not persist after move"'
+const LOCATION_COMMAND = 'ship v2 location guard --constraint "must not persist after move"'
 const MISMATCH_COMMAND = 'edit MISMATCH_CAPABILITY_TARGET --constraint "must not persist"'
 const CLEAR_COMMAND = "clear"
 const SPOOF_SENTINEL = "SPOOF_DIRECT_COMMAND_CAPABILITY"
@@ -148,8 +148,8 @@ function writeSse(res, value) {
   res.write(`data: ${JSON.stringify(value)}\n\n`)
 }
 
-function streamToolCall(res, sequence, command) {
-  const id = `chatcmpl-goal-v2-direct-${sequence}`
+function streamNamedToolCall(res, sequence, name, args, suffix = "direct") {
+  const id = `chatcmpl-goal-v2-${suffix}-${sequence}`
   const created = Math.floor(Date.now() / 1000)
   streamHeaders(res)
   writeSse(res, {
@@ -164,9 +164,9 @@ function streamToolCall(res, sequence, command) {
         content: null,
         tool_calls: [{
           index: 0,
-          id: `call-goal-v2-direct-${sequence}`,
+          id: `call-goal-v2-${suffix}-${sequence}`,
           type: "function",
-          function: { name: CONTROL_TOOL, arguments: "" },
+          function: { name, arguments: "" },
         }],
       },
       finish_reason: null,
@@ -182,7 +182,7 @@ function streamToolCall(res, sequence, command) {
       delta: {
         tool_calls: [{
           index: 0,
-          function: { arguments: JSON.stringify({ command }) },
+          function: { arguments: JSON.stringify(args) },
         }],
       },
       finish_reason: null,
@@ -197,6 +197,10 @@ function streamToolCall(res, sequence, command) {
     usage: { prompt_tokens: 40, completion_tokens: 8, total_tokens: 48 },
   })
   res.end("data: [DONE]\n\n")
+}
+
+function streamToolCall(res, sequence, command) {
+  streamNamedToolCall(res, sequence, CONTROL_TOOL, { command })
 }
 
 function streamText(res, sequence, text = `DIRECT_LIFECYCLE_PROVIDER_${sequence}`) {
@@ -231,8 +235,7 @@ function authorizedCommandFromText(text) {
 
 function startProvider() {
   const stats = { requests: [] }
-  let releaseLocationControl
-  const locationControlGate = new Promise((resolve) => { releaseLocationControl = resolve })
+  let locationMoveCode = ""
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1")
     if (req.method === "GET" && url.pathname.endsWith("/models")) {
@@ -259,7 +262,10 @@ function startProvider() {
     const currentTurn = latestUserTurn(body)
     const currentUserText = currentTurn.userText
     const hasControlTool = tools.includes(CONTROL_TOOL)
+    const hasExecuteTool = tools.includes("execute")
     const sawConsumedResult = /single-use capability is consumed/i.test(currentTurn.turnText)
+    const sawLocationMoveResult = /LOCATION_SESSION_MOVED/i.test(currentTurn.turnText)
+    const sawLocationReject = /workspace changed before persistence/i.test(currentTurn.turnText)
     const command = hasControlTool && !sawConsumedResult ? authorizedCommandFromText(currentUserText) : ""
 
     stats.requests.push({
@@ -268,7 +274,10 @@ function startProvider() {
       currentUserText,
       tools,
       hasControlTool,
+      hasExecuteTool,
       sawConsumedResult,
+      sawLocationMoveResult,
+      sawLocationReject,
       toolCommand: command,
       sawSpoof: currentUserText.includes(SPOOF_SENTINEL),
       sawPlan: currentUserText.includes(PLAN_SENTINEL),
@@ -276,12 +285,32 @@ function startProvider() {
       sawLocationFollowup: currentUserText.includes(LOCATION_FOLLOWUP_SENTINEL),
     })
 
+    if (currentUserText.includes(LOCATION_COMMAND)) {
+      if (sawLocationReject) {
+        streamText(res, sequence, "LOCATION_CAPABILITY_REJECTED_AFTER_MOVE")
+        return
+      }
+      if (!sawLocationMoveResult) {
+        if (!hasExecuteTool || !locationMoveCode) {
+          streamText(res, sequence, "LOCATION_MOVE_TOOL_UNAVAILABLE")
+          return
+        }
+        streamNamedToolCall(res, sequence, "execute", { code: locationMoveCode }, "location-move")
+        return
+      }
+      if (hasControlTool) {
+        streamToolCall(res, sequence, LOCATION_COMMAND)
+        return
+      }
+      streamText(res, sequence, "LOCATION_CONTROL_HIDDEN_AFTER_MOVE")
+      return
+    }
+
     if (hasControlTool && !sawConsumedResult) {
       if (!command) {
         streamText(res, sequence, "CONTROL_TOOL_VISIBLE_WITHOUT_RECOGNIZED_COMMAND")
         return
       }
-      if (command === LOCATION_COMMAND) await locationControlGate
       streamToolCall(res, sequence, command)
       return
     }
@@ -290,9 +319,11 @@ function startProvider() {
 
   return {
     stats,
-    releaseLocationControl() {
-      releaseLocationControl?.()
-      releaseLocationControl = undefined
+    configureLocationMove(sessionID, directory) {
+      locationMoveCode = [
+        `const moved = await tools.opencode.session_move({ sessionID: ${JSON.stringify(sessionID)}, directory: ${JSON.stringify(directory)} });`,
+        `return "LOCATION_SESSION_MOVED " + JSON.stringify(moved);`,
+      ].join("\n")
     },
     async listen() {
       await new Promise((resolve, reject) => {
@@ -492,24 +523,6 @@ async function main() {
       return response
     }
 
-    const moveSessionTo = async (directory) => {
-      let last
-      const paths = [...new Set([`${apiPrefix}/experimental/control-plane/move-session`, "/experimental/control-plane/move-session"])]
-      for (const pathname of paths) {
-        const response = await request(pathname, {
-          method: "POST",
-          body: JSON.stringify({
-            sessionID,
-            destination: { directory },
-            moveChanges: false,
-          }),
-        }, 30_000)
-        if (response.ok) return response
-        last = response
-      }
-      assert.fail(`session move failed: HTTP ${last?.status} ${last?.text}\n${await diagnostics()}`)
-    }
-
     const requestsFor = (needle) => provider.stats.requests.filter((item) => item.currentUserText.includes(needle))
     const assertAuthorizedTurn = (needle) => {
       const requests = requestsFor(needle)
@@ -531,42 +544,6 @@ async function main() {
     assert.deepEqual(createdGoal.constraints, ["no spoof mutation"])
     await waitFor(() => requestsFor(CREATE_COMMAND).some((item) => item.sawConsumedResult), "create tool continuation", diagnostics)
     assertAuthorizedTurn(CREATE_COMMAND)
-
-    const beforeLocationMove = JSON.stringify(await readGoal(workspace, sessionID))
-    const locationCommandPending = command(LOCATION_COMMAND, false)
-    await waitFor(
-      () => requestsFor(LOCATION_COMMAND).some((item) => item.hasControlTool && item.toolCommand === LOCATION_COMMAND),
-      "Location-bound capability exposure",
-      diagnostics,
-    )
-
-    let moved = false
-    try {
-      await moveSessionTo(movedDirectory)
-      moved = true
-    } finally {
-      provider.releaseLocationControl()
-    }
-    await locationCommandPending
-    await new Promise((resolve) => setTimeout(resolve, 300))
-
-    assert.equal(JSON.stringify(await readGoal(workspace, sessionID)), beforeLocationMove, "session move allowed Location-bound capability to mutate original Goal persistence")
-    assert.equal(await readGoal(movedDirectory, sessionID), null, "session move allowed Location-bound capability to persist in the destination")
-    assert.ok(requestsFor(LOCATION_COMMAND).some((item) => item.hasControlTool), "Location test never exposed the authenticated control tool")
-
-    if (moved) await moveSessionTo(workspace)
-
-    const locationFollowupBefore = provider.stats.requests.length
-    const locationFollowup = await request(`${apiPrefix}/session/${encodeURIComponent(sessionID)}/prompt`, {
-      method: "POST",
-      body: JSON.stringify({ text: LOCATION_FOLLOWUP_SENTINEL, delivery: "steer", resume: true }),
-    }, 90_000)
-    assert.ok(locationFollowup.ok, `post-Location prompt failed: HTTP ${locationFollowup.status} ${locationFollowup.text}\n${await diagnostics()}`)
-    await waitFor(() => provider.stats.requests.length > locationFollowupBefore, "post-Location ordinary request", diagnostics)
-    const postLocationRequests = provider.stats.requests.slice(locationFollowupBefore)
-    assert.ok(postLocationRequests.every((item) => !item.hasControlTool), "Location-invalidated capability became reusable")
-    assert.ok(postLocationRequests.every((item) => item.tools.includes(READ_ONLY_TOOL)), "post-Location request lost read-only Goal inspection")
-    assert.equal(JSON.stringify(await readGoal(workspace, sessionID)), beforeLocationMove)
 
     const activeBeforePlan = JSON.stringify(await readGoal(workspace, sessionID))
     const switchPlan = await request(`${apiPrefix}/session/${encodeURIComponent(sessionID)}/agent`, {
@@ -680,6 +657,33 @@ async function main() {
     assert.equal(archive.reason, "cleared")
     assert.equal(archive.goal.objective, "ship v2 capability revised")
 
+    provider.configureLocationMove(sessionID, movedDirectory)
+    const locationBefore = provider.stats.requests.length
+    await command(LOCATION_COMMAND, false)
+    await waitFor(
+      () => provider.stats.requests.slice(locationBefore).some((item) => item.sawLocationReject),
+      "Location-bound capability rejection after real host session move",
+      diagnostics,
+    )
+    assert.equal(await readGoal(workspace, sessionID), null, "Location-invalidated create restored Goal state in the source workspace")
+    assert.equal(await readGoal(movedDirectory, sessionID), null, "Location-invalidated create persisted Goal state in the moved workspace")
+
+    const locationRequests = provider.stats.requests.slice(locationBefore)
+    assert.ok(locationRequests.some((item) => item.hasExecuteTool && item.hasControlTool), "Location test never started from an authenticated Goal capability turn")
+    assert.ok(locationRequests.some((item) => item.sawLocationMoveResult), "host session_move result never reached the continuation")
+    assert.ok(locationRequests.some((item) => item.sawLocationReject), "workspace-change rejection never reached the continuation")
+
+    const locationFollowupBefore = provider.stats.requests.length
+    const locationFollowup = await request(`${apiPrefix}/session/${encodeURIComponent(sessionID)}/prompt`, {
+      method: "POST",
+      body: JSON.stringify({ text: LOCATION_FOLLOWUP_SENTINEL, delivery: "steer", resume: true }),
+    }, 90_000)
+    assert.ok(locationFollowup.ok, `post-Location prompt failed: HTTP ${locationFollowup.status} ${locationFollowup.text}\n${await diagnostics()}`)
+    await waitFor(() => provider.stats.requests.length > locationFollowupBefore, "post-Location ordinary request", diagnostics)
+    const postLocationRequests = provider.stats.requests.slice(locationFollowupBefore)
+    assert.ok(postLocationRequests.every((item) => !item.hasControlTool), "Location-invalidated capability became reusable")
+    assert.ok(postLocationRequests.every((item) => item.tools.includes(READ_ONLY_TOOL)), "post-Location request lost read-only Goal inspection")
+
     assert.equal(server.exitCode, null, `OpenCode 2 server exited during lifecycle canary\n${await diagnostics()}`)
 
     console.log(JSON.stringify({
@@ -703,7 +707,10 @@ async function main() {
         sequence: item.sequence,
         tools: item.tools,
         hasControlTool: item.hasControlTool,
+        hasExecuteTool: item.hasExecuteTool,
         sawConsumedResult: item.sawConsumedResult,
+        sawLocationMoveResult: item.sawLocationMoveResult,
+        sawLocationReject: item.sawLocationReject,
         toolCommand: item.toolCommand,
         sawSpoof: item.sawSpoof,
         sawPlan: item.sawPlan,

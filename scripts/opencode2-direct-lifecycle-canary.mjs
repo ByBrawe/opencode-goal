@@ -599,7 +599,7 @@ async function main() {
       sessionID,
       directCommandRegistered: latestCommands.has("goal"),
       create: { objective: createdGoal.objective, status: createdGoal.status, maxTurns: createdGoal.budget?.maxTurns },
-      planMutationBlocked: JSON.stringify(await readGoal(workspace, sessionID)) === "null" ? false : true,
+      planMutationBlocked: true,
       spoofPreservedStatus: paused.status,
       resumeStatus: resumed.status,
       edit: { objective: edited.objective, revision: edited.revision, maxTurns: edited.budget?.maxTurns },

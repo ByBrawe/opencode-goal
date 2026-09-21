@@ -8,12 +8,19 @@ import path from "node:path"
 import process from "node:process"
 
 const COMMAND = "goal-promotion-probe"
+const MANAGED_GOAL_COMMAND = "goal"
+const MANAGED_GOAL_SENTINEL = "MANAGED_GOAL_DIRECT_SENTINEL"
 const IDENTITY_COMMAND = "goal-prompt-identity-probe"
+const CAPABILITY_COMMAND = "goal-capability-probe"
 const TOOL = "opencode_goal_v2_promotion_probe"
+const CAPABILITY_TOOL = "opencode_goal_v2_capability_probe"
 const DIRECT_SENTINEL = "DIRECT_COMMAND_SENTINEL"
 const SPOOF_SENTINEL = "SPOOF_PROMPT_SENTINEL"
 const IDENTITY_SENTINEL = "DIRECT_PROMPT_IDENTITY_SENTINEL"
 const IDENTITY_SPOOF_SENTINEL = "SPOOF_PROMPT_IDENTITY_SENTINEL"
+const CAPABILITY_SENTINEL = "DIRECT_SINGLE_USE_CAPABILITY_SENTINEL"
+const CAPABILITY_FOLLOWUP_SENTINEL = "POST_CONSUMPTION_PROMPT_SENTINEL"
+const CAPABILITY_SPOOF_SENTINEL = "SPOOF_SINGLE_USE_CAPABILITY_SENTINEL"
 const SERVER_USERNAME = "opencode"
 const SERVER_PASSWORD = "opencode-goal-v2-promotion-canary"
 const OPENCODE_BINARY = process.env.OPENCODE2_BINARY || "opencode2"
@@ -170,6 +177,57 @@ function streamToolCall(res, sequence) {
   res.end("data: [DONE]\n\n")
 }
 
+function streamCapabilityToolCall(res, sequence) {
+  const id = `chatcmpl-goal-v2-capability-${sequence}`
+  const created = Math.floor(Date.now() / 1000)
+  streamHeaders(res)
+  writeSse(res, {
+    id,
+    object: "chat.completion.chunk",
+    created,
+    model: "canary",
+    choices: [{
+      index: 0,
+      delta: {
+        role: "assistant",
+        content: null,
+        tool_calls: [{
+          index: 0,
+          id: "call-goal-v2-capability",
+          type: "function",
+          function: { name: CAPABILITY_TOOL, arguments: "" },
+        }],
+      },
+      finish_reason: null,
+    }],
+  })
+  writeSse(res, {
+    id,
+    object: "chat.completion.chunk",
+    created,
+    model: "canary",
+    choices: [{
+      index: 0,
+      delta: {
+        tool_calls: [{
+          index: 0,
+          function: { arguments: JSON.stringify({ value: "capability-call" }) },
+        }],
+      },
+      finish_reason: null,
+    }],
+  })
+  writeSse(res, {
+    id,
+    object: "chat.completion.chunk",
+    created,
+    model: "canary",
+    choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
+    usage: { prompt_tokens: 40, completion_tokens: 8, total_tokens: 48 },
+  })
+  res.end("data: [DONE]\n\n")
+}
+
 function streamText(res, sequence, text) {
   const id = `chatcmpl-goal-v2-promotion-${sequence}`
   const created = Math.floor(Date.now() / 1000)
@@ -222,14 +280,23 @@ function startProvider() {
       tools: names,
       text: text.slice(-5000),
       hasProbeTool: names.includes(TOOL),
+      hasCapabilityTool: names.includes(CAPABILITY_TOOL),
       sawSpoof: text.includes(SPOOF_SENTINEL),
       sawIdentity: text.includes(IDENTITY_SENTINEL),
       sawIdentitySpoof: text.includes(IDENTITY_SPOOF_SENTINEL),
+      sawCapability: text.includes(CAPABILITY_SENTINEL),
+      sawCapabilityFollowup: text.includes(CAPABILITY_FOLLOWUP_SENTINEL),
+      sawCapabilitySpoof: text.includes(CAPABILITY_SPOOF_SENTINEL),
       sawToolResult: text.includes("PROMOTION_TOOL_EXECUTED") || text.includes("provider-call"),
+      sawCapabilityToolResult: text.includes("CAPABILITY_TOOL_EXECUTED") || text.includes("capability-call"),
     })
 
     if (sequence === 1) {
       streamToolCall(res, sequence)
+      return
+    }
+    if (names.includes(CAPABILITY_TOOL) && !text.includes("CAPABILITY_TOOL_EXECUTED")) {
+      streamCapabilityToolCall(res, sequence)
       return
     }
     streamText(res, sequence, "PROMOTION_PROBE_DONE")
@@ -257,8 +324,11 @@ function pluginSource() {
 
 const traceFile = process.env.OPENCODE_GOAL_V2_PROMOTION_TRACE
 const commandName = ${JSON.stringify(COMMAND)}
+const managedGoalCommandName = ${JSON.stringify(MANAGED_GOAL_COMMAND)}
 const identityCommandName = ${JSON.stringify(IDENTITY_COMMAND)}
+const capabilityCommandName = ${JSON.stringify(CAPABILITY_COMMAND)}
 const toolName = ${JSON.stringify(TOOL)}
+const capabilityToolName = ${JSON.stringify(CAPABILITY_TOOL)}
 
 async function trace(event) {
   await appendFile(traceFile, JSON.stringify({ at: Date.now(), ...event }) + "\\n", "utf8")
@@ -268,8 +338,22 @@ export default {
   id: "bybrawe.opencode-goal.v2.promotion-capability-canary",
   async setup(ctx) {
     await trace({ phase: "setup", app: ctx?.app })
+    const capabilities = new Map()
 
     const commandRegistration = await ctx.command.transform((editor) => {
+      editor.add({
+        name: managedGoalCommandName,
+        description: "OpenCode Goal managed /goal collision probe",
+        async execute(input) {
+          await trace({
+            phase: "managed-goal.command.execute",
+            sessionID: input?.sessionID,
+            delivery: input?.delivery,
+            prompt: input?.prompt,
+          })
+        },
+      })
+
       editor.add({
         name: commandName,
         description: "OpenCode Goal V2 direct command origin probe",
@@ -331,6 +415,60 @@ export default {
           })
         },
       })
+
+      editor.add({
+        name: capabilityCommandName,
+        description: "OpenCode Goal V2 single-use host-message capability probe",
+        async execute(input) {
+          await trace({
+            phase: "capability.command.execute",
+            sessionID: input?.sessionID,
+            delivery: input?.delivery,
+            prompt: input?.prompt,
+          })
+
+          const admitted = await ctx.session.prompt({
+            sessionID: input.sessionID,
+            text: input.prompt?.text ?? "",
+            files: input.prompt?.files,
+            agents: input.prompt?.agents,
+            skills: input.prompt?.skills,
+            delivery: input.delivery,
+            resume: false,
+          })
+          const messageID = admitted?.id ?? admitted?.data?.id
+          if (typeof messageID !== "string" || !messageID) {
+            throw new Error("capability command did not receive a host user-message id")
+          }
+
+          capabilities.set(input.sessionID, {
+            messageID,
+            state: "armed",
+            exposures: 0,
+          })
+          await trace({
+            phase: "capability.armed",
+            sessionID: input.sessionID,
+            messageID,
+          })
+
+          const resumed = await ctx.session.prompt({
+            sessionID: input.sessionID,
+            id: messageID,
+            text: input.prompt?.text ?? "",
+            files: input.prompt?.files,
+            agents: input.prompt?.agents,
+            skills: input.prompt?.skills,
+            delivery: input.delivery,
+            resume: true,
+          })
+          await trace({
+            phase: "capability.resumed",
+            sessionID: input.sessionID,
+            messageID: resumed?.id ?? resumed?.data?.id,
+          })
+        },
+      })
     })
 
     const toolRegistration = await ctx.tool.transform((editor) => {
@@ -365,6 +503,50 @@ export default {
           }
         },
       })
+
+      editor.add({
+        name: capabilityToolName,
+        description: "OpenCode Goal V2 single-use control capability probe",
+        input: {
+          type: "object",
+          properties: { value: { type: "string" } },
+          required: ["value"],
+          additionalProperties: false,
+        },
+        output: {
+          type: "object",
+          properties: {
+            accepted: { type: "boolean" },
+            state: { type: "string" },
+          },
+          required: ["accepted", "state"],
+          additionalProperties: false,
+        },
+        options: { codemode: false },
+        async execute(input, context) {
+          const capability = capabilities.get(context?.sessionID)
+          const accepted = capability?.state === "offered"
+          if (accepted) capability.state = "consumed"
+          await trace({
+            phase: accepted ? "capability.consumed" : "capability.rejected",
+            sessionID: context?.sessionID,
+            assistantMessageID: context?.messageID,
+            callID: context?.id,
+            input,
+            capabilityMessageID: capability?.messageID,
+            state: capability?.state ?? "missing",
+          })
+          return {
+            output: {
+              accepted,
+              state: capability?.state ?? "missing",
+            },
+            content: accepted
+              ? "CAPABILITY_TOOL_EXECUTED " + String(input?.value || "")
+              : "CAPABILITY_TOOL_REJECTED",
+          }
+        },
+      })
     })
 
     const promptRegistration = await ctx.session.hook("prompt", async (event) => {
@@ -378,17 +560,43 @@ export default {
     })
 
     const contextRegistration = await ctx.session.hook("context", async (event) => {
+      const messages = Array.isArray(event?.messages) ? event.messages : []
+      const userMessages = messages.filter((message) => message?.role === "user" && typeof message?.id === "string")
+      const currentUserMessageID = userMessages.at(-1)?.id
+      const capability = capabilities.get(event?.sessionID)
+      const matchingArmedMessage = capability
+        && (capability.state === "armed" || capability.state === "offered")
+        && currentUserMessageID === capability.messageID
+
+      if (matchingArmedMessage) {
+        capability.state = "offered"
+        capability.exposures += 1
+      } else if (event?.tools && typeof event.tools === "object") {
+        delete event.tools[capabilityToolName]
+        if (
+          capability
+          && (capability.state === "armed" || capability.state === "offered")
+          && currentUserMessageID
+          && currentUserMessageID !== capability.messageID
+        ) {
+          capability.state = "invalidated"
+        }
+      }
+
       await trace({
         phase: "session.context",
         sessionID: event?.sessionID,
         tools: event?.tools && typeof event.tools === "object" ? Object.keys(event.tools) : [],
-        messages: Array.isArray(event?.messages)
-          ? event.messages.map((message) => ({
-              id: message?.id,
-              role: message?.role,
-              metadata: message?.metadata,
-            }))
-          : [],
+        currentUserMessageID,
+        capabilityMessageID: capability?.messageID,
+        capabilityState: capability?.state ?? "missing",
+        capabilityExposures: capability?.exposures ?? 0,
+        capabilityToolVisible: Boolean(event?.tools?.[capabilityToolName]),
+        messages: messages.map((message) => ({
+          id: message?.id,
+          role: message?.role,
+          metadata: message?.metadata,
+        })),
       })
     })
 
@@ -441,21 +649,28 @@ async function main() {
   let server
   let serverLog = ""
   let apiPrefix = null
+  let managedGoalSessionID = ""
   let commandSessionID = ""
   let promptSessionID = ""
   let identitySessionID = ""
   let identitySpoofSessionID = ""
+  let capabilitySessionID = ""
+  let capabilitySpoofSessionID = ""
   let latestCommands = new Set()
 
   await Promise.all([
     mkdir(pluginDir, { recursive: true }),
     mkdir(path.join(home, ".config"), { recursive: true }),
+    mkdir(path.join(home, ".config", "opencode", "commands"), { recursive: true }),
     mkdir(path.join(home, ".local", "share"), { recursive: true }),
     mkdir(path.join(home, ".local", "state"), { recursive: true }),
     mkdir(path.join(home, ".cache"), { recursive: true }),
   ])
 
   await writeFile(path.join(pluginDir, "opencode-goal-v2-promotion-probe.js"), pluginSource(), "utf8")
+  // OpenCode 2 installer mode intentionally leaves commands/goal.md absent.
+  // A markdown command with the same name shadows the plugin-native command on
+  // exact 2.0.11, so this canary exercises the production V2 post-install shape.
   await writeFile(path.join(workspace, "README.md"), "# OpenCode Goal V2 promotion capability canary\n", "utf8")
   await writeFile(path.join(workspace, "opencode.json"), `${JSON.stringify({
     $schema: "https://opencode.ai/config.json",
@@ -503,10 +718,13 @@ async function main() {
     return [
       `apiPrefix=${String(apiPrefix)}`,
       `commands=${JSON.stringify([...latestCommands])}`,
+      `managedGoalSessionID=${managedGoalSessionID || "none"}`,
       `commandSessionID=${commandSessionID || "none"}`,
       `promptSessionID=${promptSessionID || "none"}`,
       `identitySessionID=${identitySessionID || "none"}`,
       `identitySpoofSessionID=${identitySpoofSessionID || "none"}`,
+      `capabilitySessionID=${capabilitySessionID || "none"}`,
+      `capabilitySpoofSessionID=${capabilitySpoofSessionID || "none"}`,
       `provider=${JSON.stringify(provider.stats)}`,
       `trace=${JSON.stringify(trace.slice(-100))}`,
       `serverExit=${server?.exitCode}`,
@@ -579,7 +797,10 @@ async function main() {
       const response = await request(`${apiPrefix}/command`, { method: "GET" }, 5_000)
       if (!response.ok) return false
       latestCommands = commandNames(response.body)
-      return latestCommands.has(COMMAND) && latestCommands.has(IDENTITY_COMMAND)
+      return latestCommands.has(MANAGED_GOAL_COMMAND)
+        && latestCommands.has(COMMAND)
+        && latestCommands.has(IDENTITY_COMMAND)
+        && latestCommands.has(CAPABILITY_COMMAND)
     }, "direct probe command registration", diagnostics, 30_000)
 
     const createSession = async (title) => {
@@ -593,6 +814,32 @@ async function main() {
       assert.ok(id, `session ID missing: ${response.text}`)
       return id
     }
+
+    managedGoalSessionID = await createSession("OpenCode Goal V2 plugin-native goal command")
+    const managedGoalDirect = await request(
+      `${apiPrefix}/session/${encodeURIComponent(managedGoalSessionID)}/command`,
+      {
+        method: "POST",
+        body: JSON.stringify({ name: MANAGED_GOAL_COMMAND, text: MANAGED_GOAL_SENTINEL }),
+      },
+      60_000,
+    )
+    assert.ok(
+      managedGoalDirect.ok,
+      `plugin-native /goal direct command failed: HTTP ${managedGoalDirect.status} ${managedGoalDirect.text}\n${await diagnostics()}`,
+    )
+    await waitFor(async () => {
+      const trace = await readTrace(traceFile)
+      return trace.some(
+        (item) => item.phase === "managed-goal.command.execute" && item.sessionID === managedGoalSessionID,
+      )
+    }, "managed /goal direct plugin callback", diagnostics, 15_000)
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    assert.equal(
+      provider.stats.requests.length,
+      0,
+      `managed /goal command fell through to model execution\n${await diagnostics()}`,
+    )
 
     commandSessionID = await createSession("OpenCode Goal V2 direct command origin")
     const direct = await request(`${apiPrefix}/session/${encodeURIComponent(commandSessionID)}/command`, {
@@ -707,26 +954,156 @@ async function main() {
       `ordinary prompt text spoofed the direct identity command callback\n${await diagnostics()}`,
     )
 
+    capabilitySessionID = await createSession("OpenCode Goal V2 single-use capability")
+    const capabilityDirect = await request(`${apiPrefix}/session/${encodeURIComponent(capabilitySessionID)}/command`, {
+      method: "POST",
+      body: JSON.stringify({ name: CAPABILITY_COMMAND, text: CAPABILITY_SENTINEL }),
+    }, 120_000)
+    assert.ok(
+      capabilityDirect.ok,
+      `capability command failed: HTTP ${capabilityDirect.status} ${capabilityDirect.text}\n${await diagnostics()}`,
+    )
+
+    await waitFor(async () => {
+      const events = await readTrace(traceFile)
+      return events.some((item) => item.phase === "capability.consumed" && item.sessionID === capabilitySessionID)
+    }, "single-use capability consumption", diagnostics, 90_000)
+
+    await waitFor(
+      () => provider.stats.requests.some((item) => item.sawCapabilityToolResult),
+      "post-tool continuation after capability consumption",
+      diagnostics,
+      60_000,
+    )
+
+    const consumedTrace = await readTrace(traceFile)
+    const armed = consumedTrace.find(
+      (item) => item.phase === "capability.armed" && item.sessionID === capabilitySessionID,
+    )
+    const capabilityMessageID = String(armed?.messageID || "")
+    assert.ok(capabilityMessageID, `capability command did not arm a host message id\n${await diagnostics()}`)
+
+    const capabilityContexts = consumedTrace.filter(
+      (item) => item.phase === "session.context" && item.sessionID === capabilitySessionID,
+    )
+    assert.ok(
+      capabilityContexts.some((item) =>
+        item.currentUserMessageID === capabilityMessageID
+        && item.capabilityToolVisible === true
+        && item.capabilityState === "offered"
+      ),
+      `control capability was not exposed for the armed host user message\n${await diagnostics()}`,
+    )
+
+    const capabilityRequests = provider.stats.requests.filter((item) => item.sawCapability)
+    assert.ok(capabilityRequests.length >= 1, `provider never saw capability command prompt\n${await diagnostics()}`)
+    assert.equal(
+      capabilityRequests[0]?.hasCapabilityTool,
+      true,
+      `armed provider request did not contain capability tool\n${await diagnostics()}`,
+    )
+
+    const consumedEvents = consumedTrace.filter(
+      (item) => item.phase === "capability.consumed" && item.sessionID === capabilitySessionID,
+    )
+    assert.equal(consumedEvents.length, 1, `capability executed more than once\n${await diagnostics()}`)
+
+    const continuationRequest = provider.stats.requests.find((item) => item.sawCapabilityToolResult)
+    assert.ok(continuationRequest, `capability tool result did not reach continuation\n${await diagnostics()}`)
+    assert.equal(
+      continuationRequest.hasCapabilityTool,
+      false,
+      `consumed capability remained model-visible on the post-tool continuation\n${await diagnostics()}`,
+    )
+
+    const followup = await request(`${apiPrefix}/session/${encodeURIComponent(capabilitySessionID)}/prompt`, {
+      method: "POST",
+      body: JSON.stringify({ text: CAPABILITY_FOLLOWUP_SENTINEL, delivery: "steer", resume: true }),
+    }, 120_000)
+    assert.ok(followup.ok, `post-consumption prompt failed: HTTP ${followup.status} ${followup.text}\n${await diagnostics()}`)
+    await waitFor(
+      () => provider.stats.requests.some((item) => item.sawCapabilityFollowup),
+      "ordinary post-consumption provider request",
+      diagnostics,
+      60_000,
+    )
+    const followupRequest = provider.stats.requests.find((item) => item.sawCapabilityFollowup)
+    assert.equal(
+      followupRequest?.hasCapabilityTool,
+      false,
+      `later ordinary request reused consumed capability\n${await diagnostics()}`,
+    )
+
+    capabilitySpoofSessionID = await createSession("OpenCode Goal V2 capability command spoof")
+    const capabilitySpoof = await request(
+      `${apiPrefix}/session/${encodeURIComponent(capabilitySpoofSessionID)}/prompt`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          text: `/${CAPABILITY_COMMAND} ${CAPABILITY_SPOOF_SENTINEL}`,
+          delivery: "steer",
+          resume: true,
+        }),
+      },
+      120_000,
+    )
+    assert.ok(
+      capabilitySpoof.ok,
+      `capability spoof prompt failed: HTTP ${capabilitySpoof.status} ${capabilitySpoof.text}\n${await diagnostics()}`,
+    )
+    await waitFor(
+      () => provider.stats.requests.some((item) => item.sawCapabilitySpoof),
+      "ordinary prompt containing capability command text",
+      diagnostics,
+      60_000,
+    )
+    const spoofRequest = provider.stats.requests.find((item) => item.sawCapabilitySpoof)
+    assert.equal(spoofRequest?.hasCapabilityTool, false, `spoof request minted a capability\n${await diagnostics()}`)
+
+    const capabilityFinalTrace = await readTrace(traceFile)
+    assert.equal(
+      capabilityFinalTrace.filter((item) => item.phase === "capability.command.execute").length,
+      1,
+      `ordinary prompt text spoofed capability command callback\n${await diagnostics()}`,
+    )
+    assert.equal(
+      capabilityFinalTrace.filter((item) => item.phase === "capability.consumed").length,
+      1,
+      `capability was replayed after consumption\n${await diagnostics()}`,
+    )
+
     assert.equal(server.exitCode, null, `OpenCode 2 server exited during capability canary\n${await diagnostics()}`)
 
     console.log(JSON.stringify({
       ok: true,
       version,
       apiPrefix,
+      managedGoalSessionID,
       commandSessionID,
       promptSessionID,
       identitySessionID,
       identitySpoofSessionID,
+      capabilitySessionID,
+      capabilitySpoofSessionID,
+      managedGoalCommand: MANAGED_GOAL_COMMAND,
+      managedGoalDirectIntercepted: true,
       registeredCommand: COMMAND,
       identityCommand: IDENTITY_COMMAND,
+      capabilityCommand: CAPABILITY_COMMAND,
       registeredTool: TOOL,
+      capabilityTool: CAPABILITY_TOOL,
       directCommandExecutions: commandEvents.length,
       providerRequests: provider.stats.requests.map((item) => ({
         sequence: item.sequence,
         tools: item.tools,
         hasProbeTool: item.hasProbeTool,
+        hasCapabilityTool: item.hasCapabilityTool,
         sawSpoof: item.sawSpoof,
+        sawCapability: item.sawCapability,
+        sawCapabilityFollowup: item.sawCapabilityFollowup,
+        sawCapabilitySpoof: item.sawCapabilitySpoof,
         sawToolResult: item.sawToolResult,
+        sawCapabilityToolResult: item.sawCapabilityToolResult,
       })),
       contextSawProbeTool: promptContexts.some((item) => item.tools.includes(TOOL)),
       toolExecution: toolEvents.find((item) => item.sessionID === promptSessionID),
@@ -738,6 +1115,11 @@ async function main() {
         && item.messages.some((message) => message?.id === identityMessageID && message?.role === "user")
       ),
       identitySpoofTriggeredCommand: finalTrace.filter((item) => item.phase === "identity.command.execute").length !== 1,
+      capabilityMessageID,
+      capabilityConsumedOnce: capabilityFinalTrace.filter((item) => item.phase === "capability.consumed").length === 1,
+      capabilityContinuationHidden: continuationRequest.hasCapabilityTool === false,
+      capabilityFollowupHidden: followupRequest?.hasCapabilityTool === false,
+      capabilitySpoofHidden: spoofRequest?.hasCapabilityTool === false,
     }, null, 2))
   } finally {
     await stopProcess(server)

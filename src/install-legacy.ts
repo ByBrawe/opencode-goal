@@ -17,6 +17,7 @@ const managedCommandMarker = "<!-- managed-by:@bybrawe/opencode-goal -->"
 const goalCommandContent = `---\ndescription: Set or manage a persistent evidence-verified goal\n---\n\n${managedCommandMarker}\nOpenCode Goals command bridge. The OpenCode Goals plugin should intercept this command before model execution.\nIf this text reaches the model, do not perform the requested work. Tell the user the OpenCode Goals plugin did not load, then ask them to reinstall/update with npx -y @bybrawe/opencode-goal@latest and fully restart OpenCode.\n\nRequested /goal arguments:\n$ARGUMENTS\n`
 const configCandidates = ["opencode.json", "opencode.jsonc", "config.json", "config.jsonc"]
 const installerArgs = process.argv.slice(2)
+const nativeGoalCommandMode = process.env.OPENCODE_GOAL_NATIVE_COMMANDS === "1"
 const uninstallRequested = installerArgs.length === 1 && ["--uninstall", "uninstall", "--remove"].includes(installerArgs[0] ?? "")
 
 if (installerArgs.includes("--help") || installerArgs.includes("-h")) {
@@ -400,6 +401,14 @@ async function assertGoalCommandAvailable(): Promise<void> {
 }
 
 async function installManagedGoalCommand(): Promise<void> {
+  if (nativeGoalCommandMode) {
+    if (!(await fileExists(goalCommandPath))) return
+    const existing = await readFile(goalCommandPath, "utf8")
+    if (existing.includes(managedCommandMarker)) {
+      await rm(goalCommandPath, { force: true })
+    }
+    return
+  }
   await mkdir(commandDir, { recursive: true })
   await writeAtomic(goalCommandPath, goalCommandContent)
 }
@@ -476,7 +485,9 @@ async function installOrUpdate(): Promise<void> {
   await installManagedGoalCommand()
   await removeLegacyLocalCopies()
   console.log(`Pinned plugin spec: ${packageSpec}`)
-  console.log(`Installed managed /goal command: ${goalCommandPath}`)
+  console.log(nativeGoalCommandMode
+    ? `Using plugin-native /goal command; legacy managed command bridge is not installed: ${goalCommandPath}`
+    : `Installed managed /goal command: ${goalCommandPath}`)
   console.log("Fully restart OpenCode, type /goal, then verify with: /goal status")
 }
 

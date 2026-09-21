@@ -170,7 +170,11 @@ async function main() {
     if (!(await exists(linkedBin))) throw new Error("npm did not create the opencode-goal executable link from the package bin manifest")
 
     const installerConfig = path.join(temp, "installer-config")
-    const installerEnv = { ...process.env, OPENCODE_CONFIG_DIR: installerConfig }
+    const installerEnv = {
+      ...process.env,
+      OPENCODE_CONFIG_DIR: installerConfig,
+      OPENCODE_GOAL_HOST_VERSION: "1.17.15",
+    }
     const installerVersion = run(process.execPath, [installerPath, "--version"], { cwd: consumer, env: installerEnv })
     if (String(installerVersion.stdout ?? "").trim() !== packageJSON.version) throw new Error("published installer reports the wrong version")
 

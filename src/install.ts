@@ -20,10 +20,51 @@ const managedCommandMarker = "<!-- managed-by:@bybrawe/opencode-goal -->"
 const legacyInstaller = join(dirname(fileURLToPath(import.meta.url)), "install-legacy.js")
 const installerArgs = process.argv.slice(2)
 
+function parseOpenCodeMajorVersion(value: string): number | undefined {
+  const match = value.match(/(?:^|\D)(\d+)\.(\d+)(?:\.(\d+))?/)
+  if (!match) return undefined
+  const major = Number.parseInt(match[1]!, 10)
+  return Number.isFinite(major) ? major : undefined
+}
+
+function detectOpenCodeMajorVersion(): number | undefined {
+  const explicit = String(process.env.OPENCODE_GOAL_HOST_VERSION ?? "").trim()
+  if (explicit) {
+    const major = parseOpenCodeMajorVersion(explicit)
+    if (major !== undefined) return major
+  }
+
+  const candidates = [...new Set([
+    String(process.env.OPENCODE_BINARY ?? "").trim(),
+    "opencode",
+    "opencode2",
+  ].filter(Boolean))]
+
+  for (const command of candidates) {
+    const result = spawnSync(command, ["--version"], {
+      cwd: packageRoot,
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: 5_000,
+    })
+    if (result.error || result.status !== 0) continue
+    const major = parseOpenCodeMajorVersion(`${String(result.stdout ?? "")}\n${String(result.stderr ?? "")}`)
+    if (major !== undefined) return major
+  }
+  return undefined
+}
+
+const detectedOpenCodeMajor = detectOpenCodeMajorVersion()
+const nativeGoalCommandMode = detectedOpenCodeMajor !== undefined && detectedOpenCodeMajor >= 2
+
 function runLegacy(targetConfigDir: string, args = installerArgs, inherit = true) {
   const result = spawnSync(process.execPath, [legacyInstaller, ...args], {
     cwd: packageRoot,
-    env: { ...process.env, OPENCODE_CONFIG_DIR: targetConfigDir },
+    env: {
+      ...process.env,
+      OPENCODE_CONFIG_DIR: targetConfigDir,
+      OPENCODE_GOAL_NATIVE_COMMANDS: nativeGoalCommandMode ? "1" : "0",
+    },
     encoding: "utf8",
     stdio: inherit ? "inherit" : "pipe",
   })
@@ -70,7 +111,7 @@ function assertStageSuccess(result: ReturnType<typeof runLegacy>, source: string
   throw new Error(`OpenCode Goals could not safely update ${source}. No config files were changed.\n${details}`)
 }
 
-async function stageConfig(name: string): Promise<{ target: string; content: string; commandContent: string }> {
+async function stageConfig(name: string): Promise<{ target: string; content: string; commandContent?: string }> {
   const stageDir = await mkdtemp(join(tmpdir(), "opencode-goal-config-stage-"))
   try {
     const source = join(configDir, name)
@@ -86,7 +127,9 @@ async function stageConfig(name: string): Promise<{ target: string; content: str
     return {
       target: source,
       content: await readFile(staged, "utf8"),
-      commandContent: await readFile(join(stageDir, "commands", "goal.md"), "utf8"),
+      ...(!nativeGoalCommandMode
+        ? { commandContent: await readFile(join(stageDir, "commands", "goal.md"), "utf8") }
+        : {}),
     }
   } finally {
     await rm(stageDir, { recursive: true, force: true }).catch(() => undefined)
@@ -96,13 +139,19 @@ async function stageConfig(name: string): Promise<{ target: string; content: str
 async function installAcrossExistingConfigs(existing: string[]): Promise<void> {
   await assertManagedCommandWritable()
 
-  const plans = [] as Array<{ target: string; content: string; commandContent: string }>
+  const plans = [] as Array<{ target: string; content: string; commandContent?: string }>
   for (const name of existing) plans.push(await stageConfig(name))
 
   for (const plan of plans) await writeAtomic(plan.target, plan.content)
 
-  await mkdir(commandDir, { recursive: true })
-  await writeAtomic(goalCommandPath, plans[0]!.commandContent)
+  if (nativeGoalCommandMode) {
+    await rm(goalCommandPath, { force: true })
+  } else {
+    const commandContent = plans[0]?.commandContent
+    if (!commandContent) throw new Error("staged managed /goal command content is missing")
+    await mkdir(commandDir, { recursive: true })
+    await writeAtomic(goalCommandPath, commandContent)
+  }
 
   const pluginDir = join(configDir, "plugins")
   for (const localName of ["opencode-goal.ts", "opencode-goal.js"]) {
@@ -112,7 +161,9 @@ async function installAcrossExistingConfigs(existing: string[]): Promise<void> {
   console.log(`Installed/updated OpenCode Goals ${packageVersion} across ${plans.length} OpenCode config files.`)
   for (const plan of plans) console.log(`- ${plan.target}`)
   console.log(`Pinned plugin spec: ${packageSpec}`)
-  console.log(`Installed managed /goal command: ${goalCommandPath}`)
+  console.log(nativeGoalCommandMode
+    ? `OpenCode ${detectedOpenCodeMajor}.x detected; using the plugin-native /goal command and removing the legacy managed bridge: ${goalCommandPath}`
+    : `Installed managed /goal command: ${goalCommandPath}`)
   console.log("Fully restart OpenCode, type /goal, then verify with: /goal status")
 }
 

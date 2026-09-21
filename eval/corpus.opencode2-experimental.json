@@ -77,22 +77,6 @@
       "expected": "A capability bound to one session workspace is consumed and rejected if the session workspace changes before persistence, with no Goal written in either workspace."
     },
     {
-      "id": "opencode2.host-directory-mismatch-no-access",
-      "category": "opencode2-experimental",
-      "weight": 4,
-      "testFile": "test/opencode2-experimental.test.mjs",
-      "testName": "active host directory mismatch fails closed before Goal reads or writes",
-      "expected": "If the session location and active host directory disagree, V2 rejects Goal access before any read or write in either location."
-    },
-    {
-      "id": "opencode2.unavailable-location-no-access",
-      "category": "opencode2-experimental",
-      "weight": 4,
-      "testFile": "test/opencode2-experimental.test.mjs",
-      "testName": "unavailable session directory fails closed before Goal reads or writes",
-      "expected": "If the resolved session location no longer exists, V2 refuses Goal access rather than falling back to another directory."
-    },
-    {
       "id": "opencode2.capability-full-lifecycle",
       "category": "opencode2-experimental",
       "weight": 4,

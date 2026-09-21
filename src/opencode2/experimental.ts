@@ -514,8 +514,7 @@ export async function executeOpenCode2DirectGoalCommand(
     ...input.prompt,
     sessionID: input.sessionID,
     text: raw,
-    metadata: { opencode_goal_v2_direct_command: true },
-    delivery: input.delivery ?? "steer",
+    ...(input.delivery !== undefined ? { delivery: input.delivery } : {}),
   }
   const admitted = await ctx.session.prompt({ ...promptInput, resume: false })
   const messageID = firstString(record(admitted)?.id, nestedRecord(admitted, "data")?.id)

@@ -12,11 +12,11 @@ const packageVersion = JSON.parse(await readFile(path.join(root, "package.json")
 const packageSpec = `@bybrawe/opencode-goal@${packageVersion}`
 const managedCommandMarker = "<!-- managed-by:@bybrawe/opencode-goal -->"
 
-async function runInstaller(configDir, args = []) {
+async function runInstaller(configDir, args = [], envPatch = {}) {
   return await new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [installer, ...args], {
       cwd: root,
-      env: { ...process.env, OPENCODE_CONFIG_DIR: configDir },
+      env: { ...process.env, OPENCODE_CONFIG_DIR: configDir, ...envPatch },
       windowsHide: true,
     })
     const stdout = []
@@ -81,6 +81,34 @@ test("installer creates global OpenCode config, exact package pin, and discovera
     assert.equal(config.$schema, "https://opencode.ai/config.json")
     assert.deepEqual(config.plugin, [packageSpec])
     await assertManagedGoalCommand(configDir)
+  } finally {
+    await rm(temp, { recursive: true, force: true })
+  }
+})
+
+test("OpenCode 2 install removes only the Goal-owned legacy command bridge", async () => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-installer-v2-native-command-"))
+  const configDir = path.join(temp, "config")
+  const commandPath = path.join(configDir, "commands", "goal.md")
+  try {
+    await mkdir(path.dirname(commandPath), { recursive: true })
+    await writeFile(commandPath, `---
+description: Set or manage a persistent evidence-verified goal
+---
+
+${managedCommandMarker}
+OpenCode Goals command bridge.
+Requested /goal arguments:
+$ARGUMENTS
+`, "utf8")
+
+    const result = await runInstaller(configDir, [], { OPENCODE_GOAL_HOST_VERSION: "2.0.11" })
+    assert.equal(result.code, 0, result.stderr)
+    assert.match(result.stdout, /plugin-native \/goal command/i)
+    assert.equal(await exists(commandPath), false)
+
+    const config = JSON.parse(await readFile(path.join(configDir, "opencode.json"), "utf8"))
+    assert.deepEqual(config.plugin, [packageSpec])
   } finally {
     await rm(temp, { recursive: true, force: true })
   }

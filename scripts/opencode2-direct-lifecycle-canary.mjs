@@ -478,13 +478,13 @@ async function main() {
       return response
     }
 
-    const requestsFor = (needle) => provider.stats.requests.filter((item) => item.text.includes(needle))
+    const requestsFor = (needle) => provider.stats.requests.filter((item) => item.currentUserText.includes(needle))
     const assertAuthorizedTurn = (needle) => {
       const requests = requestsFor(needle)
       assert.ok(requests.length >= 2, `expected tool-call and continuation requests for ${needle}\n${JSON.stringify(provider.stats, null, 2)}`)
-      assert.equal(requests[0]?.hasControlTool, true, `authorized first request did not expose control tool for ${needle}`)
-      assert.equal(requests[0]?.toolCommand !== "", true, `authorized request did not generate a control tool call for ${needle}`)
-      const consumed = requests.find((item) => item.sawConsumedResult)
+      const authorized = requests.find((item) => item.hasControlTool && item.toolCommand !== "")
+      assert.ok(authorized, `authorized request did not expose and call the control tool for ${needle}\n${JSON.stringify(requests, null, 2)}`)
+      const consumed = requests.find((item) => item.sequence > authorized.sequence && item.sawConsumedResult)
       assert.ok(consumed, `tool result did not reach continuation for ${needle}`)
       assert.equal(consumed.hasControlTool, false, `consumed capability remained visible on continuation for ${needle}`)
     }

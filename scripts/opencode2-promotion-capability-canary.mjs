@@ -668,14 +668,9 @@ async function main() {
   ])
 
   await writeFile(path.join(pluginDir, "opencode-goal-v2-promotion-probe.js"), pluginSource(), "utf8")
-  await writeFile(
-    path.join(home, ".config", "opencode", "commands", "goal.md"),
-    "---\ndescription: Set or manage a persistent evidence-verified goal\n---\n\n"
-      + "<!-- managed-by:@bybrawe/opencode-goal -->\n"
-      + "OpenCode Goals command bridge. The plugin should intercept this command before model execution.\n"
-      + "Requested /goal arguments:\n$ARGUMENTS\n",
-    "utf8",
-  )
+  // OpenCode 2 installer mode intentionally leaves commands/goal.md absent.
+  // A markdown command with the same name shadows the plugin-native command on
+  // exact 2.0.11, so this canary exercises the production V2 post-install shape.
   await writeFile(path.join(workspace, "README.md"), "# OpenCode Goal V2 promotion capability canary\n", "utf8")
   await writeFile(path.join(workspace, "opencode.json"), `${JSON.stringify({
     $schema: "https://opencode.ai/config.json",
@@ -820,7 +815,7 @@ async function main() {
       return id
     }
 
-    managedGoalSessionID = await createSession("OpenCode Goal V2 managed command collision")
+    managedGoalSessionID = await createSession("OpenCode Goal V2 plugin-native goal command")
     const managedGoalDirect = await request(
       `${apiPrefix}/session/${encodeURIComponent(managedGoalSessionID)}/command`,
       {
@@ -831,7 +826,7 @@ async function main() {
     )
     assert.ok(
       managedGoalDirect.ok,
-      `managed /goal direct command failed: HTTP ${managedGoalDirect.status} ${managedGoalDirect.text}\n${await diagnostics()}`,
+      `plugin-native /goal direct command failed: HTTP ${managedGoalDirect.status} ${managedGoalDirect.text}\n${await diagnostics()}`,
     )
     await waitFor(async () => {
       const trace = await readTrace(traceFile)

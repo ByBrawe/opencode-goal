@@ -1,3 +1,4 @@
+import { access } from "node:fs/promises"
 import path from "node:path"
 import { createGoal, editGoal, pauseGoal, resumeGoal } from "../domain/goal.js"
 import type { GoalState } from "../domain/types.js"
@@ -98,7 +99,13 @@ async function resolveSessionDirectory(ctx: OpenCode2ExperimentalContext, sessio
   if (!directory) {
     throw new Error("OpenCode Goals V2 experimental adapter could not resolve the session location.directory; no Goal state was read or written.")
   }
-  return path.resolve(directory)
+  const resolved = path.resolve(directory)
+  try {
+    await access(resolved)
+  } catch {
+    throw new Error("OpenCode Goals V2 experimental adapter session location.directory is unavailable; no Goal state was read or written.")
+  }
+  return resolved
 }
 
 function formatStatus(goal: GoalState | null): string {

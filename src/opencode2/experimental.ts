@@ -224,16 +224,6 @@ function withExecutionAgent(goal: GoalState, agent: string): GoalState {
   }
 }
 
-function planBoundaryMessage(goal: GoalState, agent: string): string {
-  return [
-    `Goal saved but paused in ${agent} mode.`,
-    `Objective: ${goal.objective}`,
-    "Status: paused",
-    "",
-    "Planning-only boundary: continue analysis/planning only. Do not implement, edit files, or autonomously continue this Goal. Switch to Build and run /goal resume when implementation should begin.",
-  ].join("\n")
-}
-
 function admittedMessageID(value: unknown): string | undefined {
   return firstString(record(value)?.id, nestedRecord(value, "data")?.id)
 }
@@ -256,9 +246,9 @@ async function dispatchDirectGoalContinuation(
   const base = {
     sessionID: input.sessionID,
     text,
-    files: input.prompt?.files,
-    agents: input.prompt?.agents,
-    skills: input.prompt?.skills,
+    ...(input.prompt?.files ? { files: input.prompt.files } : {}),
+    ...(input.prompt?.agents ? { agents: input.prompt.agents } : {}),
+    ...(input.prompt?.skills ? { skills: input.prompt.skills } : {}),
     metadata: { opencode_goal_v2_direct_command: true, opencode_goal_v2_continuation: true },
     delivery: input.delivery ?? "steer",
   } as const
@@ -444,7 +434,6 @@ export async function executeOpenCode2DirectGoalCommand(
   if (isRestrictedGoalAgent(agent)) {
     goal = pauseGoal(goal, restrictedAgentStopReason(agent))
     await store.save(goal)
-    await emitDirectGoalNotice(ctx, input, planBoundaryMessage(goal, agent))
     return { action: parsed.action, goal }
   }
   await store.save(goal)

@@ -683,24 +683,37 @@ export const OpenCode2GoalsExperimental = {
         removeControlTool(event)
       } else {
         const lastUserMessageID = eventLastUserMessageID(event)
-        const key = lastUserMessageID ? directCapabilityKey(sessionID, lastUserMessageID) : undefined
-        const capability = key ? runtime.capabilities.get(key) : undefined
 
-        if (!key || !capability || capability.expiresAt < Date.now() || isReadOnlyAgent(event?.agent)) {
-          if (capability) revokeCapability(runtime, capability)
-          deleteSessionCapabilities(runtime, sessionID)
-          removeControlTool(event)
-        } else if (!event?.tools || typeof event.tools !== "object" || !event.tools[V2_CONTROL_TOOL]) {
-          revokeCapability(runtime, capability)
+        // OpenCode can emit auxiliary context passes before the admitted user
+        // message is present. Hide the mutating tool on those passes, but keep
+        // the pending capability until a concrete user-message ID can either
+        // match it or invalidate it. This mirrors the exact 2.0.11 capability
+        // canary and prevents auxiliary/title work from consuming authority.
+        if (!lastUserMessageID) {
           removeControlTool(event)
         } else {
-          deleteSessionCapabilities(runtime, sessionID, key)
-          capability.state = "armed"
-          const agent = firstString(event?.agent)
-          if (agent) capability.agent = agent
-          else delete capability.agent
-          runtime.armedBySession.set(sessionID, key)
-          appendSystemContext(event, authorizationContext(capability))
+          const key = directCapabilityKey(sessionID, lastUserMessageID)
+          const capability = runtime.capabilities.get(key)
+
+          if (!capability) {
+            deleteSessionCapabilities(runtime, sessionID)
+            removeControlTool(event)
+          } else if (capability.expiresAt < Date.now() || isReadOnlyAgent(event?.agent)) {
+            revokeCapability(runtime, capability)
+            deleteSessionCapabilities(runtime, sessionID)
+            removeControlTool(event)
+          } else if (!event?.tools || typeof event.tools !== "object" || !event.tools[V2_CONTROL_TOOL]) {
+            revokeCapability(runtime, capability)
+            removeControlTool(event)
+          } else {
+            deleteSessionCapabilities(runtime, sessionID, key)
+            capability.state = "armed"
+            const agent = firstString(event?.agent)
+            if (agent) capability.agent = agent
+            else delete capability.agent
+            runtime.armedBySession.set(sessionID, key)
+            appendSystemContext(event, authorizationContext(capability))
+          }
         }
       }
 

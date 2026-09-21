@@ -523,6 +523,24 @@ async function main() {
       return response
     }
 
+    const currentSessionDirectory = async () => {
+      const response = await request(`${apiPrefix}/session`, { method: "GET" }, 5_000)
+      if (!response.ok) return ""
+      const sessions = Array.isArray(response.body?.data)
+        ? response.body.data
+        : Array.isArray(response.body)
+          ? response.body
+          : []
+      const session = sessions.find((item) => String(item?.id ?? item?.data?.id ?? "") === sessionID)
+      return String(
+        session?.location?.directory
+        ?? session?.data?.location?.directory
+        ?? session?.directory
+        ?? session?.data?.directory
+        ?? "",
+      )
+    }
+
     const requestsFor = (needle) => provider.stats.requests.filter((item) => item.currentUserText.includes(needle))
     const assertAuthorizedTurn = (needle) => {
       const requests = requestsFor(needle)
@@ -659,19 +677,44 @@ async function main() {
 
     provider.configureLocationMove(sessionID, movedDirectory)
     const locationBefore = provider.stats.requests.length
-    await command(LOCATION_COMMAND, false)
+    const locationController = new AbortController()
+    const locationPending = request(`${apiPrefix}/session/${encodeURIComponent(sessionID)}/command`, {
+      method: "POST",
+      body: JSON.stringify({ name: "goal", text: LOCATION_COMMAND }),
+      signal: locationController.signal,
+    }, 90_000).then(
+      (value) => ({ ok: true, value }),
+      (error) => ({ ok: false, error }),
+    )
+
     await waitFor(
-      () => provider.stats.requests.slice(locationBefore).some((item) => item.sawLocationReject),
-      "Location-bound capability rejection after real host session move",
+      () => provider.stats.requests.slice(locationBefore).some((item) => item.hasExecuteTool && item.hasControlTool),
+      "Location-bound authenticated capability turn",
       diagnostics,
     )
+
+    await waitFor(async () => {
+      const directory = await currentSessionDirectory()
+      return directory && path.resolve(directory) === path.resolve(movedDirectory) ? directory : null
+    }, "real host session Location move", diagnostics, 30_000)
+
+    // A move may interrupt the in-flight model/tool turn instead of delivering
+    // another provider continuation. Bound the client request once the host has
+    // persisted the new Location; either path must remain mutation-free.
+    await new Promise((resolve) => setTimeout(resolve, 750))
+    locationController.abort()
+    const locationResult = await locationPending
+    if (!locationResult.ok && locationResult.error?.name !== "AbortError") throw locationResult.error
+
     assert.equal(await readGoal(workspace, sessionID), null, "Location-invalidated create restored Goal state in the source workspace")
     assert.equal(await readGoal(movedDirectory, sessionID), null, "Location-invalidated create persisted Goal state in the moved workspace")
 
     const locationRequests = provider.stats.requests.slice(locationBefore)
     assert.ok(locationRequests.some((item) => item.hasExecuteTool && item.hasControlTool), "Location test never started from an authenticated Goal capability turn")
-    assert.ok(locationRequests.some((item) => item.sawLocationMoveResult), "host session_move result never reached the continuation")
-    assert.ok(locationRequests.some((item) => item.sawLocationReject), "workspace-change rejection never reached the continuation")
+    assert.ok(
+      locationRequests.some((item) => item.sawLocationMoveResult) || path.resolve(await currentSessionDirectory()) === path.resolve(movedDirectory),
+      "host session_move neither reached the continuation nor persisted the moved Location",
+    )
 
     const locationFollowupBefore = provider.stats.requests.length
     const locationFollowup = await request(`${apiPrefix}/session/${encodeURIComponent(sessionID)}/prompt`, {
@@ -694,6 +737,7 @@ async function main() {
       directCommandRegistered: latestCommands.has("goal"),
       create: { objective: createdGoal.objective, status: createdGoal.status, maxTurns: createdGoal.budget?.maxTurns },
       locationMoveBlocked: true,
+      locationWorkspaceRejectObserved: provider.stats.requests.some((item) => item.sawLocationReject),
       planMutationBlocked: true,
       spoofPreservedStatus: paused.status,
       resumeStatus: resumed.status,

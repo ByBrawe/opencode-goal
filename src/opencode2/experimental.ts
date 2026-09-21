@@ -94,8 +94,12 @@ async function resolveSessionDirectory(ctx: OpenCode2ExperimentalContext, sessio
   const sessionRecord = record(session)
   const data = nestedRecord(session, "data")
   const location = nestedRecord(session, "location") ?? nestedRecord(data, "location")
+  const sessionDirectory = firstString(location?.directory, sessionRecord?.directory, data?.directory)
   const optionDirectory = firstString(ctx.options?.directory)
-  const directory = firstString(location?.directory, sessionRecord?.directory, data?.directory, optionDirectory)
+  if (sessionDirectory && optionDirectory && path.resolve(sessionDirectory) !== path.resolve(optionDirectory)) {
+    throw new Error("OpenCode Goals V2 experimental adapter session location.directory does not match the active host directory; no Goal state was read or written.")
+  }
+  const directory = firstString(sessionDirectory, optionDirectory)
   if (!directory) {
     throw new Error("OpenCode Goals V2 experimental adapter could not resolve the session location.directory; no Goal state was read or written.")
   }

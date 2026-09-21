@@ -11,11 +11,11 @@ const installer = path.join(root, "dist", "install.js")
 const packageVersion = JSON.parse(await readFile(path.join(root, "package.json"), "utf8")).version
 const packageSpec = `@bybrawe/opencode-goal@${packageVersion}`
 
-async function runInstaller(configDir) {
+async function runInstaller(configDir, env = {}) {
   return await new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [installer], {
       cwd: root,
-      env: { ...process.env, OPENCODE_CONFIG_DIR: configDir },
+      env: { ...process.env, OPENCODE_CONFIG_DIR: configDir, ...env },
       windowsHide: true,
     })
     const stdout = []
@@ -82,6 +82,39 @@ test("installer normalizes Goal registration across every existing global config
   }
 })
 
+test("multi-config OpenCode 2 lifecycle preview removes the managed bridge after atomically pinning every config", async () => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-multi-config-v2-preview-"))
+  const configDir = path.join(temp, "config")
+  try {
+    await mkdir(configDir, { recursive: true })
+    await writeFile(path.join(configDir, "opencode.json"), JSON.stringify({
+      plugin: ["other-plugin", "@bybrawe/opencode-goal@1.0.0"],
+      model: "test/model",
+    }, null, 2) + "\n")
+    await writeFile(path.join(configDir, "opencode.jsonc"), `{
+  // Preserve this config while enabling the V2 direct lifecycle preview.
+  "permission": { "read": "allow" },
+}
+`)
+
+    const stable = await runInstaller(configDir)
+    assert.equal(stable.code, 0, stable.stderr)
+    assert.equal(await exists(path.join(configDir, "commands", "goal.md")), true)
+
+    const preview = await runInstaller(configDir, { OPENCODE_GOAL_V2_DIRECT_LIFECYCLE: "1" })
+    assert.equal(preview.code, 0, preview.stderr)
+    assert.match(preview.stdout, /direct lifecycle preview leaves managed \/goal command absent/i)
+    assert.equal(await exists(path.join(configDir, "commands", "goal.md")), false)
+
+    const json = JSON.parse(await readFile(path.join(configDir, "opencode.json"), "utf8"))
+    assert.deepEqual(json.plugin, ["other-plugin", packageSpec])
+    const jsonc = await readFile(path.join(configDir, "opencode.jsonc"), "utf8")
+    assert.match(jsonc, /Preserve this config/)
+    assert.match(jsonc, new RegExp(packageSpec.replace(/[.*+?^${}()|[\]\\]/g, "\\test("multi-config install stages every rewrite before mutating real config", async () => {")))
+  } finally {
+    await rm(temp, { recursive: true, force: true })
+  }
+})
 test("multi-config install stages every rewrite before mutating real config", async () => {
   const temp = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-multi-config-fail-"))
   const configDir = path.join(temp, "config")

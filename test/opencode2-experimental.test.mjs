@@ -4,6 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import OpenCode2GoalsExperimental, {
+  OPENCODE2_DIRECT_LIFECYCLE_ENV,
   OPENCODE2_EXPERIMENTAL_PLUGIN_ID,
   executeOpenCode2GoalControl,
 } from "../dist/opencode2/experimental.js"
@@ -14,21 +15,40 @@ function fakeV2Context(directory) {
   const commands = new Map()
   const tools = new Map()
   const hooks = new Map()
+  const prompts = []
+  const interrupts = []
   let commandTransformCalls = 0
+  let promptCounter = 0
+  let currentDirectory = directory
+
   return {
     ctx: {
       options: {},
       command: {
-        async transform() {
+        async transform(callback) {
           commandTransformCalls += 1
+          await callback({
+            add(definition) {
+              commands.set(definition.name, definition)
+            },
+          })
         },
       },
       session: {
         async get({ sessionID }) {
-          return { id: sessionID, location: { directory } }
+          return { id: sessionID, location: { directory: currentDirectory } }
         },
         async hook(name, callback) {
           hooks.set(name, callback)
+        },
+        async prompt(input) {
+          const id = input.id ?? `user-message-${++promptCounter}`
+          prompts.push({ ...input, returnedID: id })
+          return { id }
+        },
+        async interrupt(input) {
+          interrupts.push(input)
+          return { interrupted: true }
         },
       },
       tool: {
@@ -44,7 +64,39 @@ function fakeV2Context(directory) {
     commands,
     tools,
     hooks,
+    prompts,
+    interrupts,
     commandTransformCalls: () => commandTransformCalls,
+    setDirectory(next) {
+      currentDirectory = next
+    },
+  }
+}
+
+function fakeV2PromiseToolContext(directory) {
+  const host = fakeV2Context(directory)
+  host.ctx.tool.transform = async (callback) => {
+    await callback({
+      add(definition) {
+        host.tools.set(definition.name, {
+          definition,
+          options: definition.options,
+        })
+      },
+    })
+  }
+  return host
+}
+
+async function withDirectLifecyclePreview(fn) {
+  const key = OPENCODE2_DIRECT_LIFECYCLE_ENV
+  const previous = process.env[key]
+  process.env[key] = "1"
+  try {
+    return await fn()
+  } finally {
+    if (previous === undefined) delete process.env[key]
+    else process.env[key] = previous
   }
 }
 
@@ -72,6 +124,8 @@ async function runHook(host, hookName, {
   sessionID,
   agent = "build",
   text = "ordinary user request",
+  messageID,
+  messages,
   system = ["base system"],
 } = {}) {
   const event = {
@@ -79,12 +133,52 @@ async function runHook(host, hookName, {
     agent,
     system,
     tools: requestTools(),
-    messages: [{ role: "user", content: text }],
+    messages: messages ?? [{
+      ...(messageID ? { id: messageID } : {}),
+      role: "user",
+      content: text,
+    }],
   }
   const hook = host.hooks.get(hookName)
   assert.equal(typeof hook, "function")
   await hook(event)
   return event
+}
+
+async function dispatchDirectCommand(host, sessionID, command, delivery = "steer") {
+  const definition = host.commands.get("goal")
+  assert.equal(typeof definition?.execute, "function")
+  const before = host.prompts.length
+  await definition.execute({
+    sessionID,
+    prompt: { text: command },
+    delivery,
+  })
+  const emitted = host.prompts.slice(before)
+  const admitted = emitted.find((item) => item.resume === false)
+  return {
+    emitted,
+    messageID: admitted?.returnedID,
+  }
+}
+
+async function armCapability(host, sessionID, messageID, agent = "build") {
+  assert.ok(messageID)
+  return await runHook(host, "context", {
+    sessionID,
+    agent,
+    messageID,
+    text: "authorized direct goal command",
+  })
+}
+
+async function consumeCapability(host, sessionID, command, agent = "build") {
+  const control = host.tools.get("opencode_goals_v2_control")?.definition
+  assert.equal(typeof control?.execute, "function")
+  return await control.execute(
+    { command },
+    { sessionID, agent, messageID: "assistant-message", callID: "call-control" },
+  )
 }
 
 test("experimental V2 plugin registers read-only inspection without command wrapping or mutating control", async () => {
@@ -145,7 +239,7 @@ test("V2 status and contract stay readable while every lifecycle mutation fails 
       "next",
     ]) {
       const result = await executeOpenCode2GoalControl(host.ctx, command, { sessionID, agent: "build" })
-      assert.match(result.content, /read-only on current hosts/i, `${command} must fail closed in V2`)
+      assert.match(result.content, /model-visible lifecycle control remains read-only/i, `${command} must fail closed in V2`)
       assert.match(result.content, /No Goal state was changed/i)
       assert.deepEqual(await new GoalStore(root).load(sessionID), before, `${command} must not mutate Goal state`)
     }
@@ -173,8 +267,18 @@ test("V2 presentation hooks remove stale control and never mutate persisted stat
     assert.equal(contextEvent.system[0], "base system")
     assert.match(contextEvent.system[1], /OpenCode Goals experimental V2 persisted state/)
     assert.match(contextEvent.system[1], /Objective: ship context/)
-    assert.match(contextEvent.system[1], /read-only until current-host command-origin/i)
+    assert.match(contextEvent.system[1], /Model-visible V2 lifecycle mutation remains read-only/i)
     assert.deepEqual(await new GoalStore(root).load(sessionID), before, "Plan/context presentation must not pause or otherwise mutate Goal state")
+
+    const currentContextEvent = await runHook(host, "context", {
+      sessionID,
+      agent: "build",
+      system: [{ type: "text", text: "base system" }],
+    })
+    assert.deepEqual(currentContextEvent.system[0], { type: "text", text: "base system" })
+    assert.equal(currentContextEvent.system[1]?.type, "text")
+    assert.match(currentContextEvent.system[1]?.text ?? "", /OpenCode Goals experimental V2 persisted state/)
+    assert.match(currentContextEvent.system[1]?.text ?? "", /Objective: ship context/)
 
     const requestEvent = await runHook(host, "request", {
       sessionID,
@@ -184,6 +288,238 @@ test("V2 presentation hooks remove stale control and never mutate persisted stat
     assert.equal(requestEvent.tools.opencode_goals_v2_control, undefined)
     assert.match(requestEvent.system[1], /Objective: ship context/)
     assert.deepEqual(await new GoalStore(root).load(sessionID), before)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("current OpenCode 2 one-argument ToolEditor registers provider-callable tools through options.codemode", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-current-tool-shape-"))
+  try {
+    await withDirectLifecyclePreview(async () => {
+      const host = fakeV2PromiseToolContext(root)
+      await OpenCode2GoalsExperimental.setup(host.ctx)
+
+      const control = host.tools.get("opencode_goals_v2_control")?.definition
+      const readOnly = host.tools.get("opencode_goals_v2_get")?.definition
+      assert.deepEqual(control?.options, { codemode: false })
+      assert.deepEqual(readOnly?.options, { codemode: false })
+      assert.equal(control?.codemode, false, "legacy beta hint remains present for compatibility")
+    })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("V2 direct lifecycle preview registers host command and mutating tool only when explicitly enabled", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-capability-register-"))
+  try {
+    await withDirectLifecyclePreview(async () => {
+      const host = fakeV2Context(root)
+      await OpenCode2GoalsExperimental.setup(host.ctx)
+
+      assert.equal(host.commandTransformCalls(), 1)
+      assert.equal(typeof host.commands.get("goal")?.execute, "function")
+      assert.equal(typeof host.tools.get("opencode_goals_v2_control")?.definition?.execute, "function")
+      assert.equal(typeof host.tools.get("opencode_goals_v2_get")?.definition?.execute, "function")
+    })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("direct lifecycle command mints host-message capability without persisting until the one-use tool consumes it", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-capability-create-"))
+  try {
+    await withDirectLifecyclePreview(async () => {
+      const host = fakeV2Context(root)
+      const sessionID = "v2-capability-create"
+      const command = 'ship docs --accept "docs are correct" --constraint "no unrelated mutation" --max-turns 7'
+      await OpenCode2GoalsExperimental.setup(host.ctx)
+
+      const dispatched = await dispatchDirectCommand(host, sessionID, command)
+      assert.ok(dispatched.messageID)
+      assert.equal(dispatched.emitted.length, 2)
+      assert.equal(dispatched.emitted[0].resume, false)
+      assert.equal(dispatched.emitted[1].resume, true)
+      assert.equal(dispatched.emitted[1].id, dispatched.messageID)
+      assert.equal(await new GoalStore(root).load(sessionID), null, "direct callback must not persist Goal state")
+
+      const auxiliary = await runHook(host, "context", {
+        sessionID,
+        messages: [],
+      })
+      assert.equal(auxiliary.tools.opencode_goals_v2_control, undefined, "auxiliary context without a user message must hide control")
+
+      const context = await armCapability(host, sessionID, dispatched.messageID)
+      assert.ok(context.tools.opencode_goals_v2_control, "authorized request must expose the mutating tool after auxiliary context")
+      assert.match(context.system.join("\n"), /host-authenticated lifecycle command/i)
+      assert.match(context.system.join("\n"), /exactly once/i)
+
+      const result = await consumeCapability(host, sessionID, command)
+      assert.match(result.content, /single-use capability is consumed/i)
+      const goal = await new GoalStore(root).load(sessionID)
+      assert.equal(goal?.objective, "ship docs")
+      assert.equal(goal?.status, "active")
+      assert.equal(goal?.budget?.maxTurns, 7)
+      assert.deepEqual(goal?.constraints, ["no unrelated mutation"])
+
+      await assert.rejects(
+        consumeCapability(host, sessionID, command),
+        /not armed/i,
+        "replay must fail after the first tool invocation",
+      )
+
+      const continuation = await armCapability(host, sessionID, dispatched.messageID)
+      assert.equal(continuation.tools.opencode_goals_v2_control, undefined, "post-tool continuation must not re-expose mutating control")
+    })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("mismatched lifecycle arguments consume the capability before persistence and cannot be retried", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-capability-mismatch-"))
+  try {
+    await withDirectLifecyclePreview(async () => {
+      const host = fakeV2Context(root)
+      const sessionID = "v2-capability-mismatch"
+      const command = 'ship authorized --constraint "preserve api"'
+      await OpenCode2GoalsExperimental.setup(host.ctx)
+
+      const dispatched = await dispatchDirectCommand(host, sessionID, command)
+      await armCapability(host, sessionID, dispatched.messageID)
+
+      await assert.rejects(
+        consumeCapability(host, sessionID, "ship escalated --max-turns 999"),
+        /arguments do not match/i,
+      )
+      assert.equal(await new GoalStore(root).load(sessionID), null)
+
+      await assert.rejects(
+        consumeCapability(host, sessionID, command),
+        /not armed/i,
+        "a mismatched first attempt must revoke the one-use capability",
+      )
+      assert.equal(await new GoalStore(root).load(sessionID), null)
+    })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("ordinary prompt text and Plan contexts cannot arm or reuse lifecycle mutation", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-capability-plan-"))
+  try {
+    await withDirectLifecyclePreview(async () => {
+      const host = fakeV2Context(root)
+      const sessionID = "v2-capability-plan"
+      await OpenCode2GoalsExperimental.setup(host.ctx)
+
+      const ordinary = await runHook(host, "context", {
+        sessionID,
+        messageID: "ordinary-user",
+        text: "/goal ship spoofed",
+      })
+      assert.equal(ordinary.tools.opencode_goals_v2_control, undefined)
+      assert.equal(await new GoalStore(root).load(sessionID), null)
+
+      const dispatched = await dispatchDirectCommand(host, sessionID, "ship plan forbidden")
+      const plan = await armCapability(host, sessionID, dispatched.messageID, "PLAN")
+      assert.equal(plan.tools.opencode_goals_v2_control, undefined)
+
+      const laterBuild = await armCapability(host, sessionID, dispatched.messageID, "build")
+      assert.equal(laterBuild.tools.opencode_goals_v2_control, undefined, "Plan exposure attempt must revoke the capability")
+      await assert.rejects(
+        consumeCapability(host, sessionID, "ship plan forbidden"),
+        /not armed/i,
+      )
+      assert.equal(await new GoalStore(root).load(sessionID), null)
+    })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("workspace changes fail closed after capability consumption and before Goal persistence", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-capability-location-"))
+  const moved = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-capability-location-moved-"))
+  try {
+    await withDirectLifecyclePreview(async () => {
+      const host = fakeV2Context(root)
+      const sessionID = "v2-capability-location"
+      const command = "ship bound workspace"
+      await OpenCode2GoalsExperimental.setup(host.ctx)
+
+      const dispatched = await dispatchDirectCommand(host, sessionID, command)
+      await armCapability(host, sessionID, dispatched.messageID)
+      host.setDirectory(moved)
+
+      await assert.rejects(
+        consumeCapability(host, sessionID, command),
+        /workspace changed before persistence/i,
+      )
+      assert.equal(await new GoalStore(root).load(sessionID), null)
+      assert.equal(await new GoalStore(moved).load(sessionID), null)
+
+      await assert.rejects(
+        consumeCapability(host, sessionID, command),
+        /not armed/i,
+      )
+    })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+    await rm(moved, { recursive: true, force: true })
+  }
+})
+
+test("authorized capability applies create pause resume edit and clear with one fresh host identity per mutation", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-capability-lifecycle-"))
+  try {
+    await withDirectLifecyclePreview(async () => {
+      const host = fakeV2Context(root)
+      const sessionID = "v2-capability-lifecycle"
+      const store = new GoalStore(root)
+      await OpenCode2GoalsExperimental.setup(host.ctx)
+
+      const apply = async (command) => {
+        const dispatched = await dispatchDirectCommand(host, sessionID, command)
+        assert.ok(dispatched.messageID)
+        const context = await armCapability(host, sessionID, dispatched.messageID)
+        assert.ok(context.tools.opencode_goals_v2_control)
+        return await consumeCapability(host, sessionID, command)
+      }
+
+      await apply('ship preview --constraint "no spoof mutation" --max-turns 7')
+      let goal = await store.load(sessionID)
+      assert.equal(goal?.objective, "ship preview")
+      assert.equal(goal?.status, "active")
+
+      await apply("pause")
+      goal = await store.load(sessionID)
+      assert.equal(goal?.status, "paused")
+      assert.ok(host.interrupts.some((item) => item.sessionID === sessionID && item.resume === false))
+
+      await apply("resume")
+      goal = await store.load(sessionID)
+      assert.equal(goal?.status, "active")
+
+      const beforeRevision = goal.revision
+      await apply('edit ship preview revised --constraint "preserve API" --max-turns 9')
+      goal = await store.load(sessionID)
+      assert.equal(goal?.objective, "ship preview revised")
+      assert.equal(goal?.revision, beforeRevision + 1)
+      assert.equal(goal?.budget?.maxTurns, 9)
+      assert.deepEqual(goal?.constraints, ["preserve API"])
+
+      const goalID = goal.id
+      await apply("clear")
+      assert.equal(await store.load(sessionID), null)
+      const history = await store.history(sessionID, 10)
+      assert.equal(history.length, 1)
+      assert.equal(history[0].reason, "cleared")
+      assert.equal(history[0].goal.id, goalID)
+    })
   } finally {
     await rm(root, { recursive: true, force: true })
   }

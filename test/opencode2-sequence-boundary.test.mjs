@@ -27,7 +27,7 @@ test("V2 sequence and lifecycle controls stay read-only and never create or adva
 
     for (const command of ["add queued docs", "ship docs", "next", "queue", "clear"]) {
       const result = await executeOpenCode2GoalControl(ctx, command, { sessionID, agent: "build" })
-      assert.match(result.content, /read-only on current hosts/i, `${command} should refuse V2 mutation`)
+      assert.match(result.content, /model-visible lifecycle control remains read-only/i, `${command} should refuse V2 mutation`)
       assert.equal(await store.load(sessionID), null, `${command} must not create Goal state`)
     }
 
@@ -49,7 +49,7 @@ test("V2 sequence and lifecycle controls stay read-only and never create or adva
       "clear",
     ]) {
       const result = await executeOpenCode2GoalControl(ctx, command, { sessionID, agent: "build" })
-      assert.match(result.content, /read-only on current hosts/i, `${command} should refuse V2 mutation`)
+      assert.match(result.content, /model-visible lifecycle control remains read-only/i, `${command} should refuse V2 mutation`)
       assert.deepEqual(await store.load(sessionID), before, `${command} must not mutate the live Goal`)
     }
   } finally {

@@ -2,6 +2,12 @@
 
 All notable changes to **OpenCode Goals** are documented here.
 
+## Unreleased
+
+- Add optional user-authored `--notify` Goal Contract commands for durable lifecycle transitions: `completed`, `blocked`, `paused` (including `waiting_user`, budget, and usage-limit states), plus fail-closed completion `rejected` events.
+- Keep notification delivery advisory and post-persistence: no-op/same-status saves do not duplicate notifications, notification failures cannot roll back Goal state, and model-facing Goal tools cannot configure the shell command.
+- Preserve notification contracts across Goal edits and queued-Goal promotion, validate persisted command shape fail-closed, and retain the current runtime-fingerprint/no-op-save persistence invariants.
+
 ## 1.3.35 — 2026-09-21
 
 OpenCode 2.0.11 plugin-loader compatibility hotfix.

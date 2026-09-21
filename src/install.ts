@@ -19,6 +19,9 @@ const goalCommandPath = join(commandDir, "goal.md")
 const managedCommandMarker = "<!-- managed-by:@bybrawe/opencode-goal -->"
 const legacyInstaller = join(dirname(fileURLToPath(import.meta.url)), "install-legacy.js")
 const installerArgs = process.argv.slice(2)
+const directLifecyclePreview = ["1", "true", "yes", "on"].includes(
+  String(process.env.OPENCODE_GOAL_V2_DIRECT_LIFECYCLE ?? "").trim().toLowerCase(),
+)
 
 function runLegacy(targetConfigDir: string, args = installerArgs, inherit = true) {
   const result = spawnSync(process.execPath, [legacyInstaller, ...args], {
@@ -70,7 +73,7 @@ function assertStageSuccess(result: ReturnType<typeof runLegacy>, source: string
   throw new Error(`OpenCode Goals could not safely update ${source}. No config files were changed.\n${details}`)
 }
 
-async function stageConfig(name: string): Promise<{ target: string; content: string; commandContent: string }> {
+async function stageConfig(name: string): Promise<{ target: string; content: string; commandContent?: string }> {
   const stageDir = await mkdtemp(join(tmpdir(), "opencode-goal-config-stage-"))
   try {
     const source = join(configDir, name)
@@ -86,7 +89,9 @@ async function stageConfig(name: string): Promise<{ target: string; content: str
     return {
       target: source,
       content: await readFile(staged, "utf8"),
-      commandContent: await readFile(join(stageDir, "commands", "goal.md"), "utf8"),
+      ...(directLifecyclePreview
+        ? {}
+        : { commandContent: await readFile(join(stageDir, "commands", "goal.md"), "utf8") }),
     }
   } finally {
     await rm(stageDir, { recursive: true, force: true }).catch(() => undefined)
@@ -96,13 +101,19 @@ async function stageConfig(name: string): Promise<{ target: string; content: str
 async function installAcrossExistingConfigs(existing: string[]): Promise<void> {
   await assertManagedCommandWritable()
 
-  const plans = [] as Array<{ target: string; content: string; commandContent: string }>
+  const plans = [] as Array<{ target: string; content: string; commandContent?: string }>
   for (const name of existing) plans.push(await stageConfig(name))
 
   for (const plan of plans) await writeAtomic(plan.target, plan.content)
 
-  await mkdir(commandDir, { recursive: true })
-  await writeAtomic(goalCommandPath, plans[0]!.commandContent)
+  if (directLifecyclePreview) {
+    await rm(goalCommandPath, { force: true })
+  } else {
+    const commandContent = plans[0]?.commandContent
+    if (commandContent === undefined) throw new Error("staged managed /goal command is missing")
+    await mkdir(commandDir, { recursive: true })
+    await writeAtomic(goalCommandPath, commandContent)
+  }
 
   const pluginDir = join(configDir, "plugins")
   for (const localName of ["opencode-goal.ts", "opencode-goal.js"]) {
@@ -112,8 +123,13 @@ async function installAcrossExistingConfigs(existing: string[]): Promise<void> {
   console.log(`Installed/updated OpenCode Goals ${packageVersion} across ${plans.length} OpenCode config files.`)
   for (const plan of plans) console.log(`- ${plan.target}`)
   console.log(`Pinned plugin spec: ${packageSpec}`)
-  console.log(`Installed managed /goal command: ${goalCommandPath}`)
-  console.log("Fully restart OpenCode, type /goal, then verify with: /goal status")
+  if (directLifecyclePreview) {
+    console.log(`OpenCode 2 direct lifecycle preview leaves managed /goal command absent: ${goalCommandPath}`)
+    console.log("Fully restart OpenCode. The host-native Goal plugin command now owns /goal while the preview env remains enabled.")
+  } else {
+    console.log(`Installed managed /goal command: ${goalCommandPath}`)
+    console.log("Fully restart OpenCode, type /goal, then verify with: /goal status")
+  }
 }
 
 async function main() {

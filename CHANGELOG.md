@@ -2,6 +2,16 @@
 
 All notable changes to **OpenCode Goals** are documented here.
 
+## 1.3.35 — 2026-09-21
+
+OpenCode 2.0.11 plugin-loader compatibility hotfix.
+
+- Make the dedicated `@bybrawe/opencode-goal/server` entry dual-contract: OpenCode 1.x continues to use `server()`, while OpenCode 2.x can load the same package through `setup()`.
+- Route the OpenCode 2.x setup path to the existing experimental V2 adapter without widening its authority: lifecycle mutation remains read-only/fail-closed until the host supplies the required unforgeable command-origin and request-time tool-materialization capabilities.
+- Extend packed-package smoke coverage so the production `./server` export must expose both the stable V1 server function and the OpenCode 2 setup function.
+- Add an exact OpenCode 2.0.11 real-host gate that requires the package server entry to reach active plugin state; keep the existing experimental-host safety canary green as an independent non-promotion check.
+- Validate the feature head across CI, Actions Security Gate, Release Readiness, Real Host Progress, Real Restart Recovery, Real Loop Coexistence, and the exact OpenCode 2.0.11 host gate before release preparation.
+
 ## 1.3.34 — 2026-09-21
 
 Long-session diagnostics and Todo-integrity hardening release.

@@ -73,6 +73,21 @@ function fakeV2Context(directory) {
   }
 }
 
+function fakeV2PromiseToolContext(directory) {
+  const host = fakeV2Context(directory)
+  host.ctx.tool.transform = async (callback) => {
+    await callback({
+      add(definition) {
+        host.tools.set(definition.name, {
+          definition,
+          options: definition.options,
+        })
+      },
+    })
+  }
+  return host
+}
+
 async function withDirectLifecyclePreview(fn) {
   const key = OPENCODE2_DIRECT_LIFECYCLE_ENV
   const previous = process.env[key]
@@ -263,6 +278,24 @@ test("V2 presentation hooks remove stale control and never mutate persisted stat
     assert.equal(requestEvent.tools.opencode_goals_v2_control, undefined)
     assert.match(requestEvent.system[1], /Objective: ship context/)
     assert.deepEqual(await new GoalStore(root).load(sessionID), before)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("current OpenCode 2 one-argument ToolEditor registers provider-callable tools through options.codemode", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-current-tool-shape-"))
+  try {
+    await withDirectLifecyclePreview(async () => {
+      const host = fakeV2PromiseToolContext(root)
+      await OpenCode2GoalsExperimental.setup(host.ctx)
+
+      const control = host.tools.get("opencode_goals_v2_control")?.definition
+      const readOnly = host.tools.get("opencode_goals_v2_get")?.definition
+      assert.deepEqual(control?.options, { codemode: false })
+      assert.deepEqual(readOnly?.options, { codemode: false })
+      assert.equal(control?.codemode, false, "legacy beta hint remains present for compatibility")
+    })
   } finally {
     await rm(root, { recursive: true, force: true })
   }

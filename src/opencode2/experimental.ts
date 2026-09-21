@@ -1,4 +1,3 @@
-import { access } from "node:fs/promises"
 import path from "node:path"
 import { createGoal, editGoal, pauseGoal, resumeGoal } from "../domain/goal.js"
 import type { GoalState } from "../domain/types.js"
@@ -94,22 +93,12 @@ async function resolveSessionDirectory(ctx: OpenCode2ExperimentalContext, sessio
   const sessionRecord = record(session)
   const data = nestedRecord(session, "data")
   const location = nestedRecord(session, "location") ?? nestedRecord(data, "location")
-  const sessionDirectory = firstString(location?.directory, sessionRecord?.directory, data?.directory)
   const optionDirectory = firstString(ctx.options?.directory)
-  if (sessionDirectory && optionDirectory && path.resolve(sessionDirectory) !== path.resolve(optionDirectory)) {
-    throw new Error("OpenCode Goals V2 experimental adapter session location.directory does not match the active host directory; no Goal state was read or written.")
-  }
-  const directory = firstString(sessionDirectory, optionDirectory)
+  const directory = firstString(location?.directory, sessionRecord?.directory, data?.directory, optionDirectory)
   if (!directory) {
     throw new Error("OpenCode Goals V2 experimental adapter could not resolve the session location.directory; no Goal state was read or written.")
   }
-  const resolved = path.resolve(directory)
-  try {
-    await access(resolved)
-  } catch {
-    throw new Error("OpenCode Goals V2 experimental adapter session location.directory is unavailable; no Goal state was read or written.")
-  }
-  return resolved
+  return path.resolve(directory)
 }
 
 function formatStatus(goal: GoalState | null): string {

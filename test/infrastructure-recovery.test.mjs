@@ -21,6 +21,25 @@ async function stateFor(root) {
   return JSON.parse(await readFile(path.join(dir, files[0]), "utf8"))
 }
 
+async function stateIfPresent(root) {
+  const dir = path.join(root, ".opencode", "goals")
+  let files
+  try {
+    files = (await readdir(dir)).filter((file) => file.endsWith(".json"))
+  } catch (error) {
+    if (error?.code === "ENOENT") return undefined
+    throw error
+  }
+  if (files.length === 0) return undefined
+  assert.equal(files.length, 1)
+  try {
+    return JSON.parse(await readFile(path.join(dir, files[0]), "utf8"))
+  } catch (error) {
+    if (error?.code === "ENOENT") return undefined
+    throw error
+  }
+}
+
 async function createGoal(hooks, sessionID = "parent") {
   const output = { parts: [{ type: "text", text: "raw" }] }
   await hooks["command.execute.before"]({ command: "goal", sessionID, arguments: "finish the requested work" }, output)
@@ -182,8 +201,11 @@ test("transient continuation transport failure is recovered instead of permanent
 
     await hooks.event({ event: { type: "session.idle", properties: { sessionID: "parent" } } })
     await waitFor(async () => {
-      const goal = await stateFor(root)
-      return goal.status === "active" && goal.infrastructureRecovery?.kind === "continuation_dispatch"
+      // Windows can briefly expose no JSON file while the atomic Goal state
+      // replacement is in flight. Treat that observation as "not ready yet"
+      // rather than failing the polling assertion.
+      const goal = await stateIfPresent(root)
+      return goal?.status === "active" && goal.infrastructureRecovery?.kind === "continuation_dispatch"
     })
     const recovering = await stateFor(root)
     const stalledBeforeRetry = recovering.stalledTurns

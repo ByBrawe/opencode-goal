@@ -48,6 +48,7 @@ function validQueuedGoal(value: unknown): value is QueuedGoalSpec {
     && Array.isArray(item.constraints) && item.constraints.every((entry) => typeof entry === "string")
     && Array.isArray(item.checks) && item.checks.every((entry) => typeof entry === "string")
     && Array.isArray(item.files) && item.files.every((entry) => entry && typeof entry === "object" && typeof entry.file === "string" && (entry.contains === undefined || typeof entry.contains === "string"))
+    && (item.notifyCommand === undefined || (typeof item.notifyCommand === "string" && item.notifyCommand.trim().length > 0))
     && validBudget(item.budget)
     && typeof item.createdAt === "number" && Number.isFinite(item.createdAt)
     && (item.activating === undefined || typeof item.activating === "boolean")
@@ -170,6 +171,7 @@ export class GoalSequenceStore {
         constraints: normalizeStrings(input.constraints),
         checks: normalizeStrings(input.checks),
         files: normalizeFiles(input.files),
+        ...(input.notifyCommand?.trim() ? { notifyCommand: input.notifyCommand.trim() } : {}),
         budget: { ...(input.budget ?? {}) },
         createdAt: input.now ?? Date.now(),
       }
@@ -251,6 +253,7 @@ export class GoalSequenceStore {
         constraints: queued.constraints,
         checks: queued.checks,
         files: queued.files,
+        ...(queued.notifyCommand ? { notifyCommand: queued.notifyCommand } : {}),
         budget: queued.budget,
         ...(current?.execution ? { execution: current.execution } : {}),
         now,

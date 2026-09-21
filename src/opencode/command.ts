@@ -7,6 +7,7 @@ export interface ParsedGoalCommand {
   constraints: string[]
   checks: string[]
   files: FileRequirementInput[]
+  notifyCommand?: string
   goalIDPrefix?: string
   historyKeep?: number
   queuePosition?: number
@@ -192,6 +193,7 @@ export function parseGoalCommand(input: string): ParsedGoalCommand {
   let maxTokens: number | undefined
   let maxRuntimeMs: number | undefined
   let maxCost: number | undefined
+  let notifyCommand: string | undefined
 
   for (let i = 0; i < list.length; i += 1) {
     const current = list[i]!
@@ -199,6 +201,7 @@ export function parseGoalCommand(input: string): ParsedGoalCommand {
     if ((current === "--accept" || current === "--acceptance" || current === "--success") && next) { acceptance.push(next); i += 1; continue }
     if (["--constraint", "--constraints", "--non-goal", "--non-goals"].includes(current) && next) { constraints.push(next); i += 1; continue }
     if (current === "--check" && next) { checks.push(next); i += 1; continue }
+    if (current === "--notify" && next) { notifyCommand = next; i += 1; continue }
     if (current === "--file" && next) { files.push({ file: next }); i += 1; continue }
     if (current === "--contains" && next) { files.push(parseContainsContract(next)); i += 1; continue }
     if (current === "--max-turns") { maxTurns = parseLimit(current, next, true); i += 1; continue }
@@ -209,7 +212,7 @@ export function parseGoalCommand(input: string): ParsedGoalCommand {
     objective.push(current)
   }
 
-  if (action === "budget" && (objective.length || acceptance.length || constraints.length || checks.length || files.length)) {
+  if (action === "budget" && (objective.length || acceptance.length || constraints.length || checks.length || files.length || notifyCommand !== undefined)) {
     throw new Error("/goal budget accepts only --max-turns, --max-tokens, --max-minutes, and --max-cost")
   }
 
@@ -218,5 +221,6 @@ export function parseGoalCommand(input: string): ParsedGoalCommand {
   if (maxTokens !== undefined) parsed.maxTokens = maxTokens
   if (maxRuntimeMs !== undefined) parsed.maxRuntimeMs = maxRuntimeMs
   if (maxCost !== undefined) parsed.maxCost = maxCost
+  if (notifyCommand !== undefined) parsed.notifyCommand = notifyCommand
   return parsed
 }

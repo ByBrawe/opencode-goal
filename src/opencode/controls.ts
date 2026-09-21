@@ -5,6 +5,7 @@ import { GoalStore, type GoalArchiveRecord, type GoalHistoryPruneResult, type Go
 import { applyGoalBudget, budgetLimitHits, formatGoalBudget } from "../runtime/accounting.js"
 import { formatModelContext } from "../runtime/model-context.js"
 import { parseGoalCommand } from "./command.js"
+import { createGoalTransitionNotifier } from "./notify.js"
 import { continuationPrompt } from "./prompt.js"
 
 type PluginInput = Parameters<typeof CorePlugin>[0]
@@ -170,7 +171,7 @@ async function applyParsedBudgetAfterCore(
 }
 
 export function enhanceGoalControls(input: PluginInput, hooks: PluginHooks): void {
-  const store = new GoalStore(input.directory)
+  const store = new GoalStore(input.directory, { onTransition: createGoalTransitionNotifier(input.directory) })
   const commandHook = hooks["command.execute.before"]
   const chatHook = hooks["chat.message"]
   if (typeof commandHook !== "function" || typeof chatHook !== "function") return

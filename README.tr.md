@@ -210,6 +210,7 @@ Tekrarlanabilir contract flag'leri success ve hard boundary'leri tanımlar:
 --constraint "..."
 --non-goal "..."
 --check "..."
+--notify "command {reason} {goal}"
 --contains "file::required text"
 --max-turns <n>
 --max-tokens <n>
@@ -218,6 +219,14 @@ Tekrarlanabilir contract flag'leri success ve hard boundary'leri tanımlar:
 ```
 
 Yeni Goal'larda cumulative token limiti varsayılan olarak yoktur (`maxTokens: 0`). Toplam çalışma için açık bir runaway guard istediğinizde `--max-tokens` veya `/goal budget --max-tokens` kullanın; bu cumulative budget seçilen modelin güncel context/input penceresinden ayrıdır.
+
+`--notify`, Goal Contract'a opsiyonel ve **kullanıcı tarafından yazılan** yerel bir lifecycle komutu bağlar. Komut yalnız ilgili Goal state kalıcı olarak diske yazıldıktan sonra çalıştırılır. `{reason}` değeri `completed`, `blocked`, `paused` veya `rejected`; `{goal}` ise Goal ID ile değiştirilir. `waiting_user`, budget limit ve usage limit durumları `paused` reason değerini kullanır. Notification tamamen advisory'dir: komut hatası Goal state'ini veya completion sonucunu değiştiremez. Model-facing `opencode_goal_*` tool'ları bu komutu ayarlayamaz veya değiştiremez.
+
+Örnek:
+
+```text
+/goal release'i hazırla --check "npm test" --notify "my-notifier --goal {goal} --reason {reason}"
+```
 
 Tam objective her zaman gerekli bir semantic requirement olarak kalır. Dar kapsamlı kontroller ek proof obligations oluşturur; geniş sonucu asla değiştirmez veya yerine geçmez.
 

@@ -10,6 +10,7 @@ import {
   pauseForFatalProviderError,
   providerPromptOverflowReason,
 } from "../runtime/limits.js"
+import { createGoalTransitionNotifier } from "./notify.js"
 import { showGoalToast } from "./toast.js"
 
 type PluginInput = Parameters<typeof CorePlugin>[0]
@@ -95,7 +96,7 @@ export function installHostLimitHandling(input: PluginInput, hooks: PluginHooks)
   if (typeof hooks.event !== "function") return
   const originalEvent = hooks.event
   const originalAutocontinue = hooks["experimental.compaction.autocontinue"]
-  const store = new GoalStore(input.directory)
+  const store = new GoalStore(input.directory, { onTransition: createGoalTransitionNotifier(input.directory) })
   const recoveringOverflow = new Set<string>()
   const overflowAttempts = new Map<string, PromptOverflowAttempt>()
 

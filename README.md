@@ -210,6 +210,7 @@ Repeatable contract flags define success and hard boundaries:
 --constraint "..."
 --non-goal "..."
 --check "..."
+--notify "command {reason} {goal}"
 --contains "file::required text"
 --max-turns <n>
 --max-tokens <n>
@@ -218,6 +219,14 @@ Repeatable contract flags define success and hard boundaries:
 ```
 
 New Goals have no cumulative token cap by default (`maxTokens: 0`). Use `--max-tokens` or `/goal budget --max-tokens` only when you want an explicit total-work runaway guard; this cumulative budget is separate from the selected model's current context/input window.
+
+`--notify` attaches an optional **user-authored** local lifecycle command to the Goal Contract. The command is launched only after the relevant Goal state is durably persisted. `{reason}` expands to `completed`, `blocked`, `paused`, or `rejected`; `{goal}` expands to the Goal ID. `waiting_user`, budget limits, and usage limits use the `paused` reason. Notification execution is advisory: command failure cannot change Goal state or completion. Model-facing `opencode_goal_*` tools cannot set or replace this command.
+
+Example:
+
+```text
+/goal ship release --check "npm test" --notify "my-notifier --goal {goal} --reason {reason}"
+```
 
 The full objective always remains a required semantic requirement. Narrow checks add proof obligations; they never replace the broader outcome.
 

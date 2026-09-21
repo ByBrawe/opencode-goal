@@ -473,6 +473,38 @@ test("workspace changes fail closed after capability consumption and before Goal
   }
 })
 
+test("active host directory mismatch fails closed before Goal reads or writes", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-host-directory-"))
+  const other = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-host-directory-other-"))
+  try {
+    const host = fakeV2Context(root)
+    host.ctx.options.directory = other
+    await assert.rejects(
+      executeOpenCode2GoalControl(host.ctx, "status", { sessionID: "v2-host-directory-mismatch", agent: "build" }),
+      /does not match the active host directory/i,
+    )
+    assert.equal(await new GoalStore(root).load("v2-host-directory-mismatch"), null)
+    assert.equal(await new GoalStore(other).load("v2-host-directory-mismatch"), null)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+    await rm(other, { recursive: true, force: true })
+  }
+})
+
+test("unavailable session directory fails closed before Goal reads or writes", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-unavailable-location-"))
+  const host = fakeV2Context(root)
+  try {
+    await rm(root, { recursive: true, force: true })
+    await assert.rejects(
+      executeOpenCode2GoalControl(host.ctx, "status", { sessionID: "v2-unavailable-location", agent: "build" }),
+      /session location\.directory is unavailable/i,
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test("authorized capability applies create pause resume edit and clear with one fresh host identity per mutation", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-capability-lifecycle-"))
   try {

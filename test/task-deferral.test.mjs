@@ -12,6 +12,10 @@ async function tick() {
   await new Promise((resolve) => setTimeout(resolve, 0))
 }
 
+async function cleanupRoot(root) {
+  await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+}
+
 function fakeClient() {
   const prompts = []
   const toasts = []
@@ -69,7 +73,7 @@ test("foreground delegated task defers parent Goal auto-continue until tool comp
     await idle(hooks, sessionID)
     assert.equal(runtime.prompts.length, 1, "parent continuation resumes only after the foreground tool returns")
   } finally {
-    await rm(root, { recursive: true, force: true })
+    await cleanupRoot(root)
   }
 })
 
@@ -93,7 +97,7 @@ test("background child session defers parent until child terminal event", async 
     await idle(hooks, sessionID)
     assert.equal(runtime.prompts.length, 1)
   } finally {
-    await rm(root, { recursive: true, force: true })
+    await cleanupRoot(root)
   }
 })
 
@@ -123,7 +127,7 @@ test("parent stays deferred until every tracked background child is terminal", a
     await idle(hooks, sessionID)
     assert.equal(runtime.prompts.length, 1)
   } finally {
-    await rm(root, { recursive: true, force: true })
+    await cleanupRoot(root)
   }
 })
 
@@ -158,6 +162,6 @@ test("synthetic background task result is host activity, while identical user te
     await idle(hooks, sessionID)
     assert.equal(runtime.prompts.length, 1, "only the synthetic host result releases the tracked child and resumes the parent")
   } finally {
-    await rm(root, { recursive: true, force: true })
+    await cleanupRoot(root)
   }
 })

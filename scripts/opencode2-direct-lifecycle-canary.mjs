@@ -510,24 +510,7 @@ async function main() {
       return latestCommands.has("goal")
     }, "direct goal command registration", diagnostics, 30_000)
 
-    const created = await request(`${apiPrefix}/session`, {
-      method: "POST",
-      body: JSON.stringify({ title: "OpenCode Goal V2 direct lifecycle" }),
-    })
-    assert.ok(created.ok, `session create failed: HTTP ${created.status} ${created.text}\n${await diagnostics()}`)
-    sessionID = String((created.body?.data ?? created.body)?.id ?? "")
-    assert.ok(sessionID, `session ID missing: ${created.text}`)
-
-    const command = async (text, expectOK = true) => {
-      const response = await request(`${apiPrefix}/session/${encodeURIComponent(sessionID)}/command`, {
-        method: "POST",
-        body: JSON.stringify({ name: "goal", text }),
-      }, 90_000)
-      if (expectOK) assert.ok(response.ok, `/goal ${text} failed: HTTP ${response.status} ${response.text}\n${await diagnostics()}`)
-      return response
-    }
-
-    const currentSessionDirectory = async (targetSessionID = sessionID) => {
+    const currentSessionDirectory = async (targetSessionID) => {
       const response = await request(`${apiPrefix}/session`, { method: "GET" }, 5_000)
       if (!response.ok) return ""
       const sessions = Array.isArray(response.body?.data)
@@ -543,6 +526,77 @@ async function main() {
         ?? session?.data?.directory
         ?? "",
       )
+    }
+
+    // Run the Location gate before the long lifecycle sequence. Exact 2.0.11
+    // can delay a new direct-command turn after a long multi-turn session has
+    // just settled, which made this independent Location proof timing-sensitive.
+    // A dedicated first session keeps the host evidence isolated and deterministic.
+    const locationCreated = await request(`${apiPrefix}/session`, {
+      method: "POST",
+      body: JSON.stringify({ title: "OpenCode Goal V2 Location guard" }),
+    })
+    assert.ok(locationCreated.ok, `Location session create failed: HTTP ${locationCreated.status} ${locationCreated.text}\n${await diagnostics()}`)
+    locationSessionID = String((locationCreated.body?.data ?? locationCreated.body)?.id ?? "")
+    assert.ok(locationSessionID, `Location session ID missing: ${locationCreated.text}`)
+
+    provider.configureLocationMove(locationSessionID, movedDirectory)
+    const locationBefore = provider.stats.requests.length
+    const locationController = new AbortController()
+    const locationPending = request(`${apiPrefix}/session/${encodeURIComponent(locationSessionID)}/command`, {
+      method: "POST",
+      body: JSON.stringify({ name: "goal", text: LOCATION_COMMAND }),
+      signal: locationController.signal,
+    }, 90_000).then(
+      (value) => ({ ok: true, value }),
+      (error) => ({ ok: false, error }),
+    )
+
+    await waitFor(
+      () => provider.stats.requests.slice(locationBefore).some((item) => item.hasExecuteTool && item.hasControlTool),
+      "Location-bound authenticated capability turn",
+      diagnostics,
+    )
+
+    await waitFor(async () => {
+      const directory = await currentSessionDirectory(locationSessionID)
+      return directory && path.resolve(directory) === path.resolve(movedDirectory) ? directory : null
+    }, "real host session Location move", diagnostics, 30_000)
+
+    // A move may interrupt the in-flight model/tool turn instead of delivering
+    // another provider continuation. Bound the client request once the host has
+    // persisted the new Location; either path must remain mutation-free.
+    await new Promise((resolve) => setTimeout(resolve, 750))
+    locationController.abort()
+    const locationResult = await locationPending
+    if (!locationResult.ok && locationResult.error?.name !== "AbortError") throw locationResult.error
+
+    assert.equal(await readGoal(workspace, locationSessionID), null, "Location-invalidated create persisted Goal state in the source workspace")
+    assert.equal(await readGoal(movedDirectory, locationSessionID), null, "Location-invalidated create persisted Goal state in the moved workspace")
+
+    const locationRequests = provider.stats.requests.slice(locationBefore)
+    assert.ok(locationRequests.some((item) => item.hasExecuteTool && item.hasControlTool), "Location test never started from an authenticated Goal capability turn")
+    assert.ok(
+      locationRequests.some((item) => item.sawLocationMoveResult)
+        || path.resolve(await currentSessionDirectory(locationSessionID)) === path.resolve(movedDirectory),
+      "host session_move neither reached the continuation nor persisted the moved Location",
+    )
+
+    const created = await request(`${apiPrefix}/session`, {
+      method: "POST",
+      body: JSON.stringify({ title: "OpenCode Goal V2 direct lifecycle" }),
+    })
+    assert.ok(created.ok, `session create failed: HTTP ${created.status} ${created.text}\n${await diagnostics()}`)
+    sessionID = String((created.body?.data ?? created.body)?.id ?? "")
+    assert.ok(sessionID, `session ID missing: ${created.text}`)
+
+    const command = async (text, expectOK = true) => {
+      const response = await request(`${apiPrefix}/session/${encodeURIComponent(sessionID)}/command`, {
+        method: "POST",
+        body: JSON.stringify({ name: "goal", text }),
+      }, 90_000)
+      if (expectOK) assert.ok(response.ok, `/goal ${text} failed: HTTP ${response.status} ${response.text}\n${await diagnostics()}`)
+      return response
     }
 
     const requestsFor = (needle) => provider.stats.requests.filter((item) => item.currentUserText.includes(needle))
@@ -678,60 +732,6 @@ async function main() {
     )
     assert.equal(archive.reason, "cleared")
     assert.equal(archive.goal.objective, "ship v2 capability revised")
-
-    // Exercise Location invalidation in a fresh host session. Reusing the long
-    // lifecycle session after /goal clear is unnecessarily timing-sensitive on
-    // exact 2.0.11 because the prior model turn may still be settling even after
-    // Goal persistence and its provider continuation are observable.
-    const locationCreated = await request(`${apiPrefix}/session`, {
-      method: "POST",
-      body: JSON.stringify({ title: "OpenCode Goal V2 Location guard" }),
-    })
-    assert.ok(locationCreated.ok, `Location session create failed: HTTP ${locationCreated.status} ${locationCreated.text}\n${await diagnostics()}`)
-    locationSessionID = String((locationCreated.body?.data ?? locationCreated.body)?.id ?? "")
-    assert.ok(locationSessionID, `Location session ID missing: ${locationCreated.text}`)
-
-    provider.configureLocationMove(locationSessionID, movedDirectory)
-    const locationBefore = provider.stats.requests.length
-    const locationController = new AbortController()
-    const locationPending = request(`${apiPrefix}/session/${encodeURIComponent(locationSessionID)}/command`, {
-      method: "POST",
-      body: JSON.stringify({ name: "goal", text: LOCATION_COMMAND }),
-      signal: locationController.signal,
-    }, 90_000).then(
-      (value) => ({ ok: true, value }),
-      (error) => ({ ok: false, error }),
-    )
-
-    await waitFor(
-      () => provider.stats.requests.slice(locationBefore).some((item) => item.hasExecuteTool && item.hasControlTool),
-      "Location-bound authenticated capability turn",
-      diagnostics,
-    )
-
-    await waitFor(async () => {
-      const directory = await currentSessionDirectory(locationSessionID)
-      return directory && path.resolve(directory) === path.resolve(movedDirectory) ? directory : null
-    }, "real host session Location move", diagnostics, 30_000)
-
-    // A move may interrupt the in-flight model/tool turn instead of delivering
-    // another provider continuation. Bound the client request once the host has
-    // persisted the new Location; either path must remain mutation-free.
-    await new Promise((resolve) => setTimeout(resolve, 750))
-    locationController.abort()
-    const locationResult = await locationPending
-    if (!locationResult.ok && locationResult.error?.name !== "AbortError") throw locationResult.error
-
-    assert.equal(await readGoal(workspace, locationSessionID), null, "Location-invalidated create persisted Goal state in the source workspace")
-    assert.equal(await readGoal(movedDirectory, locationSessionID), null, "Location-invalidated create persisted Goal state in the moved workspace")
-
-    const locationRequests = provider.stats.requests.slice(locationBefore)
-    assert.ok(locationRequests.some((item) => item.hasExecuteTool && item.hasControlTool), "Location test never started from an authenticated Goal capability turn")
-    assert.ok(
-      locationRequests.some((item) => item.sawLocationMoveResult)
-        || path.resolve(await currentSessionDirectory(locationSessionID)) === path.resolve(movedDirectory),
-      "host session_move neither reached the continuation nor persisted the moved Location",
-    )
 
     assert.equal(server.exitCode, null, `OpenCode 2 server exited during lifecycle canary\n${await diagnostics()}`)
 

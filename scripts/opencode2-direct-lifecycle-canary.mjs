@@ -377,6 +377,7 @@ async function main() {
   let serverLog = ""
   let apiPrefix = null
   let sessionID = ""
+  let locationSessionID = ""
   let latestCommands = new Set()
 
   await Promise.all([
@@ -434,13 +435,18 @@ async function main() {
 
   const diagnostics = async () => {
     const goal = sessionID ? await readGoal(workspace, sessionID).catch((error) => ({ error: String(error) })) : null
+    const locationGoal = locationSessionID
+      ? await readGoal(workspace, locationSessionID).catch((error) => ({ error: String(error) }))
+      : null
     let goalFiles = []
     try { goalFiles = await readdir(path.join(workspace, ".opencode", "goals"), { recursive: true }) } catch {}
     return [
       `apiPrefix=${String(apiPrefix)}`,
       `commands=${JSON.stringify([...latestCommands])}`,
       `sessionID=${sessionID || "none"}`,
+      `locationSessionID=${locationSessionID || "none"}`,
       `goal=${JSON.stringify(goal)}`,
+      `locationGoal=${JSON.stringify(locationGoal)}`,
       `goalFiles=${JSON.stringify(goalFiles)}`,
       `provider=${JSON.stringify(provider.stats)}`,
       `serverExit=${server?.exitCode}`,
@@ -521,7 +527,7 @@ async function main() {
       return response
     }
 
-    const currentSessionDirectory = async () => {
+    const currentSessionDirectory = async (targetSessionID = sessionID) => {
       const response = await request(`${apiPrefix}/session`, { method: "GET" }, 5_000)
       if (!response.ok) return ""
       const sessions = Array.isArray(response.body?.data)
@@ -529,7 +535,7 @@ async function main() {
         : Array.isArray(response.body)
           ? response.body
           : []
-      const session = sessions.find((item) => String(item?.id ?? item?.data?.id ?? "") === sessionID)
+      const session = sessions.find((item) => String(item?.id ?? item?.data?.id ?? "") === targetSessionID)
       return String(
         session?.location?.directory
         ?? session?.data?.location?.directory
@@ -673,10 +679,22 @@ async function main() {
     assert.equal(archive.reason, "cleared")
     assert.equal(archive.goal.objective, "ship v2 capability revised")
 
-    provider.configureLocationMove(sessionID, movedDirectory)
+    // Exercise Location invalidation in a fresh host session. Reusing the long
+    // lifecycle session after /goal clear is unnecessarily timing-sensitive on
+    // exact 2.0.11 because the prior model turn may still be settling even after
+    // Goal persistence and its provider continuation are observable.
+    const locationCreated = await request(`${apiPrefix}/session`, {
+      method: "POST",
+      body: JSON.stringify({ title: "OpenCode Goal V2 Location guard" }),
+    })
+    assert.ok(locationCreated.ok, `Location session create failed: HTTP ${locationCreated.status} ${locationCreated.text}\n${await diagnostics()}`)
+    locationSessionID = String((locationCreated.body?.data ?? locationCreated.body)?.id ?? "")
+    assert.ok(locationSessionID, `Location session ID missing: ${locationCreated.text}`)
+
+    provider.configureLocationMove(locationSessionID, movedDirectory)
     const locationBefore = provider.stats.requests.length
     const locationController = new AbortController()
-    const locationPending = request(`${apiPrefix}/session/${encodeURIComponent(sessionID)}/command`, {
+    const locationPending = request(`${apiPrefix}/session/${encodeURIComponent(locationSessionID)}/command`, {
       method: "POST",
       body: JSON.stringify({ name: "goal", text: LOCATION_COMMAND }),
       signal: locationController.signal,
@@ -692,7 +710,7 @@ async function main() {
     )
 
     await waitFor(async () => {
-      const directory = await currentSessionDirectory()
+      const directory = await currentSessionDirectory(locationSessionID)
       return directory && path.resolve(directory) === path.resolve(movedDirectory) ? directory : null
     }, "real host session Location move", diagnostics, 30_000)
 
@@ -704,13 +722,14 @@ async function main() {
     const locationResult = await locationPending
     if (!locationResult.ok && locationResult.error?.name !== "AbortError") throw locationResult.error
 
-    assert.equal(await readGoal(workspace, sessionID), null, "Location-invalidated create restored Goal state in the source workspace")
-    assert.equal(await readGoal(movedDirectory, sessionID), null, "Location-invalidated create persisted Goal state in the moved workspace")
+    assert.equal(await readGoal(workspace, locationSessionID), null, "Location-invalidated create persisted Goal state in the source workspace")
+    assert.equal(await readGoal(movedDirectory, locationSessionID), null, "Location-invalidated create persisted Goal state in the moved workspace")
 
     const locationRequests = provider.stats.requests.slice(locationBefore)
     assert.ok(locationRequests.some((item) => item.hasExecuteTool && item.hasControlTool), "Location test never started from an authenticated Goal capability turn")
     assert.ok(
-      locationRequests.some((item) => item.sawLocationMoveResult) || path.resolve(await currentSessionDirectory()) === path.resolve(movedDirectory),
+      locationRequests.some((item) => item.sawLocationMoveResult)
+        || path.resolve(await currentSessionDirectory(locationSessionID)) === path.resolve(movedDirectory),
       "host session_move neither reached the continuation nor persisted the moved Location",
     )
 
@@ -721,6 +740,7 @@ async function main() {
       version,
       apiPrefix,
       sessionID,
+      locationSessionID,
       directCommandRegistered: latestCommands.has("goal"),
       create: { objective: createdGoal.objective, status: createdGoal.status, maxTurns: createdGoal.budget?.maxTurns },
       locationMoveBlocked: true,

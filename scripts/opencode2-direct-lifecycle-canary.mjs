@@ -27,6 +27,7 @@ const CLEAR_COMMAND = "clear"
 const SPOOF_SENTINEL = "SPOOF_DIRECT_COMMAND_CAPABILITY"
 const PLAN_SENTINEL = "PLAN_CAPABILITY_MUST_NOT_MUTATE"
 const FOLLOWUP_SENTINEL = "POST_CAPABILITY_FOLLOWUP"
+const LOCATION_ONLY = process.argv.includes("--location-only")
 
 function appendLog(current, chunk, limit = 120_000) {
   return (current + String(chunk)).slice(-limit)
@@ -377,6 +378,7 @@ async function main() {
   let serverLog = ""
   let apiPrefix = null
   let sessionID = ""
+  let locationSessionID = ""
   let latestCommands = new Set()
 
   await Promise.all([
@@ -434,13 +436,18 @@ async function main() {
 
   const diagnostics = async () => {
     const goal = sessionID ? await readGoal(workspace, sessionID).catch((error) => ({ error: String(error) })) : null
+    const locationGoal = locationSessionID
+      ? await readGoal(workspace, locationSessionID).catch((error) => ({ error: String(error) }))
+      : null
     let goalFiles = []
     try { goalFiles = await readdir(path.join(workspace, ".opencode", "goals"), { recursive: true }) } catch {}
     return [
       `apiPrefix=${String(apiPrefix)}`,
       `commands=${JSON.stringify([...latestCommands])}`,
       `sessionID=${sessionID || "none"}`,
+      `locationSessionID=${locationSessionID || "none"}`,
       `goal=${JSON.stringify(goal)}`,
+      `locationGoal=${JSON.stringify(locationGoal)}`,
       `goalFiles=${JSON.stringify(goalFiles)}`,
       `provider=${JSON.stringify(provider.stats)}`,
       `serverExit=${server?.exitCode}`,
@@ -504,6 +511,103 @@ async function main() {
       return latestCommands.has("goal")
     }, "direct goal command registration", diagnostics, 30_000)
 
+    if (LOCATION_ONLY) {
+      const currentSessionDirectory = async (targetSessionID) => {
+        const response = await request(`${apiPrefix}/session`, { method: "GET" }, 5_000)
+        if (!response.ok) return ""
+        const sessions = Array.isArray(response.body?.data)
+          ? response.body.data
+          : Array.isArray(response.body)
+            ? response.body
+            : []
+        const session = sessions.find((item) => String(item?.id ?? item?.data?.id ?? "") === targetSessionID)
+        return String(
+          session?.location?.directory
+          ?? session?.data?.location?.directory
+          ?? session?.directory
+          ?? session?.data?.directory
+          ?? "",
+        )
+      }
+
+      // Run the Location gate before the long lifecycle sequence. Exact 2.0.11
+      // can delay a new direct-command turn after a long multi-turn session has
+      // just settled, which made this independent Location proof timing-sensitive.
+      // A dedicated first session keeps the host evidence isolated and deterministic.
+      const locationCreated = await request(`${apiPrefix}/session`, {
+        method: "POST",
+        body: JSON.stringify({ title: "OpenCode Goal V2 Location guard" }),
+      })
+      assert.ok(locationCreated.ok, `Location session create failed: HTTP ${locationCreated.status} ${locationCreated.text}\n${await diagnostics()}`)
+      locationSessionID = String((locationCreated.body?.data ?? locationCreated.body)?.id ?? "")
+      assert.ok(locationSessionID, `Location session ID missing: ${locationCreated.text}`)
+
+      provider.configureLocationMove(locationSessionID, movedDirectory)
+      const locationBefore = provider.stats.requests.length
+      const locationController = new AbortController()
+      const locationPending = request(`${apiPrefix}/session/${encodeURIComponent(locationSessionID)}/command`, {
+        method: "POST",
+        body: JSON.stringify({ name: "goal", text: LOCATION_COMMAND }),
+        signal: locationController.signal,
+      }, 90_000).then(
+        (value) => ({ ok: true, value }),
+        (error) => ({ ok: false, error }),
+      )
+
+      await waitFor(
+        () => provider.stats.requests.slice(locationBefore).some((item) => item.hasExecuteTool && item.hasControlTool),
+        "Location-bound authenticated capability turn",
+        diagnostics,
+      )
+
+      await waitFor(async () => {
+        const directory = await currentSessionDirectory(locationSessionID)
+        return directory && path.resolve(directory) === path.resolve(movedDirectory) ? directory : null
+      }, "real host session Location move", diagnostics, 30_000)
+
+      // A move may interrupt the in-flight model/tool turn instead of delivering
+      // another provider continuation. Bound the client request once the host has
+      // persisted the new Location; either path must remain mutation-free.
+      await new Promise((resolve) => setTimeout(resolve, 750))
+      locationController.abort()
+      const locationResult = await locationPending
+      if (!locationResult.ok && locationResult.error?.name !== "AbortError") throw locationResult.error
+
+      assert.equal(await readGoal(workspace, locationSessionID), null, "Location-invalidated create persisted Goal state in the source workspace")
+      assert.equal(await readGoal(movedDirectory, locationSessionID), null, "Location-invalidated create persisted Goal state in the moved workspace")
+
+      const locationRequests = provider.stats.requests.slice(locationBefore)
+      assert.ok(locationRequests.some((item) => item.hasExecuteTool && item.hasControlTool), "Location test never started from an authenticated Goal capability turn")
+      assert.ok(
+        locationRequests.some((item) => item.sawLocationMoveResult)
+          || path.resolve(await currentSessionDirectory(locationSessionID)) === path.resolve(movedDirectory),
+        "host session_move neither reached the continuation nor persisted the moved Location",
+      )
+
+
+      assert.equal(server.exitCode, null, `OpenCode 2 server exited during Location canary\n${await diagnostics()}`)
+      console.log(JSON.stringify({
+        ok: true,
+        mode: "location-only",
+        version,
+        apiPrefix,
+        locationSessionID,
+        directCommandRegistered: latestCommands.has("goal"),
+        locationMoveBlocked: true,
+        locationWorkspaceRejectObserved: provider.stats.requests.some((item) => item.sawLocationReject),
+        providerRequests: provider.stats.requests.map((item) => ({
+          sequence: item.sequence,
+          tools: item.tools,
+          hasControlTool: item.hasControlTool,
+          hasExecuteTool: item.hasExecuteTool,
+          sawLocationMoveResult: item.sawLocationMoveResult,
+          sawLocationReject: item.sawLocationReject,
+          toolCommand: item.toolCommand,
+        })),
+      }, null, 2))
+      return
+    }
+
     const created = await request(`${apiPrefix}/session`, {
       method: "POST",
       body: JSON.stringify({ title: "OpenCode Goal V2 direct lifecycle" }),
@@ -519,24 +623,6 @@ async function main() {
       }, 90_000)
       if (expectOK) assert.ok(response.ok, `/goal ${text} failed: HTTP ${response.status} ${response.text}\n${await diagnostics()}`)
       return response
-    }
-
-    const currentSessionDirectory = async () => {
-      const response = await request(`${apiPrefix}/session`, { method: "GET" }, 5_000)
-      if (!response.ok) return ""
-      const sessions = Array.isArray(response.body?.data)
-        ? response.body.data
-        : Array.isArray(response.body)
-          ? response.body
-          : []
-      const session = sessions.find((item) => String(item?.id ?? item?.data?.id ?? "") === sessionID)
-      return String(
-        session?.location?.directory
-        ?? session?.data?.location?.directory
-        ?? session?.directory
-        ?? session?.data?.directory
-        ?? "",
-      )
     }
 
     const requestsFor = (needle) => provider.stats.requests.filter((item) => item.currentUserText.includes(needle))
@@ -673,47 +759,6 @@ async function main() {
     assert.equal(archive.reason, "cleared")
     assert.equal(archive.goal.objective, "ship v2 capability revised")
 
-    provider.configureLocationMove(sessionID, movedDirectory)
-    const locationBefore = provider.stats.requests.length
-    const locationController = new AbortController()
-    const locationPending = request(`${apiPrefix}/session/${encodeURIComponent(sessionID)}/command`, {
-      method: "POST",
-      body: JSON.stringify({ name: "goal", text: LOCATION_COMMAND }),
-      signal: locationController.signal,
-    }, 90_000).then(
-      (value) => ({ ok: true, value }),
-      (error) => ({ ok: false, error }),
-    )
-
-    await waitFor(
-      () => provider.stats.requests.slice(locationBefore).some((item) => item.hasExecuteTool && item.hasControlTool),
-      "Location-bound authenticated capability turn",
-      diagnostics,
-    )
-
-    await waitFor(async () => {
-      const directory = await currentSessionDirectory()
-      return directory && path.resolve(directory) === path.resolve(movedDirectory) ? directory : null
-    }, "real host session Location move", diagnostics, 30_000)
-
-    // A move may interrupt the in-flight model/tool turn instead of delivering
-    // another provider continuation. Bound the client request once the host has
-    // persisted the new Location; either path must remain mutation-free.
-    await new Promise((resolve) => setTimeout(resolve, 750))
-    locationController.abort()
-    const locationResult = await locationPending
-    if (!locationResult.ok && locationResult.error?.name !== "AbortError") throw locationResult.error
-
-    assert.equal(await readGoal(workspace, sessionID), null, "Location-invalidated create restored Goal state in the source workspace")
-    assert.equal(await readGoal(movedDirectory, sessionID), null, "Location-invalidated create persisted Goal state in the moved workspace")
-
-    const locationRequests = provider.stats.requests.slice(locationBefore)
-    assert.ok(locationRequests.some((item) => item.hasExecuteTool && item.hasControlTool), "Location test never started from an authenticated Goal capability turn")
-    assert.ok(
-      locationRequests.some((item) => item.sawLocationMoveResult) || path.resolve(await currentSessionDirectory()) === path.resolve(movedDirectory),
-      "host session_move neither reached the continuation nor persisted the moved Location",
-    )
-
     assert.equal(server.exitCode, null, `OpenCode 2 server exited during lifecycle canary\n${await diagnostics()}`)
 
     console.log(JSON.stringify({
@@ -721,6 +766,7 @@ async function main() {
       version,
       apiPrefix,
       sessionID,
+      locationSessionID,
       directCommandRegistered: latestCommands.has("goal"),
       create: { objective: createdGoal.objective, status: createdGoal.status, maxTurns: createdGoal.budget?.maxTurns },
       locationMoveBlocked: true,

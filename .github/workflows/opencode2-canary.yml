@@ -88,7 +88,7 @@ jobs:
   direct-lifecycle-capability:
     name: OpenCode 2.0.11 authorized Goal lifecycle
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
         with:
@@ -102,5 +102,7 @@ jobs:
         run: npm install -g @opencode/cli@2.0.11
       - name: Check direct lifecycle canary syntax
         run: node --check scripts/opencode2-direct-lifecycle-canary.mjs
+      - name: Prove real-host Location fail-closed lifecycle guard
+        run: node scripts/opencode2-direct-lifecycle-canary.mjs --location-only
       - name: Prove host-bound single-use lifecycle persistence
         run: node scripts/opencode2-direct-lifecycle-canary.mjs

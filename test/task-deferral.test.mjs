@@ -13,6 +13,8 @@ async function tick() {
 }
 
 async function cleanupRoot(root) {
+  // Windows runners can briefly retain nested Goal persistence handles after
+  // async hook settlement; use Node's bounded recursive-rm retry contract.
   await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
 }
 

@@ -591,8 +591,11 @@ async function main() {
         mode: "location-only",
         version,
         apiPrefix,
-          directCommandRegistered: latestCommands.has("goal"),
-            providerRequests: provider.stats.requests.map((item) => ({
+        locationSessionID,
+        directCommandRegistered: latestCommands.has("goal"),
+        locationMoveBlocked: true,
+        locationWorkspaceRejectObserved: provider.stats.requests.some((item) => item.sawLocationReject),
+        providerRequests: provider.stats.requests.map((item) => ({
           sequence: item.sequence,
           tools: item.tools,
           hasControlTool: item.hasControlTool,

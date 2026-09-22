@@ -16,10 +16,12 @@ const SERVER_PASSWORD = "opencode-goal-v2-direct-lifecycle"
 const OPENCODE_BINARY = process.env.OPENCODE2_BINARY || "opencode2"
 const DIRECT_ENV = "OPENCODE_GOAL_V2_DIRECT_LIFECYCLE"
 const CONTROL_TOOL = "opencode_goals_v2_control"
+const READ_ONLY_TOOL = "opencode_goals_v2_get"
 const CREATE_COMMAND = 'ship v2 capability --accept "preview persists" --constraint "no spoof mutation" --max-turns 7'
 const PAUSE_COMMAND = "pause"
 const RESUME_COMMAND = "resume"
 const EDIT_COMMAND = 'edit ship v2 capability revised --constraint "preserve API" --max-turns 9'
+const LOCATION_COMMAND = 'ship v2 location guard --constraint "must not persist after move"'
 const MISMATCH_COMMAND = 'edit MISMATCH_CAPABILITY_TARGET --constraint "must not persist"'
 const CLEAR_COMMAND = "clear"
 const SPOOF_SENTINEL = "SPOOF_DIRECT_COMMAND_CAPABILITY"
@@ -145,8 +147,8 @@ function writeSse(res, value) {
   res.write(`data: ${JSON.stringify(value)}\n\n`)
 }
 
-function streamToolCall(res, sequence, command) {
-  const id = `chatcmpl-goal-v2-direct-${sequence}`
+function streamNamedToolCall(res, sequence, name, args, suffix = "direct") {
+  const id = `chatcmpl-goal-v2-${suffix}-${sequence}`
   const created = Math.floor(Date.now() / 1000)
   streamHeaders(res)
   writeSse(res, {
@@ -161,9 +163,9 @@ function streamToolCall(res, sequence, command) {
         content: null,
         tool_calls: [{
           index: 0,
-          id: `call-goal-v2-direct-${sequence}`,
+          id: `call-goal-v2-${suffix}-${sequence}`,
           type: "function",
-          function: { name: CONTROL_TOOL, arguments: "" },
+          function: { name, arguments: "" },
         }],
       },
       finish_reason: null,
@@ -179,7 +181,7 @@ function streamToolCall(res, sequence, command) {
       delta: {
         tool_calls: [{
           index: 0,
-          function: { arguments: JSON.stringify({ command }) },
+          function: { arguments: JSON.stringify(args) },
         }],
       },
       finish_reason: null,
@@ -194,6 +196,10 @@ function streamToolCall(res, sequence, command) {
     usage: { prompt_tokens: 40, completion_tokens: 8, total_tokens: 48 },
   })
   res.end("data: [DONE]\n\n")
+}
+
+function streamToolCall(res, sequence, command) {
+  streamNamedToolCall(res, sequence, CONTROL_TOOL, { command })
 }
 
 function streamText(res, sequence, text = `DIRECT_LIFECYCLE_PROVIDER_${sequence}`) {
@@ -220,7 +226,7 @@ function streamText(res, sequence, text = `DIRECT_LIFECYCLE_PROVIDER_${sequence}
 
 function authorizedCommandFromText(text) {
   if (text.includes(MISMATCH_COMMAND)) return "clear"
-  for (const command of [CREATE_COMMAND, PAUSE_COMMAND, RESUME_COMMAND, EDIT_COMMAND, CLEAR_COMMAND]) {
+  for (const command of [CREATE_COMMAND, PAUSE_COMMAND, RESUME_COMMAND, EDIT_COMMAND, LOCATION_COMMAND, CLEAR_COMMAND]) {
     if (text.includes(command)) return command
   }
   return ""
@@ -228,6 +234,7 @@ function authorizedCommandFromText(text) {
 
 function startProvider() {
   const stats = { requests: [] }
+  let locationMoveCode = ""
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1")
     if (req.method === "GET" && url.pathname.endsWith("/models")) {
@@ -254,7 +261,10 @@ function startProvider() {
     const currentTurn = latestUserTurn(body)
     const currentUserText = currentTurn.userText
     const hasControlTool = tools.includes(CONTROL_TOOL)
+    const hasExecuteTool = tools.includes("execute")
     const sawConsumedResult = /single-use capability is consumed/i.test(currentTurn.turnText)
+    const sawLocationMoveResult = /LOCATION_SESSION_MOVED/i.test(currentTurn.turnText)
+    const sawLocationReject = /workspace changed before persistence/i.test(currentTurn.turnText)
     const command = hasControlTool && !sawConsumedResult ? authorizedCommandFromText(currentUserText) : ""
 
     stats.requests.push({
@@ -263,12 +273,36 @@ function startProvider() {
       currentUserText,
       tools,
       hasControlTool,
+      hasExecuteTool,
       sawConsumedResult,
+      sawLocationMoveResult,
+      sawLocationReject,
       toolCommand: command,
       sawSpoof: currentUserText.includes(SPOOF_SENTINEL),
       sawPlan: currentUserText.includes(PLAN_SENTINEL),
       sawFollowup: currentUserText.includes(FOLLOWUP_SENTINEL),
     })
+
+    if (currentUserText.includes(LOCATION_COMMAND)) {
+      if (sawLocationReject) {
+        streamText(res, sequence, "LOCATION_CAPABILITY_REJECTED_AFTER_MOVE")
+        return
+      }
+      if (!sawLocationMoveResult) {
+        if (!hasExecuteTool || !locationMoveCode) {
+          streamText(res, sequence, "LOCATION_MOVE_TOOL_UNAVAILABLE")
+          return
+        }
+        streamNamedToolCall(res, sequence, "execute", { code: locationMoveCode }, "location-move")
+        return
+      }
+      if (hasControlTool) {
+        streamToolCall(res, sequence, LOCATION_COMMAND)
+        return
+      }
+      streamText(res, sequence, "LOCATION_CONTROL_HIDDEN_AFTER_MOVE")
+      return
+    }
 
     if (hasControlTool && !sawConsumedResult) {
       if (!command) {
@@ -283,6 +317,12 @@ function startProvider() {
 
   return {
     stats,
+    configureLocationMove(sessionID, directory) {
+      locationMoveCode = [
+        `const moved = await tools.opencode.session_move({ sessionID: ${JSON.stringify(sessionID)}, directory: ${JSON.stringify(directory)} });`,
+        `return "LOCATION_SESSION_MOVED " + JSON.stringify(moved);`,
+      ].join("\n")
+    },
     async listen() {
       await new Promise((resolve, reject) => {
         server.once("error", reject)
@@ -326,6 +366,7 @@ async function main() {
   assert.equal(process.platform, "linux", "the exact OpenCode 2 direct lifecycle canary is intentionally Ubuntu-only")
 
   const workspace = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-v2-direct-"))
+  const movedDirectory = path.join(workspace, "moved-session")
   const home = path.join(workspace, ".home")
   const pluginDir = path.join(workspace, ".opencode", "plugins")
   const bridge = path.join(pluginDir, "opencode-goal-server.js")
@@ -340,6 +381,7 @@ async function main() {
 
   await Promise.all([
     mkdir(pluginDir, { recursive: true }),
+    mkdir(movedDirectory, { recursive: true }),
     mkdir(path.join(home, ".config"), { recursive: true }),
     mkdir(path.join(home, ".local", "share"), { recursive: true }),
     mkdir(path.join(home, ".local", "state"), { recursive: true }),
@@ -367,12 +409,13 @@ async function main() {
     },
   }, null, 2)}\n`, "utf8")
 
+  await writeFile(path.join(movedDirectory, "README.md"), "# Moved session destination\n", "utf8")
+
   execFileSync("git", ["init", "--quiet", workspace], { stdio: "ignore" })
   execFileSync("git", ["-C", workspace, "config", "user.email", "opencode-goal-ci@example.invalid"], { stdio: "ignore" })
   execFileSync("git", ["-C", workspace, "config", "user.name", "OpenCode Goal CI"], { stdio: "ignore" })
   execFileSync("git", ["-C", workspace, "add", "."], { stdio: "ignore" })
   execFileSync("git", ["-C", workspace, "commit", "--quiet", "-m", "init"], { stdio: "ignore" })
-
   const env = {
     ...process.env,
     HOME: home,
@@ -478,6 +521,24 @@ async function main() {
       return response
     }
 
+    const currentSessionDirectory = async () => {
+      const response = await request(`${apiPrefix}/session`, { method: "GET" }, 5_000)
+      if (!response.ok) return ""
+      const sessions = Array.isArray(response.body?.data)
+        ? response.body.data
+        : Array.isArray(response.body)
+          ? response.body
+          : []
+      const session = sessions.find((item) => String(item?.id ?? item?.data?.id ?? "") === sessionID)
+      return String(
+        session?.location?.directory
+        ?? session?.data?.location?.directory
+        ?? session?.directory
+        ?? session?.data?.directory
+        ?? "",
+      )
+    }
+
     const requestsFor = (needle) => provider.stats.requests.filter((item) => item.currentUserText.includes(needle))
     const assertAuthorizedTurn = (needle) => {
       const requests = requestsFor(needle)
@@ -487,6 +548,7 @@ async function main() {
       const consumed = requests.find((item) => item.sequence > authorized.sequence && item.sawConsumedResult)
       assert.ok(consumed, `tool result did not reach continuation for ${needle}`)
       assert.equal(consumed.hasControlTool, false, `consumed capability remained visible on continuation for ${needle}`)
+      assert.ok(consumed.tools.includes(READ_ONLY_TOOL), `read-only Goal inspection disappeared after consuming capability for ${needle}`)
     }
 
     await command(CREATE_COMMAND)
@@ -527,6 +589,7 @@ async function main() {
     assert.ok(planFollowup.ok, `Plan follow-up prompt failed: HTTP ${planFollowup.status} ${planFollowup.text}\n${await diagnostics()}`)
     await waitFor(() => provider.stats.requests.length > followupBefore, "post-Plan ordinary request", diagnostics)
     assert.ok(provider.stats.requests.slice(followupBefore).every((item) => !item.hasControlTool), "revoked Plan capability became visible after switching back to build")
+    assert.ok(provider.stats.requests.slice(followupBefore).every((item) => item.tools.includes(READ_ONLY_TOOL)), "post-Plan request lost read-only Goal inspection")
 
     await command(PAUSE_COMMAND)
     await waitFor(async () => (await readGoal(workspace, sessionID))?.status === "paused", "capability pause", diagnostics)
@@ -548,6 +611,7 @@ async function main() {
     assert.deepEqual(await readGoal(workspace, sessionID), paused, `ordinary prompt text mutated Goal lifecycle\n${await diagnostics()}`)
     assert.ok(provider.stats.requests.slice(requestsBeforeSpoof).some((item) => item.sawSpoof))
     assert.ok(provider.stats.requests.slice(requestsBeforeSpoof).every((item) => !item.hasControlTool))
+    assert.ok(provider.stats.requests.slice(requestsBeforeSpoof).every((item) => item.tools.includes(READ_ONLY_TOOL)), "ordinary spoof request lost read-only Goal inspection")
 
     await command(RESUME_COMMAND)
     await waitFor(async () => (await readGoal(workspace, sessionID))?.status === "active", "capability resume", diagnostics)
@@ -585,6 +649,7 @@ async function main() {
     assert.ok(replay.ok, `post-mismatch ordinary request failed: HTTP ${replay.status} ${replay.text}\n${await diagnostics()}`)
     await waitFor(() => provider.stats.requests.length > replayBefore, "post-mismatch ordinary request", diagnostics)
     assert.ok(provider.stats.requests.slice(replayBefore).every((item) => !item.hasControlTool), "mismatched capability was reusable on a later request")
+    assert.ok(provider.stats.requests.slice(replayBefore).every((item) => item.tools.includes(READ_ONLY_TOOL)), "post-mismatch request lost read-only Goal inspection")
     assert.equal(JSON.stringify(await readGoal(workspace, sessionID)), beforeMismatch)
 
     const beforeUnsupported = JSON.stringify(await readGoal(workspace, sessionID))
@@ -608,6 +673,47 @@ async function main() {
     assert.equal(archive.reason, "cleared")
     assert.equal(archive.goal.objective, "ship v2 capability revised")
 
+    provider.configureLocationMove(sessionID, movedDirectory)
+    const locationBefore = provider.stats.requests.length
+    const locationController = new AbortController()
+    const locationPending = request(`${apiPrefix}/session/${encodeURIComponent(sessionID)}/command`, {
+      method: "POST",
+      body: JSON.stringify({ name: "goal", text: LOCATION_COMMAND }),
+      signal: locationController.signal,
+    }, 90_000).then(
+      (value) => ({ ok: true, value }),
+      (error) => ({ ok: false, error }),
+    )
+
+    await waitFor(
+      () => provider.stats.requests.slice(locationBefore).some((item) => item.hasExecuteTool && item.hasControlTool),
+      "Location-bound authenticated capability turn",
+      diagnostics,
+    )
+
+    await waitFor(async () => {
+      const directory = await currentSessionDirectory()
+      return directory && path.resolve(directory) === path.resolve(movedDirectory) ? directory : null
+    }, "real host session Location move", diagnostics, 30_000)
+
+    // A move may interrupt the in-flight model/tool turn instead of delivering
+    // another provider continuation. Bound the client request once the host has
+    // persisted the new Location; either path must remain mutation-free.
+    await new Promise((resolve) => setTimeout(resolve, 750))
+    locationController.abort()
+    const locationResult = await locationPending
+    if (!locationResult.ok && locationResult.error?.name !== "AbortError") throw locationResult.error
+
+    assert.equal(await readGoal(workspace, sessionID), null, "Location-invalidated create restored Goal state in the source workspace")
+    assert.equal(await readGoal(movedDirectory, sessionID), null, "Location-invalidated create persisted Goal state in the moved workspace")
+
+    const locationRequests = provider.stats.requests.slice(locationBefore)
+    assert.ok(locationRequests.some((item) => item.hasExecuteTool && item.hasControlTool), "Location test never started from an authenticated Goal capability turn")
+    assert.ok(
+      locationRequests.some((item) => item.sawLocationMoveResult) || path.resolve(await currentSessionDirectory()) === path.resolve(movedDirectory),
+      "host session_move neither reached the continuation nor persisted the moved Location",
+    )
+
     assert.equal(server.exitCode, null, `OpenCode 2 server exited during lifecycle canary\n${await diagnostics()}`)
 
     console.log(JSON.stringify({
@@ -617,6 +723,8 @@ async function main() {
       sessionID,
       directCommandRegistered: latestCommands.has("goal"),
       create: { objective: createdGoal.objective, status: createdGoal.status, maxTurns: createdGoal.budget?.maxTurns },
+      locationMoveBlocked: true,
+      locationWorkspaceRejectObserved: provider.stats.requests.some((item) => item.sawLocationReject),
       planMutationBlocked: true,
       spoofPreservedStatus: paused.status,
       resumeStatus: resumed.status,
@@ -630,7 +738,10 @@ async function main() {
         sequence: item.sequence,
         tools: item.tools,
         hasControlTool: item.hasControlTool,
+        hasExecuteTool: item.hasExecuteTool,
         sawConsumedResult: item.sawConsumedResult,
+        sawLocationMoveResult: item.sawLocationMoveResult,
+        sawLocationReject: item.sawLocationReject,
         toolCommand: item.toolCommand,
         sawSpoof: item.sawSpoof,
         sawPlan: item.sawPlan,

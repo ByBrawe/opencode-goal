@@ -387,12 +387,13 @@ async function main() {
         item.phase === "event"
         && item.sessionID === sessionID
         && (
-          item.type === "session.idle"
+          item.type === "session.execution.succeeded"
+          || item.type === "session.idle"
           || (item.type === "session.status" && item.status?.type === "idle")
           || (item.type === "session.status" && item.status === "idle")
         )
       )
-    }, "terminal session event through ctx.event.subscribe()", diagnostics, 60_000)
+    }, "terminal session execution event through ctx.event.subscribe()", diagnostics, 60_000)
 
     const compact = await request(`${apiPrefix}/session/${encodeURIComponent(sessionID)}/compact`, {
       method: "POST",
@@ -437,9 +438,11 @@ async function main() {
       contextHookObserved: true,
       eventTypes: [...new Set(sessionEvents.map((item) => item.type).filter(Boolean))],
       terminalEventObserved: sessionEvents.some((item) =>
-        item.type === "session.idle"
+        item.type === "session.execution.succeeded"
+        || item.type === "session.idle"
         || (item.type === "session.status" && (item.status?.type === "idle" || item.status === "idle"))
       ),
+      executionSucceededObserved: sessionEvents.some((item) => item.type === "session.execution.succeeded"),
     }, null, 2))
   } finally {
     await stopProcess(server)

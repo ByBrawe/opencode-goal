@@ -394,6 +394,26 @@ async function main() {
       )
     }, "terminal session event through ctx.event.subscribe()", diagnostics, 60_000)
 
+    const compact = await request(`${apiPrefix}/session/${encodeURIComponent(sessionID)}/compact`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }, 30_000)
+    assert.ok(compact.ok, `manual compaction admission failed: HTTP ${compact.status} ${compact.text}\n${await diagnostics()}`)
+
+    await waitFor(async () => {
+      const trace = await readTrace(traceFile)
+      return trace.some((item) => item.phase === "session.compaction" && item.sessionID === sessionID)
+    }, "session.compaction hook on a real manual compaction", diagnostics, 60_000)
+
+    await waitFor(async () => {
+      const trace = await readTrace(traceFile)
+      return trace.some((item) =>
+        item.phase === "event"
+        && item.sessionID === sessionID
+        && item.type === "session.compacted"
+      )
+    }, "session.compacted event through ctx.event.subscribe()", diagnostics, 60_000)
+
     const trace = await readTrace(traceFile)
     assert.ok(
       trace.some((item) => item.phase === "session.context" && item.sessionID === sessionID),
@@ -412,6 +432,8 @@ async function main() {
       sessionID,
       providerRequests: provider.stats.requests.length,
       compactionHookRegistered: true,
+      compactionHookObserved: trace.some((item) => item.phase === "session.compaction" && item.sessionID === sessionID),
+      compactedEventObserved: sessionEvents.some((item) => item.type === "session.compacted"),
       contextHookObserved: true,
       eventTypes: [...new Set(sessionEvents.map((item) => item.type).filter(Boolean))],
       terminalEventObserved: sessionEvents.some((item) =>

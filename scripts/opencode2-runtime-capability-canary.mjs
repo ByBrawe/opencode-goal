@@ -122,8 +122,11 @@ function startProvider() {
     for await (const chunk of req) raw += String(chunk)
     const body = raw ? JSON.parse(raw) : {}
     const sequence = stats.requests.length + 1
+    const isCompaction = raw.includes("You MUST summarize the conversation above")
+      || raw.includes("Update the existing checkpoint in the conversation above")
     stats.requests.push({
       sequence,
+      isCompaction,
       messageCount: Array.isArray(body?.messages) ? body.messages.length : 0,
       toolCount: Array.isArray(body?.tools)
         ? body.tools.length
@@ -131,6 +134,36 @@ function startProvider() {
           ? Object.keys(body.tools).length
           : 0,
     })
+    if (isCompaction) {
+      streamText(res, sequence, [
+        "## Objective",
+        "- Preserve the exact-host runtime capability proof.",
+        "",
+        "## Requirements",
+        "- Keep the runtime event and compaction boundaries deterministic.",
+        "",
+        "## Decisions",
+        "- Use the exact OpenCode 2.0.11 event vocabulary.",
+        "",
+        "## Work State",
+        "### Completed",
+        "- Primary provider turn completed.",
+        "### Active",
+        "- Manual compaction capability proof.",
+        "### Blocked",
+        "- (none)",
+        "",
+        "## Next Move",
+        "1. Continue the runtime capability canary.",
+        "",
+        "## Relevant Files",
+        "- (none)",
+        "",
+        "## Important Context",
+        "- This is deterministic canary output.",
+      ].join("\n"))
+      return
+    }
     streamText(res, sequence, `RUNTIME_CAPABILITY_TURN_${sequence}_OK`)
   })
 
@@ -413,7 +446,6 @@ async function main() {
         && item.sessionID === sessionID
         && (
           item.type === "session.compaction.ended"
-          || item.type === "session.compaction.failed"
           || item.type === "session.compacted"
         )
       )
@@ -442,7 +474,6 @@ async function main() {
       compactionFailedObserved: sessionEvents.some((item) => item.type === "session.compaction.failed"),
       compactionTerminalType: sessionEvents.find((item) =>
         item.type === "session.compaction.ended"
-        || item.type === "session.compaction.failed"
         || item.type === "session.compacted"
       )?.type,
       legacyCompactedEventObserved: sessionEvents.some((item) => item.type === "session.compacted"),

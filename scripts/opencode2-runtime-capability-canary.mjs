@@ -411,9 +411,9 @@ async function main() {
       return trace.some((item) =>
         item.phase === "event"
         && item.sessionID === sessionID
-        && item.type === "session.compacted"
+        && (item.type === "session.compaction.ended" || item.type === "session.compacted")
       )
-    }, "session.compacted event through ctx.event.subscribe()", diagnostics, 60_000)
+    }, "terminal compaction event through ctx.event.subscribe()", diagnostics, 60_000)
 
     const trace = await readTrace(traceFile)
     assert.ok(
@@ -434,7 +434,8 @@ async function main() {
       providerRequests: provider.stats.requests.length,
       compactionHookRegistered: true,
       compactionHookObserved: trace.some((item) => item.phase === "session.compaction" && item.sessionID === sessionID),
-      compactedEventObserved: sessionEvents.some((item) => item.type === "session.compacted"),
+      compactionEndedObserved: sessionEvents.some((item) => item.type === "session.compaction.ended"),
+      legacyCompactedEventObserved: sessionEvents.some((item) => item.type === "session.compacted"),
       contextHookObserved: true,
       eventTypes: [...new Set(sessionEvents.map((item) => item.type).filter(Boolean))],
       terminalEventObserved: sessionEvents.some((item) =>

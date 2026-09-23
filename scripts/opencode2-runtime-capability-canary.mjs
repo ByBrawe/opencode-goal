@@ -411,7 +411,11 @@ async function main() {
       return trace.some((item) =>
         item.phase === "event"
         && item.sessionID === sessionID
-        && (item.type === "session.compaction.ended" || item.type === "session.compacted")
+        && (
+          item.type === "session.compaction.ended"
+          || item.type === "session.compaction.failed"
+          || item.type === "session.compacted"
+        )
       )
     }, "terminal compaction event through ctx.event.subscribe()", diagnostics, 60_000)
 
@@ -435,6 +439,12 @@ async function main() {
       compactionHookRegistered: true,
       compactionHookObserved: trace.some((item) => item.phase === "session.compaction" && item.sessionID === sessionID),
       compactionEndedObserved: sessionEvents.some((item) => item.type === "session.compaction.ended"),
+      compactionFailedObserved: sessionEvents.some((item) => item.type === "session.compaction.failed"),
+      compactionTerminalType: sessionEvents.find((item) =>
+        item.type === "session.compaction.ended"
+        || item.type === "session.compaction.failed"
+        || item.type === "session.compacted"
+      )?.type,
       legacyCompactedEventObserved: sessionEvents.some((item) => item.type === "session.compacted"),
       contextHookObserved: true,
       eventTypes: [...new Set(sessionEvents.map((item) => item.type).filter(Boolean))],

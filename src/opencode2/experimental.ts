@@ -222,6 +222,7 @@ export interface OpenCode2DirectLifecycleRuntime {
   capabilities: Map<string, OpenCode2DirectCapability>
   armedBySession: Map<string, string>
   executionGenerationBySession: Map<string, number>
+  activeExecutionGenerationBySession: Map<string, number>
 }
 
 export function createOpenCode2DirectLifecycleRuntime(): OpenCode2DirectLifecycleRuntime {
@@ -229,6 +230,7 @@ export function createOpenCode2DirectLifecycleRuntime(): OpenCode2DirectLifecycl
     capabilities: new Map(),
     armedBySession: new Map(),
     executionGenerationBySession: new Map(),
+    activeExecutionGenerationBySession: new Map(),
   }
 }
 
@@ -239,7 +241,13 @@ function currentExecutionGeneration(runtime: OpenCode2DirectLifecycleRuntime, se
 function beginExecutionGeneration(runtime: OpenCode2DirectLifecycleRuntime, sessionID: string): number {
   const next = currentExecutionGeneration(runtime, sessionID) + 1
   runtime.executionGenerationBySession.set(sessionID, next)
+  runtime.activeExecutionGenerationBySession.set(sessionID, next)
   return next
+}
+
+function activeOrNextExecutionGeneration(runtime: OpenCode2DirectLifecycleRuntime, sessionID: string): number {
+  return runtime.activeExecutionGenerationBySession.get(sessionID)
+    ?? currentExecutionGeneration(runtime, sessionID) + 1
 }
 
 function directBudgetPatch(parsed: ReturnType<typeof parseGoalCommand>) {
@@ -338,17 +346,72 @@ export function observeOpenCode2LifecycleBoundary(
     || type === "session.execution.failed"
     || type === "session.execution.interrupted"
   ) {
-    revokeSessionCapabilitiesAtTerminal(runtime, sessionID, currentExecutionGeneration(runtime, sessionID))
+    const generation = runtime.activeExecutionGenerationBySession.get(sessionID)
+      ?? currentExecutionGeneration(runtime, sessionID)
+    revokeSessionCapabilitiesAtTerminal(runtime, sessionID, generation)
+    runtime.activeExecutionGenerationBySession.delete(sessionID)
     return "execution-terminal"
   }
 
   if (type === "session.deleted") {
     deleteSessionCapabilities(runtime, sessionID)
     runtime.executionGenerationBySession.delete(sessionID)
+    runtime.activeExecutionGenerationBySession.delete(sessionID)
     return "session-deleted"
   }
 
   return undefined
+}
+
+export interface OpenCode2AuthorityBoundaryObservation {
+  kind?: "compaction-execution" | "execution-started" | "execution-terminal" | "session-deleted"
+  sessionID?: string
+  generation?: number
+  compaction: OpenCode2CompactionBoundaryResult
+}
+
+export function inspectOpenCode2AuthorityBoundary(
+  runtime: OpenCode2DirectLifecycleRuntime,
+  compactionRuntime: OpenCode2CompactionBoundaryRuntime,
+  event: unknown,
+): OpenCode2AuthorityBoundaryObservation {
+  const type = firstString(record(event)?.type)
+  const sessionID = sessionIDFromEvent(event)
+  const generationBefore = sessionID
+    ? runtime.activeExecutionGenerationBySession.get(sessionID) ?? currentExecutionGeneration(runtime, sessionID)
+    : undefined
+  const compaction = observeOpenCode2CompactionBoundary(compactionRuntime, event)
+
+  // A compaction execution still receives a normal execution.started event, so
+  // let that event advance generation ownership. Only its terminal is consumed
+  // by the compaction coordinator.
+  if (compaction.consumedExecution) {
+    if (sessionID) runtime.activeExecutionGenerationBySession.delete(sessionID)
+    return {
+      kind: "compaction-execution",
+      ...(sessionID ? { sessionID } : {}),
+      ...(generationBefore !== undefined ? { generation: generationBefore } : {}),
+      compaction,
+    }
+  }
+
+  const lifecycle = observeOpenCode2LifecycleBoundary(runtime, event)
+  const generation = lifecycle === "execution-started" && sessionID
+    ? runtime.activeExecutionGenerationBySession.get(sessionID)
+    : lifecycle === "execution-terminal"
+      ? generationBefore
+      : undefined
+
+  if (lifecycle === "session-deleted" && sessionID) {
+    compactionRuntime.sessions.delete(sessionID)
+  }
+
+  return {
+    ...(lifecycle ? { kind: lifecycle } : {}),
+    ...(sessionID ? { sessionID } : {}),
+    ...(generation !== undefined ? { generation } : {}),
+    compaction,
+  }
 }
 
 export function observeOpenCode2AuthorityBoundary(
@@ -356,18 +419,7 @@ export function observeOpenCode2AuthorityBoundary(
   compactionRuntime: OpenCode2CompactionBoundaryRuntime,
   event: unknown,
 ): "compaction-execution" | "execution-started" | "execution-terminal" | "session-deleted" | undefined {
-  const compaction = observeOpenCode2CompactionBoundary(compactionRuntime, event)
-
-  // Execution-started still advances the generation even while compaction owns
-  // that execution; only its terminal is consumed as compaction authority.
-  if (compaction.consumedExecution) return "compaction-execution"
-
-  const lifecycle = observeOpenCode2LifecycleBoundary(runtime, event)
-  if (lifecycle === "session-deleted") {
-    const sessionID = sessionIDFromEvent(event)
-    if (sessionID) compactionRuntime.sessions.delete(sessionID)
-  }
-  return lifecycle
+  return inspectOpenCode2AuthorityBoundary(runtime, compactionRuntime, event).kind
 }
 
 function revokeCapability(runtime: OpenCode2DirectLifecycleRuntime, capability: OpenCode2DirectCapability): void {
@@ -907,6 +959,7 @@ export const OpenCode2GoalsExperimental = {
       runtime.capabilities.clear()
       runtime.armedBySession.clear()
       runtime.executionGenerationBySession.clear()
+      runtime.activeExecutionGenerationBySession.clear()
       compactionRuntime.sessions.clear()
       await lifecycleTask?.catch(() => undefined)
     }

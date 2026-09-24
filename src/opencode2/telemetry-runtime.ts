@@ -100,10 +100,11 @@ export function beginOpenCode2TelemetryExecution(
   generation: number,
   event?: unknown,
 ): OpenCode2ExecutionTelemetry {
+  const startedAt = eventCreated(event)
   const execution: OpenCode2ExecutionTelemetry = {
     sessionID,
     generation,
-    ...(eventCreated(event) !== undefined ? { startedAt: eventCreated(event) } : {}),
+    ...(startedAt !== undefined ? { startedAt } : {}),
     meaningful: false,
     inputTokens: 0,
     outputTokens: 0,
@@ -150,9 +151,10 @@ export function observeOpenCode2TelemetryEvent(
     const id = callID(data)
     if (id) {
       const existing = execution.tools.get(id) ?? { id }
+      const name = firstString(data.name)
       execution.tools.set(id, {
         ...existing,
-        ...(firstString(data.name) ? { name: firstString(data.name) } : {}),
+        ...(name !== undefined ? { name } : {}),
         ...(data.input !== undefined ? { input: data.input } : {}),
         ...(data.metadata !== undefined ? { metadata: data.metadata } : {}),
         ...(typeof data.executed === "boolean" ? { executed: data.executed } : {}),

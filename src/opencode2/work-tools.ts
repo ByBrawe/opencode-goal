@@ -148,6 +148,11 @@ export function createOpenCode2GoalWorkTools(input: {
     return { id, directory, store, goal, owner }
   }
 
+  function hideFrom(event: any): void {
+    if (!event?.tools || typeof event.tools !== "object") return
+    for (const name of OPENCODE2_GOAL_WORK_TOOLS) delete event.tools[name]
+  }
+
   function handleContext(event: any): boolean {
     const id = typeof event?.sessionID === "string"
       ? event.sessionID
@@ -155,9 +160,7 @@ export function createOpenCode2GoalWorkTools(input: {
         ? event.data.sessionID
         : undefined
     if (!id) {
-      if (event?.tools && typeof event.tools === "object") {
-        for (const name of OPENCODE2_GOAL_WORK_TOOLS) delete event.tools[name]
-      }
+      hideFrom(event)
       return false
     }
     const messages = Array.isArray(event?.messages) ? event.messages : []
@@ -174,9 +177,7 @@ export function createOpenCode2GoalWorkTools(input: {
 
     const owner = input.autonomousRuntime.executionOwnerBySession.get(id)
     const owned = Boolean(owner && lastUserMessageID && owner.messageID === lastUserMessageID)
-    if (!owned && event?.tools && typeof event.tools === "object") {
-      for (const name of OPENCODE2_GOAL_WORK_TOOLS) delete event.tools[name]
-    }
+    if (!owned) hideFrom(event)
     return owned
   }
 
@@ -385,6 +386,7 @@ export function createOpenCode2GoalWorkTools(input: {
 
   return {
     definitions,
+    hideFrom,
     handleContext,
     markForegroundSteering,
     clearSession,

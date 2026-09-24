@@ -5,13 +5,29 @@ import { GoalStore } from "../persistence/store.js"
 import { applyGoalBudget, budgetLimitHits } from "../runtime/accounting.js"
 import { formatGoalRuntimeFingerprint } from "../runtime/fingerprint.js"
 import { parseGoalCommand } from "../opencode/command.js"
-import { createGoalTransitionNotifier } from "../opencode/notify.js"
+import { createGoalTransitionNotifier, notifyGoal } from "../opencode/notify.js"
+import { markHostProgress } from "../runtime/progress.js"
 import { continuationPrompt } from "../opencode/prompt.js"
 import { createOpenCode2CompactionBoundaryRuntime, observeOpenCode2CompactionBoundary, prepareOpenCode2PostCompactionContinuation, type OpenCode2CompactionBoundaryResult, type OpenCode2CompactionBoundaryRuntime } from "./compaction-boundary.js"
 import { prepareOpenCode2Continuation } from "./continuation-boundary.js"
 import { createOpenCode2AutonomousRuntime, armOpenCode2GoalExecution, clearOpenCode2GoalOwnership, consumeOpenCode2GoalExecution, consumeOpenCode2GoalKickoff, forgetOpenCode2GoalPrompt, rememberOpenCode2GoalKickoff, rememberOpenCode2GoalPrompt, type OpenCode2AutonomousRuntime, type OpenCode2GoalContinuationSource } from "./autonomous-runtime.js"
 import { createOpenCode2SemanticVerifierRuntime, OPENCODE2_VERIFIER_RESULT_TOOL } from "./semantic-verifier.js"
 import { createOpenCode2GoalWorkTools } from "./work-tools.js"
+import {
+  applyOpenCode2GoalTelemetry,
+  beginOpenCode2TelemetryExecution,
+  clearOpenCode2TelemetrySession,
+  createOpenCode2TelemetryRuntime,
+  finishOpenCode2TelemetryExecution,
+  observeOpenCode2TelemetryEvent,
+  openCode2ToolTelemetry,
+} from "./telemetry-runtime.js"
+import {
+  collectOpenCode2SuccessfulToolProgress,
+  createOpenCode2ToolProgressRuntime,
+  forgetOpenCode2ToolProgressSession,
+  rememberOpenCode2ShellBefore,
+} from "./tool-progress.js"
 
 export const OPENCODE2_EXPERIMENTAL_PLUGIN_ID = "bybrawe.open-code-goals.v2-experimental"
 
@@ -831,6 +847,8 @@ export const OpenCode2GoalsExperimental = {
     const runtime = createOpenCode2DirectLifecycleRuntime()
     const compactionRuntime = createOpenCode2CompactionBoundaryRuntime()
     const autonomousRuntime = createOpenCode2AutonomousRuntime()
+    const telemetryRuntime = createOpenCode2TelemetryRuntime()
+    const toolProgressRuntime = createOpenCode2ToolProgressRuntime()
     const autonomousDispatching = new Set<string>()
     const previewEnabled = directLifecyclePreviewEnabled()
     const autonomousEnabled = previewEnabled && autonomousPreviewEnabled()
@@ -851,6 +869,77 @@ export const OpenCode2GoalsExperimental = {
       const store = new GoalStore(directory, { onTransition: createGoalTransitionNotifier(directory) })
       const goal = await store.load(sessionID)
       return { directory, store, goal }
+    }
+
+    const applySuccessfulToolProgress = async (sessionID: string, callID: string) => {
+      const owner = autonomousRuntime.executionOwnerBySession.get(sessionID)
+      const tool = openCode2ToolTelemetry(telemetryRuntime, sessionID, callID)
+      if (!owner || !tool?.name) return
+
+      try {
+        const { directory, store, goal } = await coordinatorGoal(sessionID)
+        if (
+          !goal
+          || goal.status !== "active"
+          || goal.id !== owner.goalID
+          || goal.revision !== owner.revision
+        ) return
+
+        const fingerprints = await collectOpenCode2SuccessfulToolProgress(toolProgressRuntime, {
+          sessionID,
+          callID,
+          tool: tool.name,
+          args: tool.input,
+          metadata: tool.metadata,
+          directory,
+          goalID: goal.id,
+          revision: goal.revision,
+        })
+        if (!fingerprints.length) return
+
+        let next = goal
+        const before = next.progressRevision
+        for (const item of fingerprints) {
+          next = markHostProgress(next, {
+            fingerprint: item.fingerprint,
+            source: `tool:${tool.name}`,
+            summary: item.summary,
+          })
+        }
+        if (next.progressRevision === before) return
+        await store.save(next)
+        notifyGoal(directory, next, "progress")
+      } catch {
+        // Progress telemetry is advisory. Never kill the V2 event subscriber
+        // or authorize fallback mutation when hashing/state races fail.
+      }
+    }
+
+    const rememberShellProgressStart = async (sessionID: string, callID: string) => {
+      const owner = autonomousRuntime.executionOwnerBySession.get(sessionID)
+      const tool = openCode2ToolTelemetry(telemetryRuntime, sessionID, callID)
+      if (!owner || !tool?.name || (tool.name !== "shell" && tool.name !== "bash")) return
+
+      try {
+        const { directory, goal } = await coordinatorGoal(sessionID)
+        if (
+          !goal
+          || goal.status !== "active"
+          || goal.id !== owner.goalID
+          || goal.revision !== owner.revision
+        ) return
+        await rememberOpenCode2ShellBefore(toolProgressRuntime, {
+          sessionID,
+          callID,
+          tool: tool.name,
+          args: tool.input,
+          directory,
+          goalID: goal.id,
+          revision: goal.revision,
+        })
+      } catch {
+        // Missing/unreadable state cannot authorize progress.
+      }
     }
 
     const pauseAutonomousDispatchFailure = async (
@@ -937,9 +1026,46 @@ export const OpenCode2GoalsExperimental = {
             const boundary = inspectOpenCode2AuthorityBoundary(runtime, compactionRuntime, event)
             const sessionID = boundary.sessionID
             const type = firstString(record(event)?.type)
+            const data = nestedRecord(event, "data")
+            let completedTelemetry
+
+            if (sessionID && boundary.kind === "execution-started" && boundary.generation !== undefined) {
+              beginOpenCode2TelemetryExecution(
+                telemetryRuntime,
+                sessionID,
+                boundary.generation,
+                event,
+              )
+            } else if (sessionID) {
+              observeOpenCode2TelemetryEvent(telemetryRuntime, sessionID, event)
+            }
+
+            if (sessionID && type === "session.tool.called") {
+              const callID = firstString(data?.id, data?.callID)
+              if (callID) await rememberShellProgressStart(sessionID, callID)
+            }
+            if (sessionID && type === "session.tool.success") {
+              const callID = firstString(data?.id, data?.callID)
+              if (callID) await applySuccessfulToolProgress(sessionID, callID)
+            }
+
+            if (
+              sessionID
+              && boundary.generation !== undefined
+              && (boundary.kind === "execution-terminal" || boundary.kind === "compaction-execution")
+            ) {
+              completedTelemetry = finishOpenCode2TelemetryExecution(
+                telemetryRuntime,
+                sessionID,
+                boundary.generation,
+                event,
+              )
+            }
 
             if (boundary.kind === "session-deleted" && sessionID) {
               clearOpenCode2GoalOwnership(autonomousRuntime, sessionID)
+              clearOpenCode2TelemetrySession(telemetryRuntime, sessionID)
+              forgetOpenCode2ToolProgressSession(toolProgressRuntime, sessionID)
               workTools.clearSession(sessionID)
               autonomousDispatching.delete(sessionID)
               continue
@@ -1002,7 +1128,18 @@ export const OpenCode2GoalsExperimental = {
                 || owner.revision !== goal.revision
               ) continue
 
-              const prepared = prepareOpenCode2Continuation(goal, event)
+              let observedGoal = goal
+              if (completedTelemetry) {
+                const accounted = applyOpenCode2GoalTelemetry(
+                  observedGoal,
+                  owner.messageID,
+                  completedTelemetry,
+                )
+                observedGoal = accounted.goal
+                if (observedGoal !== goal) await store.save(observedGoal)
+              }
+
+              const prepared = prepareOpenCode2Continuation(observedGoal, event)
               if (!prepared.closed) continue
               await store.save(prepared.goal)
               if (prepared.shouldContinue && prepared.prompt) {
@@ -1199,6 +1336,8 @@ export const OpenCode2GoalsExperimental = {
       autonomousRuntime.pendingPromptBySession.clear()
       autonomousRuntime.executionOwnerBySession.clear()
       autonomousRuntime.kickoffBySession.clear()
+      telemetryRuntime.currentBySession.clear()
+      toolProgressRuntime.shellPending.clear()
       autonomousDispatching.clear()
       await lifecycleTask?.catch(() => undefined)
     }

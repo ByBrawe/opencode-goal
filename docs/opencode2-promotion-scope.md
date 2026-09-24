@@ -30,6 +30,19 @@ Successful owned turns reuse the same Goal no-progress boundary as stable V1. Co
 
 This preview still does **not** establish stable OpenCode 2 support. The final combined promotion head remains required before compatibility metadata can be widened.
 
+## V1 control-plane parity preview
+
+The host-authenticated V2 `/goal` command surface also reuses the stable V1 persistence and formatting layers for Goal administration:
+
+- read-only views: `status`, `contract`, `audit`, `budget` (without a patch), `history`, `doctor`, `list`, and `queue`;
+- one-use host-authorized mutations: `budget`, `history prune`, `restore`, `add`, `queue move/remove/clear`, and `next`;
+- queue state is still stored by `GoalSequenceStore`; only one Goal can be live, queue entries remain inert until promotion, and storage locking/integrity behavior is shared with V1;
+- lifting a `budget_limited` Goal or explicitly activating `next` can re-arm autonomous V2 continuation, while restore remains paused until the user explicitly resumes;
+- after a Goal-owned V2 execution completes the current Goal, the successful execution boundary may promote the next queued Goal exactly through the same sequence store and schedule the promoted Goal as the new continuation owner;
+- ordinary prompt text cannot invoke these mutations: every mutating administration command still passes through the host-bound, single-use direct-command capability and current session Location check.
+
+Stable promotion requires an exact OpenCode 2.0.11 canary to prove the read-only views remain mutation-free and representative budget/archive/restore/sequence mutations persist through that authority boundary.
+
 ## V1-grade completion preview
 
 When both lifecycle and autonomous V2 previews are enabled, Goal-owned OpenCode 2 executions expose the same model-facing work controls used by stable V1: checkpoint notes, host file evidence, verified completion, waiting-user sleep, and repeated blocker reporting. These controls are visible only to the exact host-admitted Goal-owned execution identity for the current Goal revision; ordinary foreground turns and verifier children do not inherit them.

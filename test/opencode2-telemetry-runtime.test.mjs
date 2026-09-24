@@ -1,6 +1,8 @@
 import test from "node:test"
 import assert from "node:assert/strict"
+import { createGoal } from "../dist/domain/goal.js"
 import {
+  applyOpenCode2GoalTelemetry,
   beginOpenCode2TelemetryExecution,
   clearOpenCode2TelemetrySession,
   createOpenCode2TelemetryRuntime,
@@ -121,4 +123,72 @@ test("V2 telemetry text activity is meaningful and terminal generations are fail
   beginOpenCode2TelemetryExecution(runtime, sessionID, 4)
   clearOpenCode2TelemetrySession(runtime, sessionID)
   assert.equal(finishOpenCode2TelemetryExecution(runtime, sessionID, 4), undefined)
+})
+
+
+test("V2 telemetry preserves V1 logical-turn and empty-turn accounting semantics", () => {
+  let goal = createGoal({
+    sessionID: "v2-accounting",
+    objective: "account exact V2 turns",
+    budget: { maxTurns: 2, maxTokens: 0, maxCost: 0, maxRuntimeMs: 0 },
+    now: 0,
+  })
+
+  const meaningful = {
+    sessionID: "v2-accounting",
+    generation: 1,
+    startedAt: 100,
+    completedAt: 200,
+    meaningful: true,
+    inputTokens: 40,
+    outputTokens: 10,
+    reasoningTokens: 2,
+    cost: 0.5,
+    lastTokens: { input: 40, output: 10, reasoning: 2, cache: { read: 3, write: 0 } },
+    assistantMessageIDs: ["a1", "a2"],
+    tools: [{ id: "call", name: "write" }],
+  }
+
+  goal = applyOpenCode2GoalTelemetry(goal, "goal-user-1", meaningful, 200).goal
+  assert.equal(goal.usage.turns, 1, "multi-step V2 provider activity counts as one logical Goal turn")
+  assert.equal(goal.usage.tokens, 52)
+  assert.equal(goal.usage.cost, 0.5)
+  assert.equal(goal.usage.runtimeMs, 100)
+  assert.equal(goal.execution?.modelContext?.lastRequestTokens, 52)
+  assert.equal(goal.execution?.modelContext?.lastInputTokens, 43)
+
+  const empty1 = {
+    ...meaningful,
+    generation: 2,
+    startedAt: 300,
+    completedAt: 350,
+    meaningful: false,
+    inputTokens: 30,
+    outputTokens: 0,
+    reasoningTokens: 0,
+    cost: 0.1,
+    lastTokens: { input: 30, output: 0, reasoning: 0 },
+    assistantMessageIDs: ["empty-1"],
+    tools: [],
+  }
+  const firstEmpty = applyOpenCode2GoalTelemetry(goal, "goal-user-2", empty1, 350)
+  goal = firstEmpty.goal
+  assert.equal(firstEmpty.empty, true)
+  assert.equal(goal.status, "active")
+  assert.equal(goal.emptyTurnCount, 1)
+  assert.equal(goal.usage.turns, 1, "empty provider response does not consume the logical turn budget")
+  assert.equal(goal.usage.tokens, 82, "empty provider response still preserves billable token usage")
+  assert.equal(goal.usage.cost, 0.6)
+  assert.equal(goal.skipNextStallCheck, true)
+
+  const empty2 = { ...empty1, generation: 3, startedAt: 400, completedAt: 450, assistantMessageIDs: ["empty-2"] }
+  goal = applyOpenCode2GoalTelemetry(goal, "goal-user-3", empty2, 450).goal
+  assert.equal(goal.status, "paused")
+  assert.equal(goal.emptyTurnCount, 2)
+  assert.match(goal.stopReason ?? "", /2 consecutive Goal-owned assistant turns completed without meaningful/)
+  assert.equal(goal.usage.turns, 1)
+  assert.equal(goal.usage.tokens, 112)
+
+  const duplicate = applyOpenCode2GoalTelemetry(goal, "goal-user-3", empty2, 500).goal
+  assert.deepEqual(duplicate, goal, "duplicate terminal delivery is deduplicated by the host Goal user-message identity")
 })

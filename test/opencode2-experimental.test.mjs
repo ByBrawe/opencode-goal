@@ -365,6 +365,40 @@ test("V2 execution terminal events revoke single-execution lifecycle authority",
     assert.equal(runtime.armedBySession.has(sessionID), false)
   }
 
+  runtime.capabilities.clear()
+  runtime.armedBySession.clear()
+  const newerKey = `${sessionID}\\u0000message-newer`
+  runtime.capabilities.set(newerKey, {
+    sessionID,
+    messageID: "message-newer",
+    directory: "/tmp/v2-terminal",
+    command: "pause",
+    canonicalCommand: "{}",
+    action: "pause",
+    createdAt: 2_000,
+    expiresAt: 60_000,
+    state: "pending",
+  })
+  assert.equal(
+    observeOpenCode2LifecycleBoundary(runtime, {
+      type: "session.execution.succeeded",
+      created: 1_000,
+      data: { sessionID },
+    }),
+    "execution-terminal",
+  )
+  assert.equal(runtime.capabilities.has(newerKey), true, "a late prior terminal event must not revoke newer command authority")
+
+  assert.equal(
+    observeOpenCode2LifecycleBoundary(runtime, {
+      type: "session.execution.interrupted",
+      created: 3_000,
+      data: { sessionID },
+    }),
+    "execution-terminal",
+  )
+  assert.equal(runtime.capabilities.has(newerKey), false, "a terminal event created after the capability must revoke it")
+
   seed("deleted")
   assert.equal(
     observeOpenCode2LifecycleBoundary(runtime, { type: "session.deleted", data: { sessionID } }),

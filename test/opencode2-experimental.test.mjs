@@ -6,8 +6,11 @@ import path from "node:path"
 import OpenCode2GoalsExperimental, {
   OPENCODE2_DIRECT_LIFECYCLE_ENV,
   OPENCODE2_EXPERIMENTAL_PLUGIN_ID,
+  createOpenCode2DirectLifecycleRuntime,
   executeOpenCode2GoalControl,
+  observeOpenCode2AuthorityBoundary,
 } from "../dist/opencode2/experimental.js"
+import { createOpenCode2CompactionBoundaryRuntime } from "../dist/opencode2/compaction-boundary.js"
 import { createGoal } from "../dist/domain/goal.js"
 import { GoalStore } from "../dist/persistence/store.js"
 
@@ -195,6 +198,7 @@ test("experimental V2 plugin registers read-only inspection without command wrap
     assert.equal(typeof host.tools.get("opencode_goals_v2_get")?.definition?.execute, "function")
     assert.equal(typeof host.hooks.get("context"), "function")
     assert.equal(typeof host.hooks.get("request"), "function")
+    assert.equal(typeof host.hooks.get("compaction"), "function")
     assert.equal(typeof cleanup, "function")
     cleanup()
   } finally {
@@ -288,6 +292,17 @@ test("V2 presentation hooks remove stale control and never mutate persisted stat
     assert.equal(requestEvent.tools.opencode_goals_v2_control, undefined)
     assert.match(requestEvent.system[1], /Objective: ship context/)
     assert.deepEqual(await new GoalStore(root).load(sessionID), before)
+
+    const compactionEvent = await runHook(host, "compaction", {
+      sessionID,
+      agent: "build",
+      system: [],
+    })
+    assert.equal(compactionEvent.tools.opencode_goals_v2_control, undefined, "compaction must never inherit direct mutation authority")
+    assert.equal(compactionEvent.system[0]?.type, "text")
+    assert.match(compactionEvent.system[0]?.text ?? "", /OpenCode Goals experimental V2 persisted state/)
+    assert.match(compactionEvent.system[0]?.text ?? "", /Objective: ship context/)
+    assert.deepEqual(await new GoalStore(root).load(sessionID), before, "compaction context injection must stay read-only")
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -309,6 +324,104 @@ test("current OpenCode 2 one-argument ToolEditor registers provider-callable too
   } finally {
     await rm(root, { recursive: true, force: true })
   }
+})
+
+test("V2 authority boundary binds direct capabilities to ordered execution generations", () => {
+  const runtime = createOpenCode2DirectLifecycleRuntime()
+  const compaction = createOpenCode2CompactionBoundaryRuntime()
+  const sessionID = "v2-authority-boundary"
+
+  const seed = (messageID, executionGeneration, state = "armed") => {
+    const key = `${sessionID}\u0000${messageID}`
+    runtime.capabilities.set(key, {
+      sessionID,
+      messageID,
+      directory: "/tmp/v2-authority",
+      command: "pause",
+      canonicalCommand: "{}",
+      action: "pause",
+      createdAt: 1_000,
+      expiresAt: 999_999,
+      executionGeneration,
+      state,
+    })
+    if (state === "armed") runtime.armedBySession.set(sessionID, key)
+    return key
+  }
+
+  assert.equal(
+    observeOpenCode2AuthorityBoundary(runtime, compaction, { type: "session.execution.started", data: { sessionID } }),
+    "execution-started",
+  )
+  assert.equal(runtime.executionGenerationBySession.get(sessionID), 1)
+
+  const newerPending = seed("generation-2", 2, "pending")
+  assert.equal(
+    observeOpenCode2AuthorityBoundary(runtime, compaction, { type: "session.execution.succeeded", data: { sessionID } }),
+    "execution-terminal",
+  )
+  assert.equal(
+    runtime.capabilities.has(newerPending),
+    true,
+    "a delayed generation-1 terminal must not revoke authority bound to generation 2",
+  )
+
+  assert.equal(
+    observeOpenCode2AuthorityBoundary(runtime, compaction, { type: "session.execution.started", data: { sessionID } }),
+    "execution-started",
+  )
+  assert.equal(runtime.executionGenerationBySession.get(sessionID), 2)
+  assert.equal(
+    observeOpenCode2AuthorityBoundary(runtime, compaction, { type: "session.execution.interrupted", data: { sessionID } }),
+    "execution-terminal",
+  )
+  assert.equal(runtime.capabilities.has(newerPending), false, "generation-2 terminal must revoke generation-2 authority")
+
+  assert.equal(
+    observeOpenCode2AuthorityBoundary(runtime, compaction, { type: "session.compaction.started", data: { sessionID } }),
+    undefined,
+  )
+  assert.equal(
+    observeOpenCode2AuthorityBoundary(runtime, compaction, { type: "session.execution.started", data: { sessionID } }),
+    "execution-started",
+  )
+  assert.equal(runtime.executionGenerationBySession.get(sessionID), 3)
+
+  const afterCompaction = seed("generation-4", 4)
+  assert.equal(
+    observeOpenCode2AuthorityBoundary(runtime, compaction, { type: "session.compaction.ended", data: { sessionID } }),
+    undefined,
+  )
+  assert.equal(
+    observeOpenCode2AuthorityBoundary(runtime, compaction, { type: "session.execution.succeeded", data: { sessionID } }),
+    "compaction-execution",
+  )
+  assert.equal(
+    runtime.capabilities.has(afterCompaction),
+    true,
+    "compaction execution terminal must not revoke authority for the next direct execution",
+  )
+
+  assert.equal(
+    observeOpenCode2AuthorityBoundary(runtime, compaction, { type: "session.execution.started", data: { sessionID } }),
+    "execution-started",
+  )
+  assert.equal(runtime.executionGenerationBySession.get(sessionID), 4)
+  assert.equal(
+    observeOpenCode2AuthorityBoundary(runtime, compaction, { type: "session.execution.failed", data: { sessionID } }),
+    "execution-terminal",
+  )
+  assert.equal(runtime.capabilities.has(afterCompaction), false)
+
+  seed("deleted", 5)
+  assert.equal(
+    observeOpenCode2AuthorityBoundary(runtime, compaction, { type: "session.deleted", data: { sessionID } }),
+    "session-deleted",
+  )
+  assert.equal(runtime.capabilities.size, 0)
+  assert.equal(runtime.armedBySession.has(sessionID), false)
+  assert.equal(runtime.executionGenerationBySession.has(sessionID), false)
+  assert.equal(compaction.sessions.has(sessionID), false)
 })
 
 test("V2 direct lifecycle preview registers host command and mutating tool only when explicitly enabled", async () => {

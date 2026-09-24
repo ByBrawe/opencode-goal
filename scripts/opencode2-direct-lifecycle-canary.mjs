@@ -647,6 +647,28 @@ async function main() {
     await waitFor(() => requestsFor(CREATE_COMMAND).some((item) => item.sawConsumedResult), "create tool continuation", diagnostics)
     assertAuthorizedTurn(CREATE_COMMAND)
 
+    const beforeCompaction = JSON.stringify(await readGoal(workspace, sessionID))
+    const compactionRequestsBefore = provider.stats.requests.length
+    const compact = await request(`${apiPrefix}/session/${encodeURIComponent(sessionID)}/compact`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }, 30_000)
+    assert.ok(compact.ok, `V2 Goal compaction admission failed: HTTP ${compact.status} ${compact.text}\n${await diagnostics()}`)
+    await waitFor(
+      () => provider.stats.requests.slice(compactionRequestsBefore).some((item) =>
+        item.text.includes("OpenCode Goals experimental V2 persisted state")
+        && item.text.includes("Objective: ship v2 capability")
+      ),
+      "active Goal context inside exact-host V2 compaction request",
+      diagnostics,
+      60_000,
+    )
+    assert.equal(
+      JSON.stringify(await readGoal(workspace, sessionID)),
+      beforeCompaction,
+      "V2 compaction context injection must not mutate persisted Goal state",
+    )
+
     const activeBeforePlan = JSON.stringify(await readGoal(workspace, sessionID))
     const switchPlan = await request(`${apiPrefix}/session/${encodeURIComponent(sessionID)}/agent`, {
       method: "POST",

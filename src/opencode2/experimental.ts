@@ -7,6 +7,7 @@ import { formatGoalRuntimeFingerprint } from "../runtime/fingerprint.js"
 import { parseGoalCommand } from "../opencode/command.js"
 import { createGoalTransitionNotifier } from "../opencode/notify.js"
 import { continuationPrompt } from "../opencode/prompt.js"
+import { createOpenCode2CompactionBoundaryRuntime, observeOpenCode2CompactionBoundary, type OpenCode2CompactionBoundaryRuntime } from "./compaction-boundary.js"
 
 export const OPENCODE2_EXPERIMENTAL_PLUGIN_ID = "bybrawe.open-code-goals.v2-experimental"
 
@@ -20,6 +21,9 @@ type UnknownRecord = Record<string, unknown>
 
 export interface OpenCode2ExperimentalContext {
   options?: Readonly<UnknownRecord>
+  event?: {
+    subscribe(input?: { signal?: AbortSignal }): AsyncIterable<unknown>
+  }
   command?: {
     transform(callback: (commands: any) => void | Promise<void>): unknown | Promise<unknown>
   }
@@ -79,7 +83,13 @@ function firstString(...values: unknown[]): string | undefined {
 
 function sessionIDFromEvent(event: unknown): string | undefined {
   const item = record(event)
-  return firstString(item?.sessionID, nestedRecord(item?.request, "session")?.id, record(item?.request)?.sessionID)
+  return firstString(
+    item?.sessionID,
+    nestedRecord(item, "data")?.sessionID,
+    nestedRecord(item, "properties")?.sessionID,
+    nestedRecord(item?.request, "session")?.id,
+    record(item?.request)?.sessionID,
+  )
 }
 
 async function resolveSessionDirectory(ctx: OpenCode2ExperimentalContext, sessionID: string): Promise<string> {
@@ -201,6 +211,7 @@ export interface OpenCode2DirectCapability {
   action: ReturnType<typeof parseGoalCommand>["action"]
   createdAt: number
   expiresAt: number
+  executionGeneration: number
   state: "pending" | "armed"
   agent?: string
 }
@@ -208,13 +219,25 @@ export interface OpenCode2DirectCapability {
 export interface OpenCode2DirectLifecycleRuntime {
   capabilities: Map<string, OpenCode2DirectCapability>
   armedBySession: Map<string, string>
+  executionGenerationBySession: Map<string, number>
 }
 
 export function createOpenCode2DirectLifecycleRuntime(): OpenCode2DirectLifecycleRuntime {
   return {
     capabilities: new Map(),
     armedBySession: new Map(),
+    executionGenerationBySession: new Map(),
   }
+}
+
+function currentExecutionGeneration(runtime: OpenCode2DirectLifecycleRuntime, sessionID: string): number {
+  return runtime.executionGenerationBySession.get(sessionID) ?? 0
+}
+
+function beginExecutionGeneration(runtime: OpenCode2DirectLifecycleRuntime, sessionID: string): number {
+  const next = currentExecutionGeneration(runtime, sessionID) + 1
+  runtime.executionGenerationBySession.set(sessionID, next)
+  return next
 }
 
 function directBudgetPatch(parsed: ReturnType<typeof parseGoalCommand>) {
@@ -276,6 +299,73 @@ function deleteSessionCapabilities(runtime: OpenCode2DirectLifecycleRuntime, ses
   }
   const armed = runtime.armedBySession.get(sessionID)
   if (armed && armed !== exceptKey) runtime.armedBySession.delete(sessionID)
+}
+
+function revokeSessionCapabilitiesAtTerminal(
+  runtime: OpenCode2DirectLifecycleRuntime,
+  sessionID: string,
+  boundaryGeneration: number,
+): void {
+  for (const [key, capability] of runtime.capabilities) {
+    if (capability.sessionID !== sessionID) continue
+    // Direct command admission happens before its execution starts. Bind the
+    // capability to the next observed execution generation so a delayed
+    // terminal from the previous execution cannot revoke newer authority.
+    if (capability.executionGeneration > boundaryGeneration) continue
+    runtime.capabilities.delete(key)
+    if (runtime.armedBySession.get(sessionID) === key) runtime.armedBySession.delete(sessionID)
+  }
+}
+
+export function observeOpenCode2LifecycleBoundary(
+  runtime: OpenCode2DirectLifecycleRuntime,
+  event: unknown,
+): "execution-started" | "execution-terminal" | "session-deleted" | undefined {
+  const item = record(event)
+  const type = firstString(item?.type)
+  const sessionID = sessionIDFromEvent(event)
+  if (!type || !sessionID) return undefined
+
+  if (type === "session.execution.started") {
+    beginExecutionGeneration(runtime, sessionID)
+    return "execution-started"
+  }
+
+  if (
+    type === "session.execution.succeeded"
+    || type === "session.execution.failed"
+    || type === "session.execution.interrupted"
+  ) {
+    revokeSessionCapabilitiesAtTerminal(runtime, sessionID, currentExecutionGeneration(runtime, sessionID))
+    return "execution-terminal"
+  }
+
+  if (type === "session.deleted") {
+    deleteSessionCapabilities(runtime, sessionID)
+    runtime.executionGenerationBySession.delete(sessionID)
+    return "session-deleted"
+  }
+
+  return undefined
+}
+
+export function observeOpenCode2AuthorityBoundary(
+  runtime: OpenCode2DirectLifecycleRuntime,
+  compactionRuntime: OpenCode2CompactionBoundaryRuntime,
+  event: unknown,
+): "compaction-execution" | "execution-started" | "execution-terminal" | "session-deleted" | undefined {
+  const compaction = observeOpenCode2CompactionBoundary(compactionRuntime, event)
+
+  // Execution-started still advances the generation even while compaction owns
+  // that execution; only its terminal is consumed as compaction authority.
+  if (compaction.consumedExecution) return "compaction-execution"
+
+  const lifecycle = observeOpenCode2LifecycleBoundary(runtime, event)
+  if (lifecycle === "session-deleted") {
+    const sessionID = sessionIDFromEvent(event)
+    if (sessionID) compactionRuntime.sessions.delete(sessionID)
+  }
+  return lifecycle
 }
 
 function revokeCapability(runtime: OpenCode2DirectLifecycleRuntime, capability: OpenCode2DirectCapability): void {
@@ -550,6 +640,7 @@ export async function executeOpenCode2DirectGoalCommand(
     action: parsed.action,
     createdAt: Date.now(),
     expiresAt: Date.now() + DIRECT_CAPABILITY_TTL_MS,
+    executionGeneration: currentExecutionGeneration(runtime, input.sessionID) + 1,
     state: "pending",
   }
   const key = directCapabilityKey(input.sessionID, messageID)
@@ -659,7 +750,25 @@ export const OpenCode2GoalsExperimental = {
   id: OPENCODE2_EXPERIMENTAL_PLUGIN_ID,
   setup: async (ctx: OpenCode2ExperimentalContext) => {
     const runtime = createOpenCode2DirectLifecycleRuntime()
+    const compactionRuntime = createOpenCode2CompactionBoundaryRuntime()
     const previewEnabled = directLifecyclePreviewEnabled()
+    const lifecycleAbort = new AbortController()
+    let lifecycleTask: Promise<void> | undefined
+
+    if (typeof ctx.event?.subscribe === "function") {
+      lifecycleTask = (async () => {
+        try {
+          const events = ctx.event!.subscribe({ signal: lifecycleAbort.signal })
+          for await (const event of events) {
+            observeOpenCode2AuthorityBoundary(runtime, compactionRuntime, event)
+          }
+        } catch {
+          // Raw-event loss cannot authorize mutation. Existing message-bound
+          // capability checks and TTLs remain fail-closed.
+        }
+      })()
+      void lifecycleTask.catch(() => undefined)
+    }
 
     if (previewEnabled) {
       if (typeof ctx.command?.transform !== "function") {
@@ -780,9 +889,24 @@ export const OpenCode2GoalsExperimental = {
       // can never arm a lifecycle capability.
     }
 
-    return () => {
+    try {
+      await ctx.session.hook("compaction", async (event: any) => {
+        // Compaction is host-owned and must never inherit direct lifecycle
+        // mutation authority. Persisted Goal context is read-only here.
+        await injectPersistedContext(event, false)
+      })
+    } catch {
+      // Older beta hosts may not expose compaction. Stable V2 compaction parity
+      // remains gated by the exact-host evidence path.
+    }
+
+    return async () => {
+      lifecycleAbort.abort()
       runtime.capabilities.clear()
       runtime.armedBySession.clear()
+      runtime.executionGenerationBySession.clear()
+      compactionRuntime.sessions.clear()
+      await lifecycleTask?.catch(() => undefined)
     }
   },
 }

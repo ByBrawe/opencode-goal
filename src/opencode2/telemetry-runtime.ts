@@ -1,3 +1,8 @@
+import type { GoalState } from "../domain/types.js"
+import { accountAssistantUsage } from "../runtime/accounting.js"
+import { clearEmptyAssistantTurnStreak, recordEmptyAssistantTurn } from "../runtime/empty-turn.js"
+import { observeModelContextUsage } from "../runtime/model-context.js"
+
 type UnknownRecord = Record<string, unknown>
 
 export interface OpenCode2ToolTelemetry {
@@ -207,4 +212,36 @@ export function finishOpenCode2TelemetryExecution(
 
 export function clearOpenCode2TelemetrySession(runtime: OpenCode2TelemetryRuntime, sessionID: string): void {
   runtime.currentBySession.delete(sessionID)
+}
+
+
+export function applyOpenCode2GoalTelemetry(
+  goal: GoalState,
+  ownerMessageID: string,
+  telemetry: OpenCode2CompletedTelemetry,
+  now = Date.now(),
+): { goal: GoalState; empty: boolean } {
+  const messageID = `v2-execution:${ownerMessageID}`
+  const sample = {
+    messageID,
+    inputTokens: telemetry.inputTokens,
+    outputTokens: telemetry.outputTokens,
+    reasoningTokens: telemetry.reasoningTokens,
+    cost: telemetry.cost,
+    ...(telemetry.startedAt !== undefined ? { createdAt: telemetry.startedAt } : {}),
+    ...(telemetry.completedAt !== undefined ? { completedAt: telemetry.completedAt } : {}),
+  }
+
+  let next: GoalState
+  const empty = !telemetry.meaningful && goal.status === "active"
+  if (empty) {
+    next = recordEmptyAssistantTurn(goal, sample, { now })
+  } else {
+    next = accountAssistantUsage(goal, sample, now)
+    if (telemetry.meaningful) next = clearEmptyAssistantTurnStreak(next)
+  }
+  if (telemetry.lastTokens !== undefined) {
+    next = observeModelContextUsage(next, telemetry.lastTokens, now)
+  }
+  return { goal: next, empty }
 }

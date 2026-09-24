@@ -3,6 +3,7 @@ import path from "node:path"
 import { GoalStore } from "../dist/persistence/store.js"
 import { openCode2ExecutionSessionID } from "../dist/opencode2/execution-boundary.js"
 import { prepareOpenCode2Continuation } from "../dist/opencode2/continuation-boundary.js"
+import { prepareOpenCode2RestartContinuation } from "../dist/opencode2/restart-boundary.js"
 import {
   createOpenCode2CompactionBoundaryRuntime,
   observeOpenCode2CompactionBoundary,
@@ -10,6 +11,7 @@ import {
 } from "../dist/opencode2/compaction-boundary.js"
 
 const traceFile = process.env.OPENCODE_GOAL_V2_RUNTIME_TRACE
+const restartSessionID = process.env.OPENCODE_GOAL_V2_RUNTIME_RESTART_SESSION
 
 async function trace(event) {
   if (!traceFile) return
@@ -227,7 +229,58 @@ export default {
     })
     await trace({ phase: "session.compaction.registered" })
 
+    let restartTimer
+    if (restartSessionID) {
+      restartTimer = setTimeout(() => {
+        void (async () => {
+          try {
+            let directory
+            let goal
+            for (let attempt = 0; attempt < 50; attempt += 1) {
+              directory = await resolveSessionDirectory(ctx, restartSessionID)
+              const store = directory ? new GoalStore(directory) : null
+              goal = store ? await store.load(restartSessionID) : null
+              if (goal) break
+              await new Promise((resolve) => setTimeout(resolve, 100))
+            }
+            if (!goal) {
+              await trace({ phase: "goal.restart.continuation.skipped", sessionID: restartSessionID, reason: "missing-goal" })
+              return
+            }
+
+            const prepared = prepareOpenCode2RestartContinuation(goal)
+            await trace({
+              phase: "goal.restart.continuation.ready",
+              sessionID: restartSessionID,
+              status: goal.status,
+              stalledTurns: goal.stalledTurns,
+              progressRevision: goal.progressRevision,
+              observedProgressRevision: goal.observedProgressRevision,
+              shouldContinue: prepared.shouldContinue,
+              blockedBy: prepared.blockedBy,
+            })
+            if (prepared.shouldContinue && prepared.prompt) {
+              await scheduleContinuation(
+                restartSessionID,
+                prepared.prompt,
+                "restart",
+                goal.stalledTurns,
+              )
+            }
+          } catch (error) {
+            await trace({
+              phase: "goal.restart.continuation.error",
+              sessionID: restartSessionID,
+              error: String(error?.stack || error),
+            })
+          }
+        })()
+      }, 0)
+      restartTimer.unref?.()
+    }
+
     return async () => {
+      if (restartTimer) clearTimeout(restartTimer)
       controller.abort()
       await eventTask.catch(() => {})
       await compactionRegistration?.dispose?.()

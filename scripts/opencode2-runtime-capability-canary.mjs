@@ -478,6 +478,87 @@ async function main() {
       "manual compaction must consume exactly one compaction provider request",
     )
 
+    const restartGoal = {
+      ...afterCompactionContinuation,
+      status: "active",
+      stalledTurns: 2,
+      observedProgressRevision: afterCompactionContinuation.progressRevision,
+      updatedAt: Date.now(),
+    }
+    delete restartGoal.stopReason
+    await goalStore.save(restartGoal)
+
+    const beforeRestart = await goalStore.load(sessionID)
+    assert.equal(beforeRestart?.status, "active")
+    assert.equal(beforeRestart?.stalledTurns, 2)
+    const restartProviderTurnsBefore = provider.stats.requests.filter((item) => !item.isCompaction).length
+    const setupCountBeforeRestart = (await readTrace(traceFile)).filter((item) => item.phase === "setup").length
+
+    await stopProcess(server)
+    serverLog = ""
+    server = spawn(OPENCODE_BINARY, ["serve", "--hostname", "127.0.0.1", "--port", String(port)], {
+      cwd: workspace,
+      env: {
+        ...env,
+        OPENCODE_GOAL_V2_RUNTIME_RESTART_SESSION: sessionID,
+      },
+      windowsHide: true,
+    })
+    server.stdout?.on("data", (chunk) => { serverLog = appendLog(serverLog, chunk) })
+    server.stderr?.on("data", (chunk) => { serverLog = appendLog(serverLog, chunk) })
+    await waitForTcp(port, server, () => serverLog)
+
+    // The V2 service boots project locations lazily. Re-open one
+    // directory-scoped API surface after the process restart so the same
+    // workspace/plugin graph is actually activated before recovery is judged.
+    await waitFor(async () => {
+      const response = await request(`${apiPrefix}/command`, { method: "GET" }, 5_000).catch(() => null)
+      return response?.ok === true
+    }, "OpenCode 2 workspace bootstrap after process restart", diagnostics, 30_000)
+
+    await waitFor(async () => {
+      const current = await readTrace(traceFile)
+      return current.filter((item) => item.phase === "setup").length > setupCountBeforeRestart
+        && current.some((item) =>
+          item.phase === "goal.restart.continuation.ready"
+          && item.sessionID === sessionID
+          && item.status === "active"
+          && item.stalledTurns === 2
+          && item.shouldContinue === true
+        )
+    }, "restart probe reloads the active persisted Goal without closing the interrupted turn", diagnostics, 60_000)
+
+    await waitFor(async () => {
+      const current = await readTrace(traceFile)
+      return current.some((item) =>
+        item.phase === "goal.continuation.dispatched"
+        && item.sessionID === sessionID
+        && item.source === "restart"
+      )
+    }, "one Goal-owned restart continuation dispatch", diagnostics, 60_000)
+
+    await waitFor(
+      () => provider.stats.requests.filter((item) => !item.isCompaction).length === restartProviderTurnsBefore + 1,
+      "exactly one provider turn after OpenCode 2 process restart",
+      diagnostics,
+      60_000,
+    )
+
+    const afterRestartContinuation = await waitFor(async () => {
+      const goal = await goalStore.load(sessionID)
+      return goal?.status === "paused" && goal.stalledTurns === 3 ? goal : null
+    }, "restart continuation settles through the normal successful execution boundary", diagnostics, 60_000)
+    assert.equal(afterRestartContinuation.id, beforeRestart.id, "restart recovery must preserve Goal identity")
+    assert.equal(afterRestartContinuation.revision, beforeRestart.revision, "restart recovery must preserve Goal revision")
+    assert.equal(afterRestartContinuation.progressRevision, beforeRestart.progressRevision, "restart recovery must not invent progress")
+
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    assert.equal(
+      provider.stats.requests.filter((item) => !item.isCompaction).length,
+      restartProviderTurnsBefore + 1,
+      "paused restart-recovered Goal must not dispatch a duplicate continuation",
+    )
+
     const trace = await readTrace(traceFile)
     assert.ok(
       trace.some((item) => item.phase === "session.context" && item.sessionID === sessionID),
@@ -539,6 +620,21 @@ async function main() {
           && item.source === "compaction"
         ).length,
         providerTurnsAfterCompaction: provider.stats.requests.filter((item) => !item.isCompaction).length - providerTurnsBeforeCompaction,
+      },
+      restartRecovery: {
+        setupCount: trace.filter((item) => item.phase === "setup").length,
+        ready: trace.filter((item) =>
+          item.phase === "goal.restart.continuation.ready"
+          && item.sessionID === sessionID
+        ).length,
+        dispatched: trace.filter((item) =>
+          item.phase === "goal.continuation.dispatched"
+          && item.sessionID === sessionID
+          && item.source === "restart"
+        ).length,
+        persistedStatus: afterRestartContinuation.status,
+        stalledTurnsAfterRecovery: afterRestartContinuation.stalledTurns,
+        providerTurnsAfterRestart: provider.stats.requests.filter((item) => !item.isCompaction).length - restartProviderTurnsBefore,
       },
     }, null, 2))
   } finally {

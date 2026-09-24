@@ -25,6 +25,7 @@ import {
 import {
   collectOpenCode2SuccessfulToolProgress,
   createOpenCode2ToolProgressRuntime,
+  forgetOpenCode2ToolProgressCall,
   forgetOpenCode2ToolProgressSession,
   rememberOpenCode2ShellBefore,
 } from "./tool-progress.js"
@@ -1047,6 +1048,11 @@ export const OpenCode2GoalsExperimental = {
             if (sessionID && type === "session.tool.success") {
               const callID = firstString(data?.id, data?.callID)
               if (callID) await applySuccessfulToolProgress(sessionID, callID)
+            }
+
+            if (sessionID && type === "session.tool.failed") {
+              const callID = firstString(data?.id, data?.callID)
+              if (callID) forgetOpenCode2ToolProgressCall(toolProgressRuntime, sessionID, callID)
             }
 
             if (

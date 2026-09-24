@@ -508,6 +508,14 @@ async function main() {
     server.stderr?.on("data", (chunk) => { serverLog = appendLog(serverLog, chunk) })
     await waitForTcp(port, server, () => serverLog)
 
+    // The V2 service boots project locations lazily. Re-open one
+    // directory-scoped API surface after the process restart so the same
+    // workspace/plugin graph is actually activated before recovery is judged.
+    await waitFor(async () => {
+      const response = await request(`${apiPrefix}/command`, { method: "GET" }, 5_000).catch(() => null)
+      return response?.ok === true
+    }, "OpenCode 2 workspace bootstrap after process restart", diagnostics, 30_000)
+
     await waitFor(async () => {
       const current = await readTrace(traceFile)
       return current.filter((item) => item.phase === "setup").length > setupCountBeforeRestart

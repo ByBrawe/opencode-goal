@@ -3,6 +3,11 @@ import path from "node:path"
 import { GoalStore } from "../dist/persistence/store.js"
 import { openCode2ExecutionSessionID } from "../dist/opencode2/execution-boundary.js"
 import { prepareOpenCode2Continuation } from "../dist/opencode2/continuation-boundary.js"
+import {
+  createOpenCode2CompactionBoundaryRuntime,
+  observeOpenCode2CompactionBoundary,
+  prepareOpenCode2PostCompactionContinuation,
+} from "../dist/opencode2/compaction-boundary.js"
 
 const traceFile = process.env.OPENCODE_GOAL_V2_RUNTIME_TRACE
 
@@ -46,6 +51,46 @@ export default {
 
     const controller = new AbortController()
     const dispatching = new Set()
+    const compactionBoundary = createOpenCode2CompactionBoundaryRuntime()
+
+    const scheduleContinuation = async (sessionID, prompt, source, stalledTurns) => {
+      if (dispatching.has(sessionID)) {
+        await trace({ phase: "goal.continuation.skipped", sessionID, source, reason: "dispatch-in-flight" })
+        return
+      }
+      if (typeof ctx.session.prompt !== "function") {
+        await trace({ phase: "goal.continuation.error", sessionID, source, error: "session.prompt unavailable" })
+        return
+      }
+
+      dispatching.add(sessionID)
+      await trace({ phase: "goal.continuation.scheduled", sessionID, source, stalledTurns })
+      queueMicrotask(() => {
+        Promise.resolve(ctx.session.prompt({
+          sessionID,
+          text: prompt,
+          delivery: "steer",
+          resume: true,
+          metadata: {
+            opencode_goal_v2_runtime_canary_continuation: true,
+            opencode_goal_v2_runtime_canary_source: source,
+          },
+        }))
+          .then(async () => {
+            await trace({ phase: "goal.continuation.dispatched", sessionID, source, stalledTurns })
+          })
+          .catch(async (error) => {
+            await trace({
+              phase: "goal.continuation.error",
+              sessionID,
+              source,
+              error: String(error?.stack || error),
+            })
+          })
+          .finally(() => dispatching.delete(sessionID))
+      })
+    }
+
     const eventTask = (async () => {
       try {
         const events = ctx.event.subscribe({ signal: controller.signal })
@@ -59,6 +104,50 @@ export default {
             status: eventStatus(event),
           })
 
+          const compaction = observeOpenCode2CompactionBoundary(compactionBoundary, event)
+          if (compaction.recognized && sessionID) {
+            await trace({
+              phase: "goal.compaction.boundary",
+              sessionID,
+              type: event?.type,
+              consumedExecution: compaction.consumedExecution,
+              compactionCompleted: compaction.compactionCompleted,
+              compactionFailed: compaction.compactionFailed,
+            })
+          }
+
+          if (compaction.compactionCompleted && sessionID) {
+            try {
+              const directory = await resolveSessionDirectory(ctx, sessionID)
+              const store = directory ? new GoalStore(directory) : null
+              const goal = store ? await store.load(sessionID) : null
+              if (!goal) {
+                await trace({ phase: "goal.compaction.continuation.skipped", sessionID, reason: "missing-goal" })
+              } else {
+                const prepared = prepareOpenCode2PostCompactionContinuation(goal)
+                await trace({
+                  phase: "goal.compaction.continuation.ready",
+                  sessionID,
+                  status: goal.status,
+                  stalledTurns: goal.stalledTurns,
+                  progressRevision: goal.progressRevision,
+                  observedProgressRevision: goal.observedProgressRevision,
+                  shouldContinue: prepared.shouldContinue,
+                })
+                if (prepared.shouldContinue && prepared.prompt) {
+                  await scheduleContinuation(sessionID, prepared.prompt, "compaction", goal.stalledTurns)
+                }
+              }
+            } catch (error) {
+              await trace({
+                phase: "goal.compaction.continuation.error",
+                sessionID,
+                error: String(error?.stack || error),
+              })
+            }
+          }
+
+          if (compaction.consumedExecution) continue
           if (!sessionID || event?.type !== "session.execution.succeeded") continue
           try {
             const directory = await resolveSessionDirectory(ctx, sessionID)
@@ -98,45 +187,12 @@ export default {
             })
 
             if (!prepared.shouldContinue || !prepared.prompt) continue
-            if (dispatching.has(sessionID)) {
-              await trace({ phase: "goal.continuation.skipped", sessionID, reason: "dispatch-in-flight" })
-              continue
-            }
-            if (typeof ctx.session.prompt !== "function") {
-              await trace({ phase: "goal.continuation.error", sessionID, error: "session.prompt unavailable" })
-              continue
-            }
-
-            dispatching.add(sessionID)
-            await trace({
-              phase: "goal.continuation.scheduled",
+            await scheduleContinuation(
               sessionID,
-              stalledTurns: prepared.goal.stalledTurns,
-            })
-            queueMicrotask(() => {
-              Promise.resolve(ctx.session.prompt({
-                sessionID,
-                text: prepared.prompt,
-                delivery: "steer",
-                resume: true,
-                metadata: { opencode_goal_v2_runtime_canary_continuation: true },
-              }))
-                .then(async () => {
-                  await trace({
-                    phase: "goal.continuation.dispatched",
-                    sessionID,
-                    stalledTurns: prepared.goal.stalledTurns,
-                  })
-                })
-                .catch(async (error) => {
-                  await trace({
-                    phase: "goal.continuation.error",
-                    sessionID,
-                    error: String(error?.stack || error),
-                  })
-                })
-                .finally(() => dispatching.delete(sessionID))
-            })
+              prepared.prompt,
+              "execution",
+              prepared.goal.stalledTurns,
+            )
           } catch (error) {
             await trace({
               phase: "goal.execution.boundary.error",

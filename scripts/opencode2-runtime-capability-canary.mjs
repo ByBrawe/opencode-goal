@@ -395,6 +395,22 @@ async function main() {
       "paused third boundary must not dispatch a fourth Goal turn",
     )
 
+    const compactionGoal = {
+      ...thirdNoProgress,
+      status: "active",
+      stalledTurns: 2,
+      observedProgressRevision: thirdNoProgress.progressRevision,
+      updatedAt: Date.now(),
+    }
+    delete compactionGoal.stopReason
+    await goalStore.save(compactionGoal)
+
+    const beforeCompaction = await goalStore.load(sessionID)
+    assert.equal(beforeCompaction?.status, "active")
+    assert.equal(beforeCompaction?.stalledTurns, 2)
+    const providerTurnsBeforeCompaction = provider.stats.requests.filter((item) => !item.isCompaction).length
+    const compactionRequestsBefore = provider.stats.requests.filter((item) => item.isCompaction).length
+
     const compact = await request(`${apiPrefix}/session/${encodeURIComponent(sessionID)}/compact`, {
       method: "POST",
       body: JSON.stringify({}),
@@ -417,6 +433,50 @@ async function main() {
         )
       )
     }, "terminal compaction event through ctx.event.subscribe()", diagnostics, 60_000)
+
+    const compactionReady = await waitFor(async () => {
+      const trace = await readTrace(traceFile)
+      return trace.find((item) =>
+        item.phase === "goal.compaction.continuation.ready"
+        && item.sessionID === sessionID
+      )
+    }, "active Goal post-compaction continuation boundary", diagnostics, 60_000)
+    assert.equal(compactionReady.status, "active")
+    assert.equal(compactionReady.stalledTurns, 2, "compaction execution must not count as a no-progress Goal turn")
+    assert.equal(compactionReady.shouldContinue, true)
+
+    await waitFor(async () => {
+      const trace = await readTrace(traceFile)
+      return trace.some((item) =>
+        item.phase === "goal.continuation.dispatched"
+        && item.sessionID === sessionID
+        && item.source === "compaction"
+      )
+    }, "one Goal-owned post-compaction continuation dispatch", diagnostics, 60_000)
+
+    await waitFor(
+      () => provider.stats.requests.filter((item) => !item.isCompaction).length === providerTurnsBeforeCompaction + 1,
+      "exactly one non-compaction provider turn after active Goal compaction",
+      diagnostics,
+      60_000,
+    )
+
+    const afterCompactionContinuation = await waitFor(async () => {
+      const goal = await goalStore.load(sessionID)
+      return goal?.status === "paused" && goal.stalledTurns === 3 ? goal : null
+    }, "post-compaction Goal continuation settles through normal no-progress boundary", diagnostics, 60_000)
+
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    assert.equal(
+      provider.stats.requests.filter((item) => !item.isCompaction).length,
+      providerTurnsBeforeCompaction + 1,
+      "paused post-compaction Goal must not dispatch a duplicate continuation",
+    )
+    assert.equal(
+      provider.stats.requests.filter((item) => item.isCompaction).length,
+      compactionRequestsBefore + 1,
+      "manual compaction must consume exactly one compaction provider request",
+    )
 
     const trace = await readTrace(traceFile)
     assert.ok(
@@ -461,7 +521,24 @@ async function main() {
       autonomousContinuation: {
         scheduled: scheduledContinuations.length,
         dispatched: dispatchedContinuations.length,
-        providerTurnsBeforeCompaction: provider.stats.requests.filter((item) => !item.isCompaction).length,
+        providerTurnsBeforeCompaction,
+      },
+      activeCompactionContinuation: {
+        readyStatus: compactionReady.status,
+        stalledTurnsBeforeContinuation: compactionReady.stalledTurns,
+        postContinuationStatus: afterCompactionContinuation.status,
+        postContinuationStalledTurns: afterCompactionContinuation.stalledTurns,
+        compactionScheduled: trace.filter((item) =>
+          item.phase === "goal.continuation.scheduled"
+          && item.sessionID === sessionID
+          && item.source === "compaction"
+        ).length,
+        compactionDispatched: trace.filter((item) =>
+          item.phase === "goal.continuation.dispatched"
+          && item.sessionID === sessionID
+          && item.source === "compaction"
+        ).length,
+        providerTurnsAfterCompaction: provider.stats.requests.filter((item) => !item.isCompaction).length - providerTurnsBeforeCompaction,
       },
     }, null, 2))
   } finally {

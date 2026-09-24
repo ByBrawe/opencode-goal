@@ -160,6 +160,7 @@ function streamTool(res, sequence) {
 
 function provider() {
   const stats = { requests: [] }
+  let toolIssued = false
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1")
     if (req.method === "GET" && url.pathname.endsWith("/models")) {
@@ -181,11 +182,12 @@ function provider() {
     const toolResultSeen = JSON.stringify(body?.messages ?? []).includes("TELEMETRY_TOOL_OK")
     stats.requests.push({ sequence, userText, tools, toolResultSeen })
 
-    if (userText.includes(TOOL_PROBE) && tools.includes(TOOL) && !toolResultSeen) {
+    if (userText.includes(TOOL_PROBE) && tools.includes(TOOL) && !toolIssued) {
+      toolIssued = true
       streamTool(res, sequence)
       return
     }
-    if (userText.includes(TOOL_PROBE) && toolResultSeen) {
+    if (userText.includes(TOOL_PROBE)) {
       streamStop(res, sequence, undefined)
       return
     }

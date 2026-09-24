@@ -48,6 +48,15 @@ export function rememberOpenCode2GoalPrompt(
   })
 }
 
+export function forgetOpenCode2GoalPrompt(
+  runtime: OpenCode2AutonomousRuntime,
+  sessionID: string,
+  messageID: string,
+): void {
+  const pending = runtime.pendingPromptBySession.get(sessionID)
+  if (pending?.messageID === messageID) runtime.pendingPromptBySession.delete(sessionID)
+}
+
 export function armOpenCode2GoalExecution(
   runtime: OpenCode2AutonomousRuntime,
   sessionID: string,

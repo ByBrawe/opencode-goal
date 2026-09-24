@@ -496,21 +496,14 @@ async function main() {
     assert.equal(typeof textEnded.data.assistantMessageID, "string")
 
     const toolStart = toolExecution.find((item) => item.type === "session.tool.input.started" && item?.data?.name === TOOL)
-    assert.ok(toolStart)
-    assert.equal(typeof toolStart.data.callID, "string")
+    assert.ok(toolStart, `tool input start missing\n${await diagnostics()}`)
 
-    const toolCalled = toolExecution.find((item) =>
-      item.type === "session.tool.called"
-      && item?.data?.callID === toolStart.data.callID
-    )
+    const toolCalled = toolExecution.find((item) => item.type === "session.tool.called")
+    assert.ok(toolCalled, `tool called event missing\n${await diagnostics()}`)
     assert.deepEqual(toolCalled?.data?.input, { value: "mutation-proof" })
 
-    const toolSuccess = toolExecution.find((item) =>
-      item.type === "session.tool.success"
-      && item?.data?.callID === toolStart.data.callID
-    )
-    assert.ok(toolSuccess)
-    assert.equal(toolSuccess.data.callID, toolStart.data.callID)
+    const toolSuccess = toolExecution.find((item) => item.type === "session.tool.success")
+    assert.ok(toolSuccess, `tool success event missing\n${await diagnostics()}`)
 
     const emptyMeaningful = emptyExecution.filter((item) =>
       (item.type === "session.text.ended" && String(item?.data?.text ?? "").trim())

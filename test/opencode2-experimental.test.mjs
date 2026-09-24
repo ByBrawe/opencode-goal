@@ -4,6 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import OpenCode2GoalsExperimental, {
+  OPENCODE2_AUTONOMOUS_ENV,
   OPENCODE2_DIRECT_LIFECYCLE_ENV,
   OPENCODE2_EXPERIMENTAL_PLUGIN_ID,
   createOpenCode2DirectLifecycleRuntime,
@@ -145,6 +146,23 @@ async function withDirectLifecyclePreview(fn) {
   } finally {
     if (previous === undefined) delete process.env[key]
     else process.env[key] = previous
+  }
+}
+
+async function withAutonomousPreview(fn) {
+  const directKey = OPENCODE2_DIRECT_LIFECYCLE_ENV
+  const autonomousKey = OPENCODE2_AUTONOMOUS_ENV
+  const previousDirect = process.env[directKey]
+  const previousAutonomous = process.env[autonomousKey]
+  process.env[directKey] = "1"
+  process.env[autonomousKey] = "1"
+  try {
+    return await fn()
+  } finally {
+    if (previousDirect === undefined) delete process.env[directKey]
+    else process.env[directKey] = previousDirect
+    if (previousAutonomous === undefined) delete process.env[autonomousKey]
+    else process.env[autonomousKey] = previousAutonomous
   }
 }
 
@@ -472,7 +490,7 @@ test("V2 authority boundary binds direct capabilities to ordered execution gener
 test("V2 autonomous coordinator counts only exact owned continuation executions", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-autonomous-owned-"))
   try {
-    await withDirectLifecyclePreview(async () => {
+    await withAutonomousPreview(async () => {
       const host = fakeV2EventContext(root)
       const sessionID = "v2-autonomous-owned"
       const store = new GoalStore(root)

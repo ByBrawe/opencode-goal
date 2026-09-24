@@ -488,7 +488,7 @@ async function main() {
 
     await waitFor(async () => {
       const history = await store.history(sessionID, 500)
-      return history.some((item) => item.id === archivedID)
+      return history.some((item) => item.goalID === archivedID)
     }, "durable Goal archive after clear", diagnostics)
     await assertMutation(`restore ${archivedID.slice(0, 12)}`)
     await waitFor(async () => {

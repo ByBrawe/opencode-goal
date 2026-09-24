@@ -6,12 +6,10 @@ on:
     branches: [main]
     paths:
       - "scripts/opencode2-telemetry-capability-canary.mjs"
-      - "scripts/opencode2-telemetry-probe-plugin.mjs"
       - ".github/workflows/opencode2-telemetry-canary.yml"
   pull_request:
     paths:
       - "scripts/opencode2-telemetry-capability-canary.mjs"
-      - "scripts/opencode2-telemetry-probe-plugin.mjs"
       - ".github/workflows/opencode2-telemetry-canary.yml"
 
 concurrency:

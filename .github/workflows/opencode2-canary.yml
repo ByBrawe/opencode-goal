@@ -14,6 +14,7 @@ on:
       - "scripts/opencode2-promotion-capability-canary.mjs"
       - "scripts/opencode2-direct-lifecycle-canary.mjs"
       - "scripts/opencode2-runtime-capability-canary.mjs"
+      - "scripts/opencode2-runtime-probe-plugin.mjs"
       - "scripts/run-opencode2-host-ci.mjs"
       - ".github/workflows/opencode2-canary.yml"
       - "package.json"
@@ -26,6 +27,7 @@ on:
       - "scripts/opencode2-promotion-capability-canary.mjs"
       - "scripts/opencode2-direct-lifecycle-canary.mjs"
       - "scripts/opencode2-runtime-capability-canary.mjs"
+      - "scripts/opencode2-runtime-probe-plugin.mjs"
       - "scripts/run-opencode2-host-ci.mjs"
       - ".github/workflows/opencode2-canary.yml"
       - "package.json"
@@ -103,7 +105,7 @@ jobs:
       - name: Install exact OpenCode 2.0.11
         run: npm install -g @opencode/cli@2.0.11
       - name: Check runtime capability canary syntax
-        run: node --check scripts/opencode2-runtime-capability-canary.mjs
+        run: node --check scripts/opencode2-runtime-capability-canary.mjs && node --check scripts/opencode2-runtime-probe-plugin.mjs
       - name: Prove event delivery, no-progress turn closing, and compaction hook registration
         run: node scripts/opencode2-runtime-capability-canary.mjs
 

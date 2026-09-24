@@ -1,10 +1,8 @@
 import { appendFile } from "node:fs/promises"
 import path from "node:path"
 import { GoalStore } from "../dist/persistence/store.js"
-import {
-  openCode2ExecutionSessionID,
-  settleGoalForOpenCode2ExecutionEvent,
-} from "../dist/opencode2/execution-boundary.js"
+import { openCode2ExecutionSessionID } from "../dist/opencode2/execution-boundary.js"
+import { prepareOpenCode2Continuation } from "../dist/opencode2/continuation-boundary.js"
 
 const traceFile = process.env.OPENCODE_GOAL_V2_RUNTIME_TRACE
 
@@ -47,6 +45,7 @@ export default {
     await trace({ phase: "setup" })
 
     const controller = new AbortController()
+    const dispatching = new Set()
     const eventTask = (async () => {
       try {
         const events = ctx.event.subscribe({ signal: controller.signal })
@@ -75,8 +74,8 @@ export default {
               continue
             }
 
-            const settled = settleGoalForOpenCode2ExecutionEvent(goal, event)
-            if (!settled.closed) {
+            const prepared = prepareOpenCode2Continuation(goal, event)
+            if (!prepared.closed) {
               await trace({
                 phase: "goal.execution.boundary.skipped",
                 sessionID,
@@ -86,15 +85,57 @@ export default {
               continue
             }
 
-            await store.save(settled.goal)
+            await store.save(prepared.goal)
             await trace({
               phase: "goal.execution.boundary.closed",
               sessionID,
-              goalID: settled.goal.id,
-              status: settled.goal.status,
-              stalledTurns: settled.goal.stalledTurns,
-              progressRevision: settled.goal.progressRevision,
-              observedProgressRevision: settled.goal.observedProgressRevision,
+              goalID: prepared.goal.id,
+              status: prepared.goal.status,
+              stalledTurns: prepared.goal.stalledTurns,
+              progressRevision: prepared.goal.progressRevision,
+              observedProgressRevision: prepared.goal.observedProgressRevision,
+              shouldContinue: prepared.shouldContinue,
+            })
+
+            if (!prepared.shouldContinue || !prepared.prompt) continue
+            if (dispatching.has(sessionID)) {
+              await trace({ phase: "goal.continuation.skipped", sessionID, reason: "dispatch-in-flight" })
+              continue
+            }
+            if (typeof ctx.session.prompt !== "function") {
+              await trace({ phase: "goal.continuation.error", sessionID, error: "session.prompt unavailable" })
+              continue
+            }
+
+            dispatching.add(sessionID)
+            await trace({
+              phase: "goal.continuation.scheduled",
+              sessionID,
+              stalledTurns: prepared.goal.stalledTurns,
+            })
+            queueMicrotask(() => {
+              Promise.resolve(ctx.session.prompt({
+                sessionID,
+                text: prepared.prompt,
+                delivery: "steer",
+                resume: true,
+                metadata: { opencode_goal_v2_runtime_canary_continuation: true },
+              }))
+                .then(async () => {
+                  await trace({
+                    phase: "goal.continuation.dispatched",
+                    sessionID,
+                    stalledTurns: prepared.goal.stalledTurns,
+                  })
+                })
+                .catch(async (error) => {
+                  await trace({
+                    phase: "goal.continuation.error",
+                    sessionID,
+                    error: String(error?.stack || error),
+                  })
+                })
+                .finally(() => dispatching.delete(sessionID))
             })
           } catch (error) {
             await trace({

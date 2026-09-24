@@ -10,6 +10,8 @@ import { continuationPrompt } from "../opencode/prompt.js"
 import { createOpenCode2CompactionBoundaryRuntime, observeOpenCode2CompactionBoundary, prepareOpenCode2PostCompactionContinuation, type OpenCode2CompactionBoundaryResult, type OpenCode2CompactionBoundaryRuntime } from "./compaction-boundary.js"
 import { prepareOpenCode2Continuation } from "./continuation-boundary.js"
 import { createOpenCode2AutonomousRuntime, armOpenCode2GoalExecution, clearOpenCode2GoalOwnership, consumeOpenCode2GoalExecution, consumeOpenCode2GoalKickoff, forgetOpenCode2GoalPrompt, rememberOpenCode2GoalKickoff, rememberOpenCode2GoalPrompt, type OpenCode2AutonomousRuntime, type OpenCode2GoalContinuationSource } from "./autonomous-runtime.js"
+import { createOpenCode2SemanticVerifierRuntime, OPENCODE2_VERIFIER_RESULT_TOOL } from "./semantic-verifier.js"
+import { createOpenCode2GoalWorkTools } from "./work-tools.js"
 
 export const OPENCODE2_EXPERIMENTAL_PLUGIN_ID = "bybrawe.open-code-goals.v2-experimental"
 
@@ -32,6 +34,9 @@ export interface OpenCode2ExperimentalContext {
   }
   session: {
     get(input: { sessionID: string }): unknown | Promise<unknown>
+    create?(input: { parentID: string; title?: string }): unknown | Promise<unknown>
+    wait?(input: { sessionID: string }): unknown | Promise<unknown>
+    delete?(input: { sessionID: string }): unknown | Promise<unknown>
     hook(name: string, callback: (event: any) => void | Promise<void>): unknown | Promise<unknown>
     prompt?(input: {
       sessionID: string
@@ -829,6 +834,15 @@ export const OpenCode2GoalsExperimental = {
     const autonomousDispatching = new Set<string>()
     const previewEnabled = directLifecyclePreviewEnabled()
     const autonomousEnabled = previewEnabled && autonomousPreviewEnabled()
+    const semanticVerifier = createOpenCode2SemanticVerifierRuntime(
+      ctx.session,
+      async (sessionID) => await resolveSessionDirectory(ctx, sessionID),
+    )
+    const workTools = createOpenCode2GoalWorkTools({
+      autonomousRuntime,
+      resolveDirectory: async (sessionID) => await resolveSessionDirectory(ctx, sessionID),
+      semanticVerifier,
+    })
     const lifecycleAbort = new AbortController()
     let lifecycleTask: Promise<void> | undefined
 
@@ -926,6 +940,7 @@ export const OpenCode2GoalsExperimental = {
 
             if (boundary.kind === "session-deleted" && sessionID) {
               clearOpenCode2GoalOwnership(autonomousRuntime, sessionID)
+              workTools.clearSession(sessionID)
               autonomousDispatching.delete(sessionID)
               continue
             }
@@ -1046,6 +1061,13 @@ export const OpenCode2GoalsExperimental = {
             await executeAuthorizedGoalControl(ctx, runtime, autonomousEnabled ? autonomousRuntime : undefined, input, toolContext),
         })
       }
+
+      if (autonomousEnabled) {
+        addExperimentalTool(tools, OPENCODE2_VERIFIER_RESULT_TOOL, semanticVerifier.resultTool)
+        for (const [name, definition] of Object.entries(workTools.definitions)) {
+          addExperimentalTool(tools, name, definition)
+        }
+      }
     })
 
     const injectPersistedContext = async (event: any, allowAuthorization: boolean) => {
@@ -1114,19 +1136,30 @@ export const OpenCode2GoalsExperimental = {
 
     try {
       await ctx.session.hook("context", async (event: any) => {
+        if (semanticVerifier.handleContext(event)) return
+
         if (autonomousEnabled) {
           const sessionID = sessionIDFromEvent(event)
           const lastUserMessageID = eventLastUserMessageID(event)
           if (sessionID && lastUserMessageID && !isReadOnlyAgent(event?.agent)) {
-            armOpenCode2GoalExecution(
+            const directKey = directCapabilityKey(sessionID, lastUserMessageID)
+            const directCapability = runtime.capabilities.has(directKey)
+            const armed = armOpenCode2GoalExecution(
               autonomousRuntime,
               sessionID,
               lastUserMessageID,
               activeOrNextExecutionGeneration(runtime, sessionID),
             )
+            const existingOwner = autonomousRuntime.executionOwnerBySession.get(sessionID)
+            const goalOwned = Boolean(armed || existingOwner?.messageID === lastUserMessageID)
+            if (!goalOwned && !directCapability) {
+              workTools.markForegroundSteering(sessionID, lastUserMessageID)
+            }
           }
         }
+
         await injectPersistedContext(event, true)
+        if (autonomousEnabled) workTools.handleContext(event)
       })
     } catch {
       // Exact OpenCode 2.0.11 exposes context. If it is absent, preview
@@ -1135,6 +1168,7 @@ export const OpenCode2GoalsExperimental = {
 
     try {
       await ctx.session.hook("request", async (event: any) => {
+        if (semanticVerifier.handleContext(event)) return
         await injectPersistedContext(event, false)
       })
     } catch {
@@ -1146,7 +1180,9 @@ export const OpenCode2GoalsExperimental = {
       await ctx.session.hook("compaction", async (event: any) => {
         // Compaction is host-owned and must never inherit direct lifecycle
         // mutation authority. Persisted Goal context is read-only here.
+        if (semanticVerifier.handleContext(event)) return
         await injectPersistedContext(event, false)
+        if (autonomousEnabled) workTools.hideFrom(event)
       })
     } catch {
       // Older beta hosts may not expose compaction. Stable V2 compaction parity

@@ -28,11 +28,28 @@ The autonomous preview never treats a session-wide terminal event as Goal owners
 
 Successful owned turns reuse the same Goal no-progress boundary as stable V1. Compaction-owned execution terminals remain separate and can schedule at most one post-compaction Goal continuation. Dispatch is fail-closed for read-only/restricted execution state, exhausted budgets, future infrastructure-recovery cooldowns, and stale Goal revisions.
 
-This preview still does **not** establish stable OpenCode 2 support. Independent semantic completion/verifier parity and the final combined promotion head remain required before compatibility metadata can be widened.
+This preview still does **not** establish stable OpenCode 2 support. The final combined promotion head remains required before compatibility metadata can be widened.
+
+## V1-grade completion preview
+
+When both lifecycle and autonomous V2 previews are enabled, Goal-owned OpenCode 2 executions expose the same model-facing work controls used by stable V1: checkpoint notes, host file evidence, verified completion, waiting-user sleep, and repeated blocker reporting. These controls are visible only to the exact host-admitted Goal-owned execution identity for the current Goal revision; ordinary foreground turns and verifier children do not inherit them.
+
+V2 semantic completion reuses the stable V1 proof core rather than defining a weaker completion rule:
+
+- configured host checks and declared file contracts run before semantic completion;
+- semantic requirements are audited in a parent-bound child session;
+- verifier context is reduced to read/glob/grep plus the session-bound result tool;
+- audit tokens and exact requirement coverage are required;
+- current file quotes and host-evidence references are independently corroborated by the host;
+- user steering or Goal revision/lifecycle changes invalidate stale completion;
+- verifier infrastructure timeout receives the same one bounded retry and then fails closed;
+- final persistence still passes through the shared Goal completion audit and durable transition notifier.
+
+Exact-host promotion evidence must prove that a Goal-owned OpenCode 2 turn can invoke this path, produce persisted host + verifier evidence, reach `completed`, and stop further autonomous continuation.
 
 ## Completion and recovery parity
 
-The lifecycle preview does **not** claim stable parity for autonomous Goal completion or recovery.
+The lifecycle/autonomous previews do **not** by themselves claim stable OpenCode 2 support.
 
 Before any stable OpenCode 2 lifecycle-support claim, exact-host evidence must separately prove the stable V1 behaviors that are relevant to autonomous execution, including:
 

@@ -808,7 +808,6 @@ async function main() {
       edit: { objective: edited.objective, revision: edited.revision, maxTurns: edited.budget?.maxTurns },
       mismatchPreservedState: true,
       replayHidden: provider.stats.requests.filter((item) => item.sawFollowup).every((item) => !item.hasControlTool),
-      unsupportedStatus: unsupported.status,
       cleared: true,
       archiveReason: archive.reason,
       providerRequests: provider.stats.requests.map((item) => ({

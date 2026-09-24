@@ -326,12 +326,12 @@ test("current OpenCode 2 one-argument ToolEditor registers provider-callable too
   }
 })
 
-test("V2 authority boundary consumes compaction execution without revoking newer direct lifecycle authority", () => {
+test("V2 authority boundary binds direct capabilities to ordered execution generations", () => {
   const runtime = createOpenCode2DirectLifecycleRuntime()
   const compaction = createOpenCode2CompactionBoundaryRuntime()
   const sessionID = "v2-authority-boundary"
 
-  const seed = (messageID, createdAt, state = "armed") => {
+  const seed = (messageID, executionGeneration, state = "armed") => {
     const key = `${sessionID}\u0000${messageID}`
     runtime.capabilities.set(key, {
       sessionID,
@@ -340,76 +340,87 @@ test("V2 authority boundary consumes compaction execution without revoking newer
       command: "pause",
       canonicalCommand: "{}",
       action: "pause",
-      createdAt,
-      expiresAt: createdAt + 60_000,
+      createdAt: 1_000,
+      expiresAt: 999_999,
+      executionGeneration,
       state,
     })
     if (state === "armed") runtime.armedBySession.set(sessionID, key)
     return key
   }
 
-  const compactionProtected = seed("after-compaction-started", 2_000)
+  assert.equal(
+    observeOpenCode2AuthorityBoundary(runtime, compaction, { type: "session.execution.started", data: { sessionID } }),
+    "execution-started",
+  )
+  assert.equal(runtime.executionGenerationBySession.get(sessionID), 1)
+
+  const newerPending = seed("generation-2", 2, "pending")
+  assert.equal(
+    observeOpenCode2AuthorityBoundary(runtime, compaction, { type: "session.execution.succeeded", data: { sessionID } }),
+    "execution-terminal",
+  )
+  assert.equal(
+    runtime.capabilities.has(newerPending),
+    true,
+    "a delayed generation-1 terminal must not revoke authority bound to generation 2",
+  )
+
+  assert.equal(
+    observeOpenCode2AuthorityBoundary(runtime, compaction, { type: "session.execution.started", data: { sessionID } }),
+    "execution-started",
+  )
+  assert.equal(runtime.executionGenerationBySession.get(sessionID), 2)
+  assert.equal(
+    observeOpenCode2AuthorityBoundary(runtime, compaction, { type: "session.execution.interrupted", data: { sessionID } }),
+    "execution-terminal",
+  )
+  assert.equal(runtime.capabilities.has(newerPending), false, "generation-2 terminal must revoke generation-2 authority")
+
   assert.equal(
     observeOpenCode2AuthorityBoundary(runtime, compaction, { type: "session.compaction.started", data: { sessionID } }),
     undefined,
   )
   assert.equal(
+    observeOpenCode2AuthorityBoundary(runtime, compaction, { type: "session.execution.started", data: { sessionID } }),
+    "execution-started",
+  )
+  assert.equal(runtime.executionGenerationBySession.get(sessionID), 3)
+
+  const afterCompaction = seed("generation-4", 4)
+  assert.equal(
     observeOpenCode2AuthorityBoundary(runtime, compaction, { type: "session.compaction.ended", data: { sessionID } }),
     undefined,
   )
   assert.equal(
-    observeOpenCode2AuthorityBoundary(runtime, compaction, {
-      type: "session.execution.succeeded",
-      created: 3_000,
-      data: { sessionID },
-    }),
+    observeOpenCode2AuthorityBoundary(runtime, compaction, { type: "session.execution.succeeded", data: { sessionID } }),
     "compaction-execution",
   )
   assert.equal(
-    runtime.capabilities.has(compactionProtected),
+    runtime.capabilities.has(afterCompaction),
     true,
-    "the compaction execution terminal belongs to compaction and must not revoke a newer direct command capability",
+    "compaction execution terminal must not revoke authority for the next direct execution",
   )
 
   assert.equal(
-    observeOpenCode2AuthorityBoundary(runtime, compaction, {
-      type: "session.execution.succeeded",
-      created: 4_000,
-      data: { sessionID },
-    }),
-    "execution-terminal",
+    observeOpenCode2AuthorityBoundary(runtime, compaction, { type: "session.execution.started", data: { sessionID } }),
+    "execution-started",
   )
-  assert.equal(runtime.capabilities.has(compactionProtected), false, "a normal successful execution terminal must revoke the capability")
-  assert.equal(runtime.armedBySession.has(sessionID), false)
-
-  const newerPending = seed("newer-pending", 6_000, "pending")
+  assert.equal(runtime.executionGenerationBySession.get(sessionID), 4)
   assert.equal(
-    observeOpenCode2AuthorityBoundary(runtime, compaction, {
-      type: "session.execution.interrupted",
-      created: 5_000,
-      data: { sessionID },
-    }),
+    observeOpenCode2AuthorityBoundary(runtime, compaction, { type: "session.execution.failed", data: { sessionID } }),
     "execution-terminal",
   )
-  assert.equal(runtime.capabilities.has(newerPending), true, "a late older terminal must not revoke newer pending authority")
+  assert.equal(runtime.capabilities.has(afterCompaction), false)
 
-  assert.equal(
-    observeOpenCode2AuthorityBoundary(runtime, compaction, {
-      type: "session.execution.failed",
-      created: 7_000,
-      data: { sessionID },
-    }),
-    "execution-terminal",
-  )
-  assert.equal(runtime.capabilities.has(newerPending), false)
-
-  seed("deleted", 8_000)
+  seed("deleted", 5)
   assert.equal(
     observeOpenCode2AuthorityBoundary(runtime, compaction, { type: "session.deleted", data: { sessionID } }),
     "session-deleted",
   )
   assert.equal(runtime.capabilities.size, 0)
   assert.equal(runtime.armedBySession.has(sessionID), false)
+  assert.equal(runtime.executionGenerationBySession.has(sessionID), false)
   assert.equal(compaction.sessions.has(sessionID), false)
 })
 

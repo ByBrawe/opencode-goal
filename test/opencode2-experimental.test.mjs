@@ -6,7 +6,9 @@ import path from "node:path"
 import OpenCode2GoalsExperimental, {
   OPENCODE2_DIRECT_LIFECYCLE_ENV,
   OPENCODE2_EXPERIMENTAL_PLUGIN_ID,
+  createOpenCode2DirectLifecycleRuntime,
   executeOpenCode2GoalControl,
+  observeOpenCode2LifecycleBoundary,
 } from "../dist/opencode2/experimental.js"
 import { createGoal } from "../dist/domain/goal.js"
 import { GoalStore } from "../dist/persistence/store.js"
@@ -195,6 +197,7 @@ test("experimental V2 plugin registers read-only inspection without command wrap
     assert.equal(typeof host.tools.get("opencode_goals_v2_get")?.definition?.execute, "function")
     assert.equal(typeof host.hooks.get("context"), "function")
     assert.equal(typeof host.hooks.get("request"), "function")
+    assert.equal(typeof host.hooks.get("compaction"), "function")
     assert.equal(typeof cleanup, "function")
     cleanup()
   } finally {
@@ -288,6 +291,17 @@ test("V2 presentation hooks remove stale control and never mutate persisted stat
     assert.equal(requestEvent.tools.opencode_goals_v2_control, undefined)
     assert.match(requestEvent.system[1], /Objective: ship context/)
     assert.deepEqual(await new GoalStore(root).load(sessionID), before)
+
+    const compactionEvent = await runHook(host, "compaction", {
+      sessionID,
+      agent: "build",
+      system: [],
+    })
+    assert.equal(compactionEvent.tools.opencode_goals_v2_control, undefined, "compaction must never inherit direct mutation authority")
+    assert.equal(compactionEvent.system[0]?.type, "text")
+    assert.match(compactionEvent.system[0]?.text ?? "", /OpenCode Goals experimental V2 persisted state/)
+    assert.match(compactionEvent.system[0]?.text ?? "", /Objective: ship context/)
+    assert.deepEqual(await new GoalStore(root).load(sessionID), before, "compaction context injection must stay read-only")
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -309,6 +323,55 @@ test("current OpenCode 2 one-argument ToolEditor registers provider-callable too
   } finally {
     await rm(root, { recursive: true, force: true })
   }
+})
+
+test("V2 execution terminal events revoke single-execution lifecycle authority", () => {
+  const runtime = createOpenCode2DirectLifecycleRuntime()
+  const sessionID = "v2-terminal-boundary"
+  const seed = (suffix) => {
+    const key = `${sessionID}\\u0000message-${suffix}`
+    runtime.capabilities.set(key, {
+      sessionID,
+      messageID: `message-${suffix}`,
+      directory: "/tmp/v2-terminal",
+      command: "pause",
+      canonicalCommand: "{}",
+      action: "pause",
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 60_000,
+      state: "armed",
+    })
+    runtime.armedBySession.set(sessionID, key)
+  }
+
+  seed("started")
+  assert.equal(
+    observeOpenCode2LifecycleBoundary(runtime, { type: "session.execution.started", data: { sessionID } }),
+    undefined,
+  )
+  assert.equal(runtime.capabilities.size, 1, "execution.started must not revoke the capability before request-time authorization")
+
+  for (const type of [
+    "session.execution.succeeded",
+    "session.execution.failed",
+    "session.execution.interrupted",
+  ]) {
+    const suffix = type.split(".").at(-1)
+    runtime.capabilities.clear()
+    runtime.armedBySession.clear()
+    seed(suffix)
+    assert.equal(observeOpenCode2LifecycleBoundary(runtime, { type, data: { sessionID } }), "execution-terminal")
+    assert.equal(runtime.capabilities.size, 0, `${type} must revoke pending/armed capability state`)
+    assert.equal(runtime.armedBySession.has(sessionID), false)
+  }
+
+  seed("deleted")
+  assert.equal(
+    observeOpenCode2LifecycleBoundary(runtime, { type: "session.deleted", data: { sessionID } }),
+    "session-deleted",
+  )
+  assert.equal(runtime.capabilities.size, 0)
+  assert.equal(runtime.armedBySession.has(sessionID), false)
 })
 
 test("V2 direct lifecycle preview registers host command and mutating tool only when explicitly enabled", async () => {

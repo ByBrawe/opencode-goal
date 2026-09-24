@@ -234,9 +234,15 @@ export default {
       restartTimer = setTimeout(() => {
         void (async () => {
           try {
-            const directory = await resolveSessionDirectory(ctx, restartSessionID)
-            const store = directory ? new GoalStore(directory) : null
-            const goal = store ? await store.load(restartSessionID) : null
+            let directory
+            let goal
+            for (let attempt = 0; attempt < 50; attempt += 1) {
+              directory = await resolveSessionDirectory(ctx, restartSessionID)
+              const store = directory ? new GoalStore(directory) : null
+              goal = store ? await store.load(restartSessionID) : null
+              if (goal) break
+              await new Promise((resolve) => setTimeout(resolve, 100))
+            }
             if (!goal) {
               await trace({ phase: "goal.restart.continuation.skipped", sessionID: restartSessionID, reason: "missing-goal" })
               return

@@ -98,11 +98,13 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: "24"
+      - run: npm install
+      - run: npm run build
       - name: Install exact OpenCode 2.0.11
         run: npm install -g @opencode/cli@2.0.11
       - name: Check runtime capability canary syntax
         run: node --check scripts/opencode2-runtime-capability-canary.mjs
-      - name: Prove event delivery and compaction hook registration
+      - name: Prove event delivery, no-progress turn closing, and compaction hook registration
         run: node scripts/opencode2-runtime-capability-canary.mjs
 
 

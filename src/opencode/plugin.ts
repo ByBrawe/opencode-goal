@@ -481,6 +481,7 @@ export default async function OpenCodeGoalPlugin(input: any, options: OpenCodeGo
             madeProgress = true
             rememberToolProgress(call.messageID)
             await save(goal)
+            notifyGoal(directory, goal, "progress")
           }
         })
       } finally {
@@ -573,10 +574,12 @@ export default async function OpenCodeGoalPlugin(input: any, options: OpenCodeGo
             source: "patch",
             summary: files.length ? `Workspace changed: ${files.join(", ")}` : `Workspace patch ${part.hash}`,
           })
-          if (next.progressRevision !== goal.progressRevision && requiresDistinctGoalTurnCadence(goal) && !cadenceMutationReservations.has(sessionID)) {
+          const madeProgress = next.progressRevision !== goal.progressRevision
+          if (madeProgress && requiresDistinctGoalTurnCadence(goal) && !cadenceMutationReservations.has(sessionID)) {
             cadenceMutationReservations.set(sessionID, `patch:${part.messageID || part.hash}`)
           }
           await save(next)
+          if (madeProgress) notifyGoal(directory, next, "progress")
         })
         return
       }

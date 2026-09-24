@@ -1062,9 +1062,8 @@ export const OpenCode2GoalsExperimental = {
         })
       }
 
-      addExperimentalTool(tools, OPENCODE2_VERIFIER_RESULT_TOOL, semanticVerifier.resultTool)
-
       if (autonomousEnabled) {
+        addExperimentalTool(tools, OPENCODE2_VERIFIER_RESULT_TOOL, semanticVerifier.resultTool)
         for (const [name, definition] of Object.entries(workTools.definitions)) {
           addExperimentalTool(tools, name, definition)
         }
@@ -1171,7 +1170,6 @@ export const OpenCode2GoalsExperimental = {
       await ctx.session.hook("request", async (event: any) => {
         if (semanticVerifier.handleContext(event)) return
         await injectPersistedContext(event, false)
-        if (autonomousEnabled) workTools.handleContext(event)
       })
     } catch {
       // Historical prototypes used request. It remains presentation-only and
@@ -1184,7 +1182,7 @@ export const OpenCode2GoalsExperimental = {
         // mutation authority. Persisted Goal context is read-only here.
         if (semanticVerifier.handleContext(event)) return
         await injectPersistedContext(event, false)
-        if (autonomousEnabled) workTools.handleContext(event)
+        if (autonomousEnabled) workTools.hideFrom(event)
       })
     } catch {
       // Older beta hosts may not expose compaction. Stable V2 compaction parity

@@ -7,7 +7,9 @@ import { formatGoalRuntimeFingerprint } from "../runtime/fingerprint.js"
 import { parseGoalCommand } from "../opencode/command.js"
 import { createGoalTransitionNotifier } from "../opencode/notify.js"
 import { continuationPrompt } from "../opencode/prompt.js"
-import { createOpenCode2CompactionBoundaryRuntime, observeOpenCode2CompactionBoundary, type OpenCode2CompactionBoundaryRuntime } from "./compaction-boundary.js"
+import { createOpenCode2CompactionBoundaryRuntime, observeOpenCode2CompactionBoundary, prepareOpenCode2PostCompactionContinuation, type OpenCode2CompactionBoundaryResult, type OpenCode2CompactionBoundaryRuntime } from "./compaction-boundary.js"
+import { prepareOpenCode2Continuation } from "./continuation-boundary.js"
+import { createOpenCode2AutonomousRuntime, armOpenCode2GoalExecution, clearOpenCode2GoalOwnership, consumeOpenCode2GoalExecution, consumeOpenCode2GoalKickoff, rememberOpenCode2GoalKickoff, rememberOpenCode2GoalPrompt, type OpenCode2AutonomousRuntime, type OpenCode2GoalContinuationSource } from "./autonomous-runtime.js"
 
 export const OPENCODE2_EXPERIMENTAL_PLUGIN_ID = "bybrawe.open-code-goals.v2-experimental"
 

@@ -526,6 +526,14 @@ test("V2 autonomous coordinator counts only exact owned continuation executions"
           text: "host-admitted Goal continuation",
         })
         await host.emitEvent({ type: "session.execution.started", data: { sessionID } })
+        await host.emitEvent({
+          type: "session.text.ended",
+          data: {
+            sessionID,
+            assistantMessageID: `assistant-${expectedStalls}`,
+            text: `meaningful Goal turn ${expectedStalls}`,
+          },
+        })
         await host.emitEvent({ type: "session.execution.succeeded", data: { sessionID } })
 
         goal = await waitForValue(async () => {

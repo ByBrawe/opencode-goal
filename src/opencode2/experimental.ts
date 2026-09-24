@@ -999,7 +999,7 @@ export const OpenCode2GoalsExperimental = {
             }
 
             try {
-              const { store, goal } = await coordinatorGoal(sessionID)
+              const { directory, store, goal } = await coordinatorGoal(sessionID)
               if (!goal) continue
 
               const kickoff = consumeOpenCode2GoalKickoff(autonomousRuntime, sessionID, generation)

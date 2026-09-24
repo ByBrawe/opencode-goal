@@ -6,10 +6,12 @@ import net from "node:net"
 import os from "node:os"
 import path from "node:path"
 import process from "node:process"
+import { fileURLToPath, pathToFileURL } from "node:url"
 import { createGoal } from "../dist/domain/goal.js"
 import { GoalStore } from "../dist/persistence/store.js"
-import { settleGoalForOpenCode2ExecutionEvent } from "../dist/opencode2/execution-boundary.js"
 
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
+const runtimeProbeFile = path.join(root, "scripts", "opencode2-runtime-probe-plugin.mjs")
 const OPENCODE_BINARY = process.env.OPENCODE2_BINARY || "opencode2"
 const SERVER_USERNAME = "opencode"
 const SERVER_PASSWORD = "opencode-goal-v2-runtime-capabilities"
@@ -187,78 +189,6 @@ function startProvider() {
   }
 }
 
-function pluginSource() {
-  return `import { appendFile } from "node:fs/promises"
-
-const traceFile = process.env.OPENCODE_GOAL_V2_RUNTIME_TRACE
-
-async function trace(event) {
-  await appendFile(traceFile, JSON.stringify({ at: Date.now(), ...event }) + "\\n", "utf8")
-}
-
-function eventSessionID(event) {
-  return event?.properties?.sessionID ?? event?.data?.sessionID ?? event?.sessionID
-}
-
-function eventStatus(event) {
-  return event?.properties?.status ?? event?.data?.status ?? event?.status
-}
-
-export default {
-  id: "bybrawe.opencode-goal.v2.runtime-capability-canary",
-  async setup(ctx) {
-    await trace({ phase: "setup" })
-
-    const controller = new AbortController()
-    const eventTask = (async () => {
-      try {
-        const events = ctx.event.subscribe({ signal: controller.signal })
-        await trace({ phase: "event.subscribe.registered" })
-        for await (const event of events) {
-          await trace({
-            phase: "event",
-            type: event?.type,
-            sessionID: eventSessionID(event),
-            status: eventStatus(event),
-          })
-        }
-      } catch (error) {
-        if (!controller.signal.aborted) {
-          await trace({ phase: "event.subscribe.error", error: String(error) })
-        }
-      }
-    })()
-
-    const contextRegistration = await ctx.session.hook("context", async (event) => {
-      await trace({
-        phase: "session.context",
-        sessionID: event?.sessionID,
-        agent: event?.agent,
-        messageCount: Array.isArray(event?.messages) ? event.messages.length : 0,
-      })
-    })
-
-    const compactionRegistration = await ctx.session.hook("compaction", async (event) => {
-      await trace({
-        phase: "session.compaction",
-        sessionID: event?.sessionID,
-        agent: event?.agent,
-        messageCount: Array.isArray(event?.messages) ? event.messages.length : 0,
-      })
-    })
-    await trace({ phase: "session.compaction.registered" })
-
-    return async () => {
-      controller.abort()
-      await eventTask.catch(() => {})
-      await compactionRegistration?.dispose?.()
-      await contextRegistration?.dispose?.()
-    }
-  },
-}
-`
-}
-
 async function readTrace(file) {
   try {
     const raw = await readFile(file, "utf8")
@@ -292,7 +222,11 @@ async function main() {
     mkdir(path.join(home, ".cache"), { recursive: true }),
   ])
 
-  await writeFile(path.join(pluginDir, "opencode-goal-v2-runtime-probe.js"), pluginSource(), "utf8")
+  await writeFile(
+    path.join(pluginDir, "opencode-goal-v2-runtime-probe.js"),
+    `export { default } from ${JSON.stringify(pathToFileURL(runtimeProbeFile).href)}\n`,
+    "utf8",
+  )
   await writeFile(path.join(workspace, "README.md"), "# OpenCode Goal V2 runtime capability canary\n", "utf8")
   await writeFile(path.join(workspace, "opencode.json"), `${JSON.stringify({
     $schema: "https://opencode.ai/config.json",
@@ -443,12 +377,21 @@ async function main() {
         return events.length >= turn ? events[turn - 1] : null
       }, `session.execution.succeeded #${turn} through ctx.event.subscribe()`, diagnostics, 60_000)
 
-      const goal = await goalStore.load(sessionID)
-      assert.ok(goal, `Goal disappeared before successful execution boundary ${turn}`)
-      const settled = settleGoalForOpenCode2ExecutionEvent(goal, terminalEvent)
-      assert.equal(settled.closed, true, `successful execution ${turn} must close exactly one Goal turn`)
-      await goalStore.save(settled.goal)
-      return settled.goal
+      const settledGoal = await waitFor(async () => {
+        const goal = await goalStore.load(sessionID)
+        return goal && goal.stalledTurns >= turn ? goal : null
+      }, `persisted Goal close for successful execution #${turn}`, diagnostics, 60_000)
+
+      const trace = await readTrace(traceFile)
+      assert.ok(
+        trace.some((item) =>
+          item.phase === "goal.execution.boundary.closed"
+          && item.sessionID === sessionID
+          && item.stalledTurns === turn
+        ),
+        `probe did not record Goal boundary close #${turn}\n${await diagnostics()}`,
+      )
+      return settledGoal
     }
 
     const firstNoProgress = await promptAndSettleNoProgress(1)

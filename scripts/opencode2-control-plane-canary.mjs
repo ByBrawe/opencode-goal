@@ -405,8 +405,17 @@ async function main() {
         body: JSON.stringify({ name: "goal", text }),
       }, 90_000)
       assert.ok(response.ok, `/goal ${text} failed: HTTP ${response.status} ${response.text}\n${await diagnostics()}`)
-      const deadline = Date.now() + 30_000
-      while (provider.stats.requests.length <= before && Date.now() < deadline) {
+
+      const deadline = Date.now() + 45_000
+      let lastCount = provider.stats.requests.length
+      let stableSince = provider.stats.requests.length > before ? Date.now() : 0
+      while (Date.now() < deadline) {
+        const count = provider.stats.requests.length
+        if (count !== lastCount) {
+          lastCount = count
+          stableSince = count > before ? Date.now() : 0
+        }
+        if (count > before && stableSince && Date.now() - stableSince >= 750) break
         await new Promise((resolve) => setTimeout(resolve, 50))
       }
       assert.ok(

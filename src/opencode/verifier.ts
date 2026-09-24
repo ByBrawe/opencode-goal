@@ -69,7 +69,7 @@ function currentRevisionTurns(goal: GoalState, currentMessageID?: string): numbe
   return completed + current
 }
 
-function verifierHostEvidence(goal: GoalState, currentMessageID?: string): EvidenceRecord[] {
+export function semanticVerifierHostEvidence(goal: GoalState, currentMessageID?: string): EvidenceRecord[] {
   const turns = currentRevisionTurns(goal, currentMessageID)
   const mutations = goal.progressFingerprints?.length ?? 0
   const runtime: EvidenceRecord[] = [
@@ -104,7 +104,7 @@ function verifierHostEvidence(goal: GoalState, currentMessageID?: string): Evide
   return [...runtime, ...persisted]
 }
 
-function verificationPrompt(goal: GoalState, auditToken: string, hostEvidenceRecords: EvidenceRecord[]): string {
+export function semanticVerificationPrompt(goal: GoalState, auditToken: string, hostEvidenceRecords: EvidenceRecord[]): string {
   const semantic = goal.requirements.filter((item) => item.required && item.verification === "semantic")
   const hostEvidence = hostEvidenceRecords
     .map((item) => `- [${item.id}] ${item.summary}`)
@@ -145,7 +145,7 @@ function evidenceQuoteCandidates(value: string): string[] {
   return [...candidates]
 }
 
-async function corroborateEvidence(
+export async function corroborateSemanticVerifierEvidence(
   root: string,
   goal: GoalState,
   results: SemanticRequirementResult[],
@@ -374,7 +374,7 @@ export function createSemanticVerifierRuntime(client: any, root: string, options
       : timeoutMs
     const allowTimeoutRetry = verifyOptions.allowTimeoutRetry !== false
     const auditToken = randomUUID()
-    const hostEvidenceRecords = verifierHostEvidence(goal, verifyOptions.currentMessageID)
+    const hostEvidenceRecords = semanticVerifierHostEvidence(goal, verifyOptions.currentMessageID)
     let childID = ""
     let retryAfterTimeout = false
     try {
@@ -404,7 +404,7 @@ export function createSemanticVerifierRuntime(client: any, root: string, options
       // agent config (explicit option -> small_model -> default model).
       const body = {
         agent: agentName,
-        parts: [{ type: "text", text: verificationPrompt(goal, auditToken, hostEvidenceRecords) }],
+        parts: [{ type: "text", text: semanticVerificationPrompt(goal, auditToken, hostEvidenceRecords) }],
       }
 
       if (typeof client.session.promptAsync === "function") {
@@ -452,7 +452,7 @@ export function createSemanticVerifierRuntime(client: any, root: string, options
       if (!result || result.auditToken !== auditToken) {
         throw new Error("semantic verifier did not submit a valid result")
       }
-      const corroborated = await corroborateEvidence(root, goal, result.results, hostEvidenceRecords)
+      const corroborated = await corroborateSemanticVerifierEvidence(root, goal, result.results, hostEvidenceRecords)
       const processGuarded = guardSemanticProcessResults(goal, corroborated, hostEvidenceRecords)
       return applySemanticVerifierResults(goal, processGuarded)
     } catch (error) {

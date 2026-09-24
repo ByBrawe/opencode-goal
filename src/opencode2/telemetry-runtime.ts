@@ -224,6 +224,9 @@ export function applyOpenCode2GoalTelemetry(
   now = Date.now(),
 ): { goal: GoalState; empty: boolean } {
   const messageID = `v2-execution:${ownerMessageID}`
+  if (goal.usage.seenMessageIDs.includes(messageID)) {
+    return { goal, empty: false }
+  }
   const sample = {
     messageID,
     inputTokens: telemetry.inputTokens,

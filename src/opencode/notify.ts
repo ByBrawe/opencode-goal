@@ -2,7 +2,7 @@ import { spawn } from "node:child_process"
 import type { GoalState } from "../domain/types.js"
 import type { GoalStoreTransitionReason } from "../persistence/store.js"
 
-export type GoalNotifyReason = GoalStoreTransitionReason | "rejected"
+export type GoalNotifyReason = GoalStoreTransitionReason | "rejected" | "progress"
 
 export interface GoalNotifyOptions {
   spawn?: typeof spawn

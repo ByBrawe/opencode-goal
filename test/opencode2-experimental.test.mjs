@@ -14,6 +14,7 @@ import OpenCode2GoalsExperimental, {
 import { createOpenCode2CompactionBoundaryRuntime } from "../dist/opencode2/compaction-boundary.js"
 import { createGoal } from "../dist/domain/goal.js"
 import { GoalStore } from "../dist/persistence/store.js"
+import { GoalSequenceStore } from "../dist/persistence/sequence-store.js"
 
 function fakeV2Context(directory) {
   const commands = new Map()
@@ -560,6 +561,90 @@ test("V2 autonomous coordinator counts only exact owned continuation executions"
         host.prompts.filter((item) => item.resume === false && item.metadata?.opencode_goal_v2_autonomous === true).length,
         3,
         "the paused third Goal turn must not admit a fourth continuation",
+      )
+
+      await cleanup()
+    })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("V2 completed Goal terminal auto-promotes exactly one queued Goal and transfers continuation ownership", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-sequence-auto-"))
+  try {
+    await withAutonomousPreview(async () => {
+      const host = fakeV2EventContext(root)
+      const sessionID = "v2-sequence-auto"
+      const store = new GoalStore(root)
+      const sequence = new GoalSequenceStore(root)
+      const cleanup = await OpenCode2GoalsExperimental.setup(host.ctx)
+
+      const dispatched = await dispatchDirectCommand(host, sessionID, "ship first queued stage")
+      await armCapability(host, sessionID, dispatched.messageID)
+      await host.emitEvent({ type: "session.execution.started", data: { sessionID } })
+      await consumeCapability(host, sessionID, "ship first queued stage")
+
+      await host.emitEvent({ type: "session.execution.succeeded", data: { sessionID } })
+      const kickoff = await waitForValue(
+        () => host.prompts.find((item) =>
+          item.resume === false
+          && item.metadata?.opencode_goal_v2_source === "kickoff"
+        ),
+        "initial Goal kickoff",
+      )
+
+      const queued = await sequence.enqueue(sessionID, { objective: "ship second queued stage" })
+      const queuedID = queued.item.id
+
+      await runHook(host, "context", {
+        sessionID,
+        agent: "build",
+        messageID: kickoff.returnedID,
+        text: "host-admitted first Goal work turn",
+      })
+      await host.emitEvent({ type: "session.execution.started", data: { sessionID } })
+
+      const current = await store.load(sessionID)
+      assert.ok(current)
+      await store.save({
+        ...current,
+        status: "completed",
+        completionSummary: "first queued stage completed",
+        updatedAt: Date.now(),
+      })
+
+      await host.emitEvent({ type: "session.execution.succeeded", data: { sessionID } })
+
+      const promoted = await waitForValue(async () => {
+        const goal = await store.load(sessionID)
+        return goal?.id === queuedID && goal.status === "active" ? goal : null
+      }, "automatic queued Goal promotion")
+      assert.equal(promoted.objective, "ship second queued stage")
+      assert.equal((await sequence.load(sessionID)).items.length, 0)
+
+      const sequencePrompt = await waitForValue(
+        () => host.prompts.find((item) =>
+          item.resume === false
+          && item.metadata?.opencode_goal_v2_source === "sequence"
+        ),
+        "sequence-owned V2 continuation",
+      )
+      assert.equal(sequencePrompt.metadata?.opencode_goal_id, queuedID)
+
+      const countBeforeDuplicate = host.prompts.filter((item) =>
+        item.resume === false
+        && item.metadata?.opencode_goal_v2_source === "sequence"
+      ).length
+      await host.emitEvent({ type: "session.execution.succeeded", data: { sessionID } })
+      await new Promise((resolve) => setTimeout(resolve, 25))
+      assert.equal(
+        host.prompts.filter((item) =>
+          item.resume === false
+          && item.metadata?.opencode_goal_v2_source === "sequence"
+        ).length,
+        countBeforeDuplicate,
+        "duplicate terminal without the consumed owner must not promote or dispatch again",
       )
 
       await cleanup()

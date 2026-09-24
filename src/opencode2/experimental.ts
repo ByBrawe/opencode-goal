@@ -287,6 +287,33 @@ function deleteSessionCapabilities(runtime: OpenCode2DirectLifecycleRuntime, ses
   if (armed && armed !== exceptKey) runtime.armedBySession.delete(sessionID)
 }
 
+function lifecycleEventCreatedAt(event: unknown): number | undefined {
+  const item = record(event)
+  const value = item?.created ?? nestedRecord(item, "data")?.created ?? nestedRecord(item, "properties")?.created
+  const number = Number(value)
+  return Number.isFinite(number) && number >= 0 ? number : undefined
+}
+
+function revokeSessionCapabilitiesAtTerminal(
+  runtime: OpenCode2DirectLifecycleRuntime,
+  sessionID: string,
+  boundaryAt: number | undefined,
+): void {
+  for (const [key, capability] of runtime.capabilities) {
+    if (capability.sessionID !== sessionID) continue
+    // V2 event delivery can lag behind command admission. An older execution's
+    // terminal event must not revoke a capability created for a newer direct
+    // command merely because both belong to the same session.
+    if (boundaryAt !== undefined && capability.createdAt > boundaryAt) continue
+    // Hosts without durable event timestamps cannot safely order an unarmed
+    // capability against a late terminal event. Keep it hidden behind the
+    // existing message-bound context match + short TTL rather than guessing.
+    if (boundaryAt === undefined && capability.state === "pending") continue
+    runtime.capabilities.delete(key)
+    if (runtime.armedBySession.get(sessionID) === key) runtime.armedBySession.delete(sessionID)
+  }
+}
+
 export function observeOpenCode2LifecycleBoundary(
   runtime: OpenCode2DirectLifecycleRuntime,
   event: unknown,
@@ -305,7 +332,7 @@ export function observeOpenCode2LifecycleBoundary(
     // Once OpenCode 2 declares that execution terminal, retaining pending or
     // armed authority until its wall-clock TTL would allow a later request to
     // observe stale mutation authority.
-    deleteSessionCapabilities(runtime, sessionID)
+    revokeSessionCapabilitiesAtTerminal(runtime, sessionID, lifecycleEventCreatedAt(event))
     return "execution-terminal"
   }
 

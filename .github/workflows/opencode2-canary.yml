@@ -14,6 +14,7 @@ on:
       - "scripts/opencode2-promotion-capability-canary.mjs"
       - "scripts/opencode2-direct-lifecycle-canary.mjs"
       - "scripts/opencode2-autonomous-adapter-canary.mjs"
+      - "scripts/opencode2-verifier-capability-canary.mjs"
       - "scripts/opencode2-runtime-capability-canary.mjs"
       - "scripts/opencode2-runtime-probe-plugin.mjs"
       - "scripts/run-opencode2-host-ci.mjs"
@@ -28,6 +29,7 @@ on:
       - "scripts/opencode2-promotion-capability-canary.mjs"
       - "scripts/opencode2-direct-lifecycle-canary.mjs"
       - "scripts/opencode2-autonomous-adapter-canary.mjs"
+      - "scripts/opencode2-verifier-capability-canary.mjs"
       - "scripts/opencode2-runtime-capability-canary.mjs"
       - "scripts/opencode2-runtime-probe-plugin.mjs"
       - "scripts/run-opencode2-host-ci.mjs"
@@ -131,6 +133,24 @@ jobs:
         run: node --check scripts/opencode2-autonomous-adapter-canary.mjs
       - name: Prove exact owned autonomous continuation
         run: node scripts/opencode2-autonomous-adapter-canary.mjs
+
+  verifier-capabilities:
+    name: OpenCode 2.0.11 verifier child-session capabilities
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+      - name: Install exact OpenCode 2.0.11
+        run: npm install -g @opencode/cli@2.0.11
+      - name: Check verifier capability canary syntax
+        run: node --check scripts/opencode2-verifier-capability-canary.mjs
+      - name: Prove verifier child-session and read-only tool boundary
+        run: node scripts/opencode2-verifier-capability-canary.mjs
 
   direct-lifecycle-capability:
     name: OpenCode 2.0.11 authorized Goal lifecycle

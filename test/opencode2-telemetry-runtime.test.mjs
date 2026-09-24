@@ -154,7 +154,7 @@ test("V2 telemetry preserves V1 logical-turn and empty-turn accounting semantics
   assert.equal(goal.usage.tokens, 52)
   assert.equal(goal.usage.cost, 0.5)
   assert.equal(goal.usage.runtimeMs, 100)
-  assert.equal(goal.execution?.modelContext?.lastRequestTokens, 52)
+  assert.equal(goal.execution?.modelContext?.lastRequestTokens, 53, "model context usage includes cache-read tokens exactly like V1")
   assert.equal(goal.execution?.modelContext?.lastInputTokens, 43)
 
   const empty1 = {

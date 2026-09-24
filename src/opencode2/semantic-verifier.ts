@@ -192,7 +192,7 @@ async function withinVerifierDeadline<T>(
 
 export function createOpenCode2SemanticVerifierRuntime(
   session: OpenCode2VerifierSessionAPI,
-  root: string,
+  resolveRoot: (parentSessionID: string) => Promise<string>,
   options: { timeoutMs?: number } = {},
 ) {
   const pending = new Map<string, PendingAudit>()
@@ -301,6 +301,7 @@ export function createOpenCode2SemanticVerifierRuntime(
       : timeoutMs
     const allowTimeoutRetry = verifyOptions.allowTimeoutRetry !== false
     const auditToken = randomUUID()
+    const root = await resolveRoot(parentSessionID)
     const hostEvidenceRecords = semanticVerifierHostEvidence(goal, verifyOptions.currentMessageID)
     let childID = ""
     let retryAfterTimeout = false

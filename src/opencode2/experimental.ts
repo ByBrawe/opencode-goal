@@ -7,13 +7,16 @@ import { formatGoalRuntimeFingerprint } from "../runtime/fingerprint.js"
 import { parseGoalCommand } from "../opencode/command.js"
 import { createGoalTransitionNotifier } from "../opencode/notify.js"
 import { continuationPrompt } from "../opencode/prompt.js"
-import { createOpenCode2CompactionBoundaryRuntime, observeOpenCode2CompactionBoundary, type OpenCode2CompactionBoundaryRuntime } from "./compaction-boundary.js"
+import { createOpenCode2CompactionBoundaryRuntime, observeOpenCode2CompactionBoundary, prepareOpenCode2PostCompactionContinuation, type OpenCode2CompactionBoundaryResult, type OpenCode2CompactionBoundaryRuntime } from "./compaction-boundary.js"
+import { prepareOpenCode2Continuation } from "./continuation-boundary.js"
+import { createOpenCode2AutonomousRuntime, armOpenCode2GoalExecution, clearOpenCode2GoalOwnership, consumeOpenCode2GoalExecution, consumeOpenCode2GoalKickoff, forgetOpenCode2GoalPrompt, rememberOpenCode2GoalKickoff, rememberOpenCode2GoalPrompt, type OpenCode2AutonomousRuntime, type OpenCode2GoalContinuationSource } from "./autonomous-runtime.js"
 
 export const OPENCODE2_EXPERIMENTAL_PLUGIN_ID = "bybrawe.open-code-goals.v2-experimental"
 
 const V2_CONTROL_TOOL = "opencode_goals_v2_control"
 const V2_GET_TOOL = "opencode_goals_v2_get"
 export const OPENCODE2_DIRECT_LIFECYCLE_ENV = "OPENCODE_GOAL_V2_DIRECT_LIFECYCLE"
+export const OPENCODE2_AUTONOMOUS_ENV = "OPENCODE_GOAL_V2_AUTONOMOUS"
 const V2_READ_ONLY_NOTICE =
   "OpenCode Goals V2 model-visible lifecycle control remains read-only. Mutation is authorized only through the host-native direct command boundary when the explicit V2 lifecycle preview is enabled. No Goal state was changed."
 
@@ -198,6 +201,11 @@ function directLifecyclePreviewEnabled(): boolean {
   return value === "1" || value === "true" || value === "yes" || value === "on"
 }
 
+function autonomousPreviewEnabled(): boolean {
+  const value = String(process.env[OPENCODE2_AUTONOMOUS_ENV] ?? "").trim().toLowerCase()
+  return value === "1" || value === "true" || value === "yes" || value === "on"
+}
+
 const DIRECT_CAPABILITY_TTL_MS = 2 * 60_000
 const DIRECT_MUTATION_ACTIONS = new Set(["create", "edit", "pause", "resume", "clear"])
 const DIRECT_READ_ACTIONS = new Set(["status", "contract"])
@@ -220,6 +228,7 @@ export interface OpenCode2DirectLifecycleRuntime {
   capabilities: Map<string, OpenCode2DirectCapability>
   armedBySession: Map<string, string>
   executionGenerationBySession: Map<string, number>
+  activeExecutionGenerationBySession: Map<string, number>
 }
 
 export function createOpenCode2DirectLifecycleRuntime(): OpenCode2DirectLifecycleRuntime {
@@ -227,6 +236,7 @@ export function createOpenCode2DirectLifecycleRuntime(): OpenCode2DirectLifecycl
     capabilities: new Map(),
     armedBySession: new Map(),
     executionGenerationBySession: new Map(),
+    activeExecutionGenerationBySession: new Map(),
   }
 }
 
@@ -237,7 +247,13 @@ function currentExecutionGeneration(runtime: OpenCode2DirectLifecycleRuntime, se
 function beginExecutionGeneration(runtime: OpenCode2DirectLifecycleRuntime, sessionID: string): number {
   const next = currentExecutionGeneration(runtime, sessionID) + 1
   runtime.executionGenerationBySession.set(sessionID, next)
+  runtime.activeExecutionGenerationBySession.set(sessionID, next)
   return next
+}
+
+function activeOrNextExecutionGeneration(runtime: OpenCode2DirectLifecycleRuntime, sessionID: string): number {
+  return runtime.activeExecutionGenerationBySession.get(sessionID)
+    ?? currentExecutionGeneration(runtime, sessionID) + 1
 }
 
 function directBudgetPatch(parsed: ReturnType<typeof parseGoalCommand>) {
@@ -336,17 +352,72 @@ export function observeOpenCode2LifecycleBoundary(
     || type === "session.execution.failed"
     || type === "session.execution.interrupted"
   ) {
-    revokeSessionCapabilitiesAtTerminal(runtime, sessionID, currentExecutionGeneration(runtime, sessionID))
+    const generation = runtime.activeExecutionGenerationBySession.get(sessionID)
+      ?? currentExecutionGeneration(runtime, sessionID)
+    revokeSessionCapabilitiesAtTerminal(runtime, sessionID, generation)
+    runtime.activeExecutionGenerationBySession.delete(sessionID)
     return "execution-terminal"
   }
 
   if (type === "session.deleted") {
     deleteSessionCapabilities(runtime, sessionID)
     runtime.executionGenerationBySession.delete(sessionID)
+    runtime.activeExecutionGenerationBySession.delete(sessionID)
     return "session-deleted"
   }
 
   return undefined
+}
+
+export interface OpenCode2AuthorityBoundaryObservation {
+  kind?: "compaction-execution" | "execution-started" | "execution-terminal" | "session-deleted"
+  sessionID?: string
+  generation?: number
+  compaction: OpenCode2CompactionBoundaryResult
+}
+
+export function inspectOpenCode2AuthorityBoundary(
+  runtime: OpenCode2DirectLifecycleRuntime,
+  compactionRuntime: OpenCode2CompactionBoundaryRuntime,
+  event: unknown,
+): OpenCode2AuthorityBoundaryObservation {
+  const type = firstString(record(event)?.type)
+  const sessionID = sessionIDFromEvent(event)
+  const generationBefore = sessionID
+    ? runtime.activeExecutionGenerationBySession.get(sessionID) ?? currentExecutionGeneration(runtime, sessionID)
+    : undefined
+  const compaction = observeOpenCode2CompactionBoundary(compactionRuntime, event)
+
+  // A compaction execution still receives a normal execution.started event, so
+  // let that event advance generation ownership. Only its terminal is consumed
+  // by the compaction coordinator.
+  if (compaction.consumedExecution) {
+    if (sessionID) runtime.activeExecutionGenerationBySession.delete(sessionID)
+    return {
+      kind: "compaction-execution",
+      ...(sessionID ? { sessionID } : {}),
+      ...(generationBefore !== undefined ? { generation: generationBefore } : {}),
+      compaction,
+    }
+  }
+
+  const lifecycle = observeOpenCode2LifecycleBoundary(runtime, event)
+  const generation = lifecycle === "execution-started" && sessionID
+    ? runtime.activeExecutionGenerationBySession.get(sessionID)
+    : lifecycle === "execution-terminal"
+      ? generationBefore
+      : undefined
+
+  if (lifecycle === "session-deleted" && sessionID) {
+    compactionRuntime.sessions.delete(sessionID)
+  }
+
+  return {
+    ...(lifecycle ? { kind: lifecycle } : {}),
+    ...(sessionID ? { sessionID } : {}),
+    ...(generation !== undefined ? { generation } : {}),
+    compaction,
+  }
 }
 
 export function observeOpenCode2AuthorityBoundary(
@@ -354,18 +425,7 @@ export function observeOpenCode2AuthorityBoundary(
   compactionRuntime: OpenCode2CompactionBoundaryRuntime,
   event: unknown,
 ): "compaction-execution" | "execution-started" | "execution-terminal" | "session-deleted" | undefined {
-  const compaction = observeOpenCode2CompactionBoundary(compactionRuntime, event)
-
-  // Execution-started still advances the generation even while compaction owns
-  // that execution; only its terminal is consumed as compaction authority.
-  if (compaction.consumedExecution) return "compaction-execution"
-
-  const lifecycle = observeOpenCode2LifecycleBoundary(runtime, event)
-  if (lifecycle === "session-deleted") {
-    const sessionID = sessionIDFromEvent(event)
-    if (sessionID) compactionRuntime.sessions.delete(sessionID)
-  }
-  return lifecycle
+  return inspectOpenCode2AuthorityBoundary(runtime, compactionRuntime, event).kind
 }
 
 function revokeCapability(runtime: OpenCode2DirectLifecycleRuntime, capability: OpenCode2DirectCapability): void {
@@ -524,6 +584,7 @@ async function applyAuthorizedGoalMutation(
 async function executeAuthorizedGoalControl(
   ctx: OpenCode2ExperimentalContext,
   runtime: OpenCode2DirectLifecycleRuntime,
+  autonomousRuntime: OpenCode2AutonomousRuntime | undefined,
   input: { command?: unknown },
   toolContext: OpenCode2ExperimentalToolContext,
 ): Promise<ReturnType<typeof toolResponse>> {
@@ -555,7 +616,20 @@ async function executeAuthorizedGoalControl(
     throw new Error("OpenCode Goals V2 lifecycle capability arguments do not match the authenticated direct command. No Goal state was changed.")
   }
 
+  if (autonomousRuntime) clearOpenCode2GoalOwnership(autonomousRuntime, sessionID)
   const goal = await applyAuthorizedGoalMutation(ctx, sessionID, capability.directory, parsed)
+  if (
+    autonomousRuntime
+    && goal?.status === "active"
+    && (parsed.action === "create" || parsed.action === "edit" || parsed.action === "resume")
+  ) {
+    rememberOpenCode2GoalKickoff(
+      autonomousRuntime,
+      sessionID,
+      capability.executionGeneration,
+      goal,
+    )
+  }
   const message = goal
     ? `Authorized /goal ${parsed.action} applied. Persisted Goal status: ${goal.status}. The single-use capability is consumed.`
     : `Authorized /goal ${parsed.action} applied. No active Goal remains. The single-use capability is consumed.`
@@ -751,16 +825,183 @@ export const OpenCode2GoalsExperimental = {
   setup: async (ctx: OpenCode2ExperimentalContext) => {
     const runtime = createOpenCode2DirectLifecycleRuntime()
     const compactionRuntime = createOpenCode2CompactionBoundaryRuntime()
+    const autonomousRuntime = createOpenCode2AutonomousRuntime()
+    const autonomousDispatching = new Set<string>()
     const previewEnabled = directLifecyclePreviewEnabled()
+    const autonomousEnabled = previewEnabled && autonomousPreviewEnabled()
     const lifecycleAbort = new AbortController()
     let lifecycleTask: Promise<void> | undefined
+
+    const coordinatorGoal = async (sessionID: string) => {
+      const directory = await resolveSessionDirectory(ctx, sessionID)
+      const store = new GoalStore(directory, { onTransition: createGoalTransitionNotifier(directory) })
+      const goal = await store.load(sessionID)
+      return { directory, store, goal }
+    }
+
+    const pauseAutonomousDispatchFailure = async (
+      sessionID: string,
+      goalID: string,
+      revision: number,
+      error: unknown,
+    ) => {
+      try {
+        const { store, goal } = await coordinatorGoal(sessionID)
+        if (!goal || goal.id !== goalID || goal.revision !== revision || goal.status !== "active") return
+        await store.save(pauseGoal(goal, `Continuation dispatch failed: ${String(error)}`))
+      } catch {
+        // Failure recovery is advisory to the original transport error. Never
+        // mutate a different Goal/revision because recovery itself raced.
+      }
+    }
+
+    const scheduleAutonomousContinuation = async (
+      sessionID: string,
+      expectedGoal: GoalState,
+      prompt: string,
+      source: OpenCode2GoalContinuationSource,
+    ) => {
+      if (!autonomousEnabled || autonomousDispatching.has(sessionID) || typeof ctx.session.prompt !== "function") return
+
+      const { goal } = await coordinatorGoal(sessionID)
+      if (
+        !goal
+        || goal.id !== expectedGoal.id
+        || goal.revision !== expectedGoal.revision
+        || goal.status !== "active"
+        || isReadOnlyAgent(goal.execution?.agent)
+        || budgetLimitHits(goal.usage, goal.budget).length > 0
+        || Boolean(goal.infrastructureRecovery?.nextRetryAt && goal.infrastructureRecovery.nextRetryAt > Date.now())
+      ) return
+
+      autonomousDispatching.add(sessionID)
+      let messageID = ""
+      const promptInput = {
+        sessionID,
+        text: prompt,
+        delivery: "steer" as const,
+        metadata: {
+          opencode_goal_v2_autonomous: true,
+          opencode_goal_v2_source: source,
+          opencode_goal_id: goal.id,
+          opencode_goal_revision: goal.revision,
+        },
+      }
+
+      try {
+        const admitted = await ctx.session.prompt({ ...promptInput, resume: false })
+        messageID = firstString(record(admitted)?.id, nestedRecord(admitted, "data")?.id) ?? ""
+        if (!messageID) throw new Error("OpenCode 2 did not return a host user-message ID for Goal continuation admission")
+
+        rememberOpenCode2GoalPrompt(autonomousRuntime, sessionID, messageID, goal, source)
+        queueMicrotask(() => {
+          void Promise.resolve(ctx.session.prompt!({ ...promptInput, id: messageID, resume: true }))
+            .then((resumed) => {
+              const resumedMessageID = firstString(record(resumed)?.id, nestedRecord(resumed, "data")?.id)
+              if (resumedMessageID && resumedMessageID !== messageID) {
+                throw new Error("OpenCode 2 resumed Goal continuation with a different host user-message ID")
+              }
+            })
+            .catch(async (error) => {
+              forgetOpenCode2GoalPrompt(autonomousRuntime, sessionID, messageID)
+              await pauseAutonomousDispatchFailure(sessionID, goal.id, goal.revision, error)
+            })
+            .finally(() => autonomousDispatching.delete(sessionID))
+        })
+      } catch (error) {
+        if (messageID) forgetOpenCode2GoalPrompt(autonomousRuntime, sessionID, messageID)
+        autonomousDispatching.delete(sessionID)
+        await pauseAutonomousDispatchFailure(sessionID, goal.id, goal.revision, error)
+      }
+    }
 
     if (typeof ctx.event?.subscribe === "function") {
       lifecycleTask = (async () => {
         try {
           const events = ctx.event!.subscribe({ signal: lifecycleAbort.signal })
           for await (const event of events) {
-            observeOpenCode2AuthorityBoundary(runtime, compactionRuntime, event)
+            const boundary = inspectOpenCode2AuthorityBoundary(runtime, compactionRuntime, event)
+            const sessionID = boundary.sessionID
+            const type = firstString(record(event)?.type)
+
+            if (boundary.kind === "session-deleted" && sessionID) {
+              clearOpenCode2GoalOwnership(autonomousRuntime, sessionID)
+              autonomousDispatching.delete(sessionID)
+              continue
+            }
+            if (!autonomousEnabled || !sessionID) continue
+
+            if (boundary.compaction.compactionFailed) {
+              continue
+            }
+            if (boundary.compaction.compactionCompleted) {
+              try {
+                const { goal } = await coordinatorGoal(sessionID)
+                if (goal) {
+                  const prepared = prepareOpenCode2PostCompactionContinuation(goal)
+                  if (prepared.shouldContinue && prepared.prompt) {
+                    await scheduleAutonomousContinuation(sessionID, goal, prepared.prompt, "compaction")
+                  }
+                }
+              } catch {
+                // Missing/unreadable state cannot authorize autonomous work.
+              }
+              continue
+            }
+
+            if (boundary.kind !== "execution-terminal" || boundary.generation === undefined) continue
+            const generation = boundary.generation
+            const succeeded = type === "session.execution.succeeded"
+
+            if (!succeeded) {
+              consumeOpenCode2GoalKickoff(autonomousRuntime, sessionID, generation)
+              consumeOpenCode2GoalExecution(autonomousRuntime, sessionID, generation)
+              continue
+            }
+
+            try {
+              const { store, goal } = await coordinatorGoal(sessionID)
+              if (!goal) continue
+
+              const kickoff = consumeOpenCode2GoalKickoff(autonomousRuntime, sessionID, generation)
+              if (kickoff) {
+                if (
+                  goal.id === kickoff.goalID
+                  && goal.revision === kickoff.revision
+                  && goal.status === "active"
+                ) {
+                  await scheduleAutonomousContinuation(
+                    sessionID,
+                    goal,
+                    continuationPrompt(goal),
+                    "kickoff",
+                  )
+                }
+                continue
+              }
+
+              const owner = consumeOpenCode2GoalExecution(autonomousRuntime, sessionID, generation)
+              if (
+                !owner
+                || owner.goalID !== goal.id
+                || owner.revision !== goal.revision
+              ) continue
+
+              const prepared = prepareOpenCode2Continuation(goal, event)
+              if (!prepared.closed) continue
+              await store.save(prepared.goal)
+              if (prepared.shouldContinue && prepared.prompt) {
+                await scheduleAutonomousContinuation(
+                  sessionID,
+                  prepared.goal,
+                  prepared.prompt,
+                  "execution",
+                )
+              }
+            } catch {
+              // Event delivery alone never authorizes fallback mutation or
+              // dispatch when persisted Goal state cannot be verified.
+            }
           }
         } catch {
           // Raw-event loss cannot authorize mutation. Existing message-bound
@@ -802,7 +1043,7 @@ export const OpenCode2GoalsExperimental = {
           input: authorizedControlInputSchema,
           output: controlOutputSchema,
           execute: async (input: { command?: unknown }, toolContext: OpenCode2ExperimentalToolContext) =>
-            await executeAuthorizedGoalControl(ctx, runtime, input, toolContext),
+            await executeAuthorizedGoalControl(ctx, runtime, autonomousEnabled ? autonomousRuntime : undefined, input, toolContext),
         })
       }
     })
@@ -873,6 +1114,18 @@ export const OpenCode2GoalsExperimental = {
 
     try {
       await ctx.session.hook("context", async (event: any) => {
+        if (autonomousEnabled) {
+          const sessionID = sessionIDFromEvent(event)
+          const lastUserMessageID = eventLastUserMessageID(event)
+          if (sessionID && lastUserMessageID && !isReadOnlyAgent(event?.agent)) {
+            armOpenCode2GoalExecution(
+              autonomousRuntime,
+              sessionID,
+              lastUserMessageID,
+              activeOrNextExecutionGeneration(runtime, sessionID),
+            )
+          }
+        }
         await injectPersistedContext(event, true)
       })
     } catch {
@@ -905,7 +1158,12 @@ export const OpenCode2GoalsExperimental = {
       runtime.capabilities.clear()
       runtime.armedBySession.clear()
       runtime.executionGenerationBySession.clear()
+      runtime.activeExecutionGenerationBySession.clear()
       compactionRuntime.sessions.clear()
+      autonomousRuntime.pendingPromptBySession.clear()
+      autonomousRuntime.executionOwnerBySession.clear()
+      autonomousRuntime.kickoffBySession.clear()
+      autonomousDispatching.clear()
       await lifecycleTask?.catch(() => undefined)
     }
   },

@@ -4,6 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import OpenCode2GoalsExperimental, {
+  OPENCODE2_AUTONOMOUS_ENV,
   OPENCODE2_DIRECT_LIFECYCLE_ENV,
   OPENCODE2_EXPERIMENTAL_PLUGIN_ID,
   createOpenCode2DirectLifecycleRuntime,
@@ -76,6 +77,51 @@ function fakeV2Context(directory) {
   }
 }
 
+function fakeV2EventContext(directory) {
+  const host = fakeV2Context(directory)
+  const queued = []
+  const waiters = []
+
+  host.ctx.event = {
+    subscribe({ signal } = {}) {
+      return {
+        [Symbol.asyncIterator]() { return this },
+        next() {
+          if (signal?.aborted) return Promise.resolve({ done: true, value: undefined })
+          if (queued.length) return Promise.resolve({ done: false, value: queued.shift() })
+          return new Promise((resolve) => {
+            const waiter = { resolve }
+            waiters.push(waiter)
+            signal?.addEventListener("abort", () => {
+              const index = waiters.indexOf(waiter)
+              if (index >= 0) waiters.splice(index, 1)
+              resolve({ done: true, value: undefined })
+            }, { once: true })
+          })
+        },
+      }
+    },
+  }
+
+  host.emitEvent = async (event) => {
+    const waiter = waiters.shift()
+    if (waiter) waiter.resolve({ done: false, value: event })
+    else queued.push(event)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  }
+  return host
+}
+
+async function waitForValue(predicate, message, timeoutMs = 2_000) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const value = await predicate()
+    if (value) return value
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  throw new Error(`timed out waiting for ${message}`)
+}
+
 function fakeV2PromiseToolContext(directory) {
   const host = fakeV2Context(directory)
   host.ctx.tool.transform = async (callback) => {
@@ -100,6 +146,23 @@ async function withDirectLifecyclePreview(fn) {
   } finally {
     if (previous === undefined) delete process.env[key]
     else process.env[key] = previous
+  }
+}
+
+async function withAutonomousPreview(fn) {
+  const directKey = OPENCODE2_DIRECT_LIFECYCLE_ENV
+  const autonomousKey = OPENCODE2_AUTONOMOUS_ENV
+  const previousDirect = process.env[directKey]
+  const previousAutonomous = process.env[autonomousKey]
+  process.env[directKey] = "1"
+  process.env[autonomousKey] = "1"
+  try {
+    return await fn()
+  } finally {
+    if (previousDirect === undefined) delete process.env[directKey]
+    else process.env[directKey] = previousDirect
+    if (previousAutonomous === undefined) delete process.env[autonomousKey]
+    else process.env[autonomousKey] = previousAutonomous
   }
 }
 
@@ -422,6 +485,88 @@ test("V2 authority boundary binds direct capabilities to ordered execution gener
   assert.equal(runtime.armedBySession.has(sessionID), false)
   assert.equal(runtime.executionGenerationBySession.has(sessionID), false)
   assert.equal(compaction.sessions.has(sessionID), false)
+})
+
+test("V2 autonomous coordinator counts only exact owned continuation executions", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-autonomous-owned-"))
+  try {
+    await withAutonomousPreview(async () => {
+      const host = fakeV2EventContext(root)
+      const sessionID = "v2-autonomous-owned"
+      const store = new GoalStore(root)
+      const cleanup = await OpenCode2GoalsExperimental.setup(host.ctx)
+
+      const dispatched = await dispatchDirectCommand(host, sessionID, "ship autonomous parity")
+      assert.ok(dispatched.messageID)
+      await armCapability(host, sessionID, dispatched.messageID)
+      await host.emitEvent({ type: "session.execution.started", data: { sessionID } })
+      await consumeCapability(host, sessionID, "ship autonomous parity")
+
+      let goal = await store.load(sessionID)
+      assert.equal(goal?.status, "active")
+      assert.equal(goal?.stalledTurns, 0)
+
+      await host.emitEvent({ type: "session.execution.succeeded", data: { sessionID } })
+      const kickoff = await waitForValue(
+        () => host.prompts.find((item) =>
+          item.resume === false
+          && item.metadata?.opencode_goal_v2_source === "kickoff"
+        ),
+        "host-admitted V2 Goal kickoff continuation",
+      )
+      goal = await store.load(sessionID)
+      assert.equal(goal?.stalledTurns, 0, "the lifecycle command execution must not count as a Goal work turn")
+
+      let current = kickoff
+      for (const expectedStalls of [1, 2, 3]) {
+        await runHook(host, "context", {
+          sessionID,
+          agent: "build",
+          messageID: current.returnedID,
+          text: "host-admitted Goal continuation",
+        })
+        await host.emitEvent({ type: "session.execution.started", data: { sessionID } })
+        await host.emitEvent({ type: "session.execution.succeeded", data: { sessionID } })
+
+        goal = await waitForValue(async () => {
+          const latest = await store.load(sessionID)
+          return latest?.stalledTurns === expectedStalls ? latest : null
+        }, `persisted V2 Goal stalledTurns=${expectedStalls}`)
+
+        if (expectedStalls < 3) {
+          current = await waitForValue(
+            () => host.prompts.find((item) =>
+              item.resume === false
+              && item.returnedID !== current.returnedID
+              && item.metadata?.opencode_goal_v2_source === "execution"
+            ),
+            `host-admitted Goal continuation after stalled turn ${expectedStalls}`,
+          )
+          assert.equal(goal.status, "active")
+        }
+      }
+
+      assert.equal(goal.status, "paused")
+      assert.match(goal.stopReason ?? "", /3 continuation turns without host-observed progress/)
+
+      const admittedAutonomous = host.prompts.filter((item) =>
+        item.resume === false
+        && item.metadata?.opencode_goal_v2_autonomous === true
+      )
+      assert.equal(admittedAutonomous.length, 3, "kickoff plus two active boundaries must admit exactly three Goal work turns")
+
+      await new Promise((resolve) => setTimeout(resolve, 25))
+      assert.equal(
+        host.prompts.filter((item) => item.resume === false && item.metadata?.opencode_goal_v2_autonomous === true).length,
+        3,
+        "the paused third Goal turn must not admit a fourth continuation",
+      )
+
+      await cleanup()
+    })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
 })
 
 test("V2 direct lifecycle preview registers host command and mutating tool only when explicitly enabled", async () => {

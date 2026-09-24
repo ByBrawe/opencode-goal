@@ -13,6 +13,7 @@ on:
       - "scripts/opencode2-server-entry-canary.mjs"
       - "scripts/opencode2-promotion-capability-canary.mjs"
       - "scripts/opencode2-direct-lifecycle-canary.mjs"
+      - "scripts/opencode2-autonomous-adapter-canary.mjs"
       - "scripts/opencode2-runtime-capability-canary.mjs"
       - "scripts/opencode2-runtime-probe-plugin.mjs"
       - "scripts/run-opencode2-host-ci.mjs"
@@ -26,6 +27,7 @@ on:
       - "scripts/opencode2-server-entry-canary.mjs"
       - "scripts/opencode2-promotion-capability-canary.mjs"
       - "scripts/opencode2-direct-lifecycle-canary.mjs"
+      - "scripts/opencode2-autonomous-adapter-canary.mjs"
       - "scripts/opencode2-runtime-capability-canary.mjs"
       - "scripts/opencode2-runtime-probe-plugin.mjs"
       - "scripts/run-opencode2-host-ci.mjs"
@@ -109,6 +111,26 @@ jobs:
       - name: Prove event delivery, no-progress turn closing, and compaction hook registration
         run: node scripts/opencode2-runtime-capability-canary.mjs
 
+
+  autonomous-adapter:
+    name: OpenCode 2.0.11 autonomous Goal coordinator
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+      - run: npm install
+      - run: npm run build
+      - name: Install exact OpenCode 2.0.11
+        run: npm install -g @opencode/cli@2.0.11
+      - name: Check autonomous adapter canary syntax
+        run: node --check scripts/opencode2-autonomous-adapter-canary.mjs
+      - name: Prove exact owned autonomous continuation
+        run: node scripts/opencode2-autonomous-adapter-canary.mjs
 
   direct-lifecycle-capability:
     name: OpenCode 2.0.11 authorized Goal lifecycle

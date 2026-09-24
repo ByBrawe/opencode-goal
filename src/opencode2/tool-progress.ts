@@ -15,6 +15,8 @@ export interface OpenCode2ToolProgressRuntime {
   shellPending: Map<string, OpenCode2ShellProgressPending>
 }
 
+const MAX_PENDING_SHELL_CALLS = 512
+
 function key(sessionID: string, callID: string): string {
   return sessionID + "\\u0000" + callID
 }
@@ -51,6 +53,11 @@ export async function rememberOpenCode2ShellBefore(
     command,
     ...(gitMarker === undefined ? {} : { gitMarker }),
   })
+  while (runtime.shellPending.size > MAX_PENDING_SHELL_CALLS) {
+    const oldest = runtime.shellPending.keys().next().value
+    if (typeof oldest !== "string") break
+    runtime.shellPending.delete(oldest)
+  }
 }
 
 export async function collectOpenCode2SuccessfulToolProgress(
@@ -101,6 +108,14 @@ export async function collectOpenCode2SuccessfulToolProgress(
     fingerprint,
     summary: "Goal-owned shell command completed outside a detectable Git worktree.",
   }] : []
+}
+
+export function forgetOpenCode2ToolProgressCall(
+  runtime: OpenCode2ToolProgressRuntime,
+  sessionID: string,
+  callID: string,
+): void {
+  runtime.shellPending.delete(key(sessionID, callID))
 }
 
 export function forgetOpenCode2ToolProgressSession(

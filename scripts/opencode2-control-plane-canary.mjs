@@ -486,11 +486,10 @@ async function main() {
     await assertMutation("clear")
     await waitFor(async () => (await store.load(sessionID)) === null, "cleared current Goal persistence", diagnostics)
 
-    const archivedAfterClear = await store.history(sessionID, 500)
-    assert.ok(
-      archivedAfterClear.some((item) => item.id === archivedID),
-      `clear did not durably archive the current Goal\n${await diagnostics()}`,
-    )
+    await waitFor(async () => {
+      const history = await store.history(sessionID, 500)
+      return history.some((item) => item.id === archivedID)
+    }, "durable Goal archive after clear", diagnostics)
     await assertMutation(`restore ${archivedID.slice(0, 12)}`)
     await waitFor(async () => {
       const goal = await store.load(sessionID)

@@ -494,6 +494,7 @@ async function main() {
 
     await assertMutation("clear")
     await waitFor(async () => (await store.load(sessionID)) === null, "cleared restored Goal persistence", diagnostics)
+    await assertReadOnly("history", /Archived goals/)
     await assertMutation("history prune --keep 1")
     await waitFor(async () => (await store.history(sessionID, 500)).length === 1, "pruned Goal history persistence", diagnostics)
 

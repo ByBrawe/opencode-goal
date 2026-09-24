@@ -9,7 +9,7 @@ import { createGoalTransitionNotifier } from "../opencode/notify.js"
 import { continuationPrompt } from "../opencode/prompt.js"
 import { createOpenCode2CompactionBoundaryRuntime, observeOpenCode2CompactionBoundary, prepareOpenCode2PostCompactionContinuation, type OpenCode2CompactionBoundaryResult, type OpenCode2CompactionBoundaryRuntime } from "./compaction-boundary.js"
 import { prepareOpenCode2Continuation } from "./continuation-boundary.js"
-import { createOpenCode2AutonomousRuntime, armOpenCode2GoalExecution, clearOpenCode2GoalOwnership, consumeOpenCode2GoalExecution, consumeOpenCode2GoalKickoff, rememberOpenCode2GoalKickoff, rememberOpenCode2GoalPrompt, type OpenCode2AutonomousRuntime, type OpenCode2GoalContinuationSource } from "./autonomous-runtime.js"
+import { createOpenCode2AutonomousRuntime, armOpenCode2GoalExecution, clearOpenCode2GoalOwnership, consumeOpenCode2GoalExecution, consumeOpenCode2GoalKickoff, forgetOpenCode2GoalPrompt, rememberOpenCode2GoalKickoff, rememberOpenCode2GoalPrompt, type OpenCode2AutonomousRuntime, type OpenCode2GoalContinuationSource } from "./autonomous-runtime.js"
 
 export const OPENCODE2_EXPERIMENTAL_PLUGIN_ID = "bybrawe.open-code-goals.v2-experimental"
 
@@ -578,6 +578,7 @@ async function applyAuthorizedGoalMutation(
 async function executeAuthorizedGoalControl(
   ctx: OpenCode2ExperimentalContext,
   runtime: OpenCode2DirectLifecycleRuntime,
+  autonomousRuntime: OpenCode2AutonomousRuntime | undefined,
   input: { command?: unknown },
   toolContext: OpenCode2ExperimentalToolContext,
 ): Promise<ReturnType<typeof toolResponse>> {
@@ -609,7 +610,20 @@ async function executeAuthorizedGoalControl(
     throw new Error("OpenCode Goals V2 lifecycle capability arguments do not match the authenticated direct command. No Goal state was changed.")
   }
 
+  if (autonomousRuntime) clearOpenCode2GoalOwnership(autonomousRuntime, sessionID)
   const goal = await applyAuthorizedGoalMutation(ctx, sessionID, capability.directory, parsed)
+  if (
+    autonomousRuntime
+    && goal?.status === "active"
+    && (parsed.action === "create" || parsed.action === "edit" || parsed.action === "resume")
+  ) {
+    rememberOpenCode2GoalKickoff(
+      autonomousRuntime,
+      sessionID,
+      capability.executionGeneration,
+      goal,
+    )
+  }
   const message = goal
     ? `Authorized /goal ${parsed.action} applied. Persisted Goal status: ${goal.status}. The single-use capability is consumed.`
     : `Authorized /goal ${parsed.action} applied. No active Goal remains. The single-use capability is consumed.`

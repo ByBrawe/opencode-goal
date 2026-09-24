@@ -439,15 +439,20 @@ async function main() {
       assert.ok(response.ok, `prompt failed: ${response.status} ${response.text}\n${await diagnostics()}`)
     }
 
-    await prompt(TEXT_PROBE)
-    await prompt(TOOL_PROBE)
-    await prompt(EMPTY_PROBE)
-
-    const trace = await waitFor(async () => {
+    const waitForExecutionCount = async (count, description) => await waitFor(async () => {
       const items = await readTrace(traceFile)
       const terminals = items.filter((item) => item.type === "session.execution.succeeded" && eventSessionID(item) === sessionID)
-      return terminals.length >= 3 ? items : null
-    }, "three successful telemetry executions", diagnostics, 120_000)
+      return terminals.length >= count ? items : null
+    }, description, diagnostics, 120_000)
+
+    await prompt(TEXT_PROBE)
+    await waitForExecutionCount(1, "text telemetry execution terminal")
+
+    await prompt(TOOL_PROBE)
+    await waitForExecutionCount(2, "tool telemetry execution terminal")
+
+    await prompt(EMPTY_PROBE)
+    const trace = await waitForExecutionCount(3, "empty telemetry execution terminal")
 
     const events = trace.filter((item) => item.phase === "event" && eventSessionID(item) === sessionID)
     const types = new Set(events.map((item) => item.type))

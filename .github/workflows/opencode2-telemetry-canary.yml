@@ -1,0 +1,40 @@
+name: OpenCode 2 Telemetry Capabilities
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "scripts/opencode2-telemetry-capability-canary.mjs"
+      - ".github/workflows/opencode2-telemetry-canary.yml"
+  pull_request:
+    paths:
+      - "scripts/opencode2-telemetry-capability-canary.mjs"
+      - ".github/workflows/opencode2-telemetry-canary.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  telemetry-capabilities:
+    name: OpenCode 2.0.11 telemetry event payloads
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+      - run: npm install
+      - name: Install exact OpenCode 2.0.11
+        run: npm install -g @opencode/cli@2.0.11
+      - name: Check telemetry canary syntax
+        run: node --check scripts/opencode2-telemetry-capability-canary.mjs
+      - name: Prove telemetry event payloads on exact host
+        run: node scripts/opencode2-telemetry-capability-canary.mjs

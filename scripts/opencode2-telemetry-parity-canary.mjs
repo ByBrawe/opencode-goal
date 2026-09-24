@@ -174,7 +174,7 @@ function deferred() {
   return { promise, resolve }
 }
 
-function provider() {
+function provider(progressFilePath) {
   const stats = { requests: [] }
   const firstFinalGate = deferred()
   const secondEmptyGate = deferred()
@@ -231,7 +231,7 @@ function provider() {
       autonomousStep = 1
       assert.ok(tools.includes(WRITE_TOOL), `built-in write tool missing from first Goal execution: ${JSON.stringify(tools)}`)
       streamTool(res, sequence, WRITE_TOOL, {
-        filePath: PROGRESS_FILE,
+        filePath: progressFilePath,
         content: "host-observed-v2-progress\n",
       }, "write")
       return
@@ -302,7 +302,8 @@ async function main() {
   const home = path.join(workspace, ".home")
   const pluginDir = path.join(workspace, ".opencode", "plugins")
   const bridge = path.join(pluginDir, "opencode-goal-server.js")
-  const p = provider()
+  const progressFilePath = path.join(workspace, PROGRESS_FILE)
+  const p = provider(progressFilePath)
   const providerPort = await p.listen()
 
   let server
@@ -428,7 +429,7 @@ async function main() {
     await waitFor(() => p.firstFinalHeld, "first Goal tool loop follow-up", diagnostics)
 
     assert.equal(
-      await readFile(path.join(workspace, PROGRESS_FILE), "utf8"),
+      await readFile(progressFilePath, "utf8"),
       "host-observed-v2-progress\n",
       "built-in write tool did not create deterministic progress proof",
     )

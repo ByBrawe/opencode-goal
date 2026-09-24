@@ -1,6 +1,6 @@
 import type { GoalState } from "../domain/types.js"
 
-export type OpenCode2GoalContinuationSource = "execution" | "compaction" | "restart" | "kickoff"
+export type OpenCode2GoalContinuationSource = "execution" | "compaction" | "restart" | "kickoff" | "sequence"
 
 export interface OpenCode2GoalPromptOwner {
   messageID: string

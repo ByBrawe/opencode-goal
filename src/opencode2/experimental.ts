@@ -16,6 +16,7 @@ export const OPENCODE2_EXPERIMENTAL_PLUGIN_ID = "bybrawe.open-code-goals.v2-expe
 const V2_CONTROL_TOOL = "opencode_goals_v2_control"
 const V2_GET_TOOL = "opencode_goals_v2_get"
 export const OPENCODE2_DIRECT_LIFECYCLE_ENV = "OPENCODE_GOAL_V2_DIRECT_LIFECYCLE"
+export const OPENCODE2_AUTONOMOUS_ENV = "OPENCODE_GOAL_V2_AUTONOMOUS"
 const V2_READ_ONLY_NOTICE =
   "OpenCode Goals V2 model-visible lifecycle control remains read-only. Mutation is authorized only through the host-native direct command boundary when the explicit V2 lifecycle preview is enabled. No Goal state was changed."
 
@@ -197,6 +198,11 @@ function toolResponse(message: string, goal: GoalState | null = null) {
 
 function directLifecyclePreviewEnabled(): boolean {
   const value = String(process.env[OPENCODE2_DIRECT_LIFECYCLE_ENV] ?? "").trim().toLowerCase()
+  return value === "1" || value === "true" || value === "yes" || value === "on"
+}
+
+function autonomousPreviewEnabled(): boolean {
+  const value = String(process.env[OPENCODE2_AUTONOMOUS_ENV] ?? "").trim().toLowerCase()
   return value === "1" || value === "true" || value === "yes" || value === "on"
 }
 
@@ -822,6 +828,7 @@ export const OpenCode2GoalsExperimental = {
     const autonomousRuntime = createOpenCode2AutonomousRuntime()
     const autonomousDispatching = new Set<string>()
     const previewEnabled = directLifecyclePreviewEnabled()
+    const autonomousEnabled = previewEnabled && autonomousPreviewEnabled()
     const lifecycleAbort = new AbortController()
     let lifecycleTask: Promise<void> | undefined
 
@@ -854,7 +861,7 @@ export const OpenCode2GoalsExperimental = {
       prompt: string,
       source: OpenCode2GoalContinuationSource,
     ) => {
-      if (!previewEnabled || autonomousDispatching.has(sessionID) || typeof ctx.session.prompt !== "function") return
+      if (!autonomousEnabled || autonomousDispatching.has(sessionID) || typeof ctx.session.prompt !== "function") return
 
       const { goal } = await coordinatorGoal(sessionID)
       if (
@@ -922,7 +929,7 @@ export const OpenCode2GoalsExperimental = {
               autonomousDispatching.delete(sessionID)
               continue
             }
-            if (!previewEnabled || !sessionID) continue
+            if (!autonomousEnabled || !sessionID) continue
 
             if (boundary.compaction.compactionFailed) {
               continue
@@ -1036,7 +1043,7 @@ export const OpenCode2GoalsExperimental = {
           input: authorizedControlInputSchema,
           output: controlOutputSchema,
           execute: async (input: { command?: unknown }, toolContext: OpenCode2ExperimentalToolContext) =>
-            await executeAuthorizedGoalControl(ctx, runtime, autonomousRuntime, input, toolContext),
+            await executeAuthorizedGoalControl(ctx, runtime, autonomousEnabled ? autonomousRuntime : undefined, input, toolContext),
         })
       }
     })
@@ -1107,7 +1114,7 @@ export const OpenCode2GoalsExperimental = {
 
     try {
       await ctx.session.hook("context", async (event: any) => {
-        if (previewEnabled) {
+        if (autonomousEnabled) {
           const sessionID = sessionIDFromEvent(event)
           const lastUserMessageID = eventLastUserMessageID(event)
           if (sessionID && lastUserMessageID && !isReadOnlyAgent(event?.agent)) {

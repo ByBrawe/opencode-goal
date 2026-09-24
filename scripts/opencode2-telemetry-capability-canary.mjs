@@ -457,6 +457,18 @@ async function main() {
 
     const events = trace.filter((item) => item.phase === "event" && eventSessionID(item) === sessionID)
     const types = new Set(events.map((item) => item.type))
+    const executions = []
+    let currentExecution = null
+    for (const event of events) {
+      if (event.type === "session.execution.started") currentExecution = []
+      if (currentExecution) currentExecution.push(event)
+      if (currentExecution && event.type === "session.execution.succeeded") {
+        executions.push(currentExecution)
+        currentExecution = null
+      }
+    }
+    assert.ok(executions.length >= 3, `expected three successful execution groups\n${await diagnostics()}`)
+    const [textExecution, toolExecution, emptyExecution] = executions
 
     assert.ok(types.has("session.step.started"), `session.step.started missing\n${await diagnostics()}`)
     assert.ok(types.has("session.step.ended"), `session.step.ended missing\n${await diagnostics()}`)
@@ -466,12 +478,10 @@ async function main() {
     assert.ok(types.has("session.tool.success"), `session.tool.success missing\n${await diagnostics()}`)
     assert.ok(types.has("session.usage.updated"), `session.usage.updated missing\n${await diagnostics()}`)
 
-    const admission = events.find((item) =>
-      item.type === "session.input.admitted"
-      || item.type === "session.inbox.enqueued"
-      || item.type === "session.input.promoted"
-    )
-    assert.ok(admission, `no user-input admission event observed\n${await diagnostics()}`)
+    const admissions = events.filter((item) => item.type === "session.inbox.enqueued")
+    assert.ok(admissions.length >= 3, `exact 2.0.11 session.inbox.enqueued user admissions missing\n${await diagnostics()}`)
+    assert.ok(admissions.slice(0, 3).every((item) => item?.data?.item?.type === "user"))
+    const admission = admissions[0]
 
     const stepEnded = events.find((item) =>
       item.type === "session.step.ended"
@@ -481,27 +491,37 @@ async function main() {
     assert.ok(stepEnded, `step.ended lacks assistantMessageID/tokens\n${await diagnostics()}`)
     assert.equal(typeof stepEnded.data.cost, "number")
 
-    const textEnded = events.find((item) => item.type === "session.text.ended" && item?.data?.text === TEXT_PROBE)
+    const textEnded = textExecution.find((item) => item.type === "session.text.ended" && item?.data?.text === TEXT_PROBE)
     assert.ok(textEnded)
     assert.equal(typeof textEnded.data.assistantMessageID, "string")
 
-    const toolStart = events.find((item) => item.type === "session.tool.input.started" && item?.data?.name === TOOL)
+    const toolStart = toolExecution.find((item) => item.type === "session.tool.input.started" && item?.data?.name === TOOL)
     assert.ok(toolStart)
     assert.equal(typeof toolStart.data.callID, "string")
     assert.equal(typeof toolStart.data.assistantMessageID, "string")
 
-    const toolCalled = events.find((item) =>
+    const toolCalled = toolExecution.find((item) =>
       item.type === "session.tool.called"
       && item?.data?.callID === toolStart.data.callID
     )
     assert.deepEqual(toolCalled?.data?.input, { value: "mutation-proof" })
 
-    const toolSuccess = events.find((item) =>
+    const toolSuccess = toolExecution.find((item) =>
       item.type === "session.tool.success"
       && item?.data?.callID === toolStart.data.callID
     )
     assert.ok(toolSuccess)
-    assert.equal(typeof toolSuccess.data.assistantMessageID, "string")
+    assert.equal(toolSuccess.data.callID, toolStart.data.callID)
+
+    const emptyMeaningful = emptyExecution.filter((item) =>
+      (item.type === "session.text.ended" && String(item?.data?.text ?? "").trim())
+      || item.type === "session.tool.input.started"
+    )
+    assert.deepEqual(emptyMeaningful, [], "fully empty execution must expose no text/tool activity")
+    assert.ok(
+      emptyExecution.some((item) => item.type === "session.step.ended" && item?.data?.tokens),
+      "empty execution still needs billable step usage telemetry",
+    )
 
     assert.equal(await readFile(path.join(workspace, "telemetry-progress.txt"), "utf8"), "mutation-proof")
 
@@ -515,6 +535,12 @@ async function main() {
       version,
       sessionID,
       inputAdmissionType: admission.type,
+      executionShapes: executions.slice(0, 3).map((group) => ({
+        eventTypes: group.map((item) => item.type),
+        stepEnded: group
+          .filter((item) => item.type === "session.step.ended")
+          .map((item) => ({ assistantMessageID: item.data?.assistantMessageID, tokens: item.data?.tokens, cost: item.data?.cost, files: item.data?.files })),
+      })),
       eventTypes: [...types].sort(),
       stepEndedShape: {
         keys: Object.keys(stepEnded.data ?? {}).sort(),

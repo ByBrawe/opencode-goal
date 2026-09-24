@@ -1026,6 +1026,23 @@ export const OpenCode2GoalsExperimental = {
                 || owner.revision !== goal.revision
               ) continue
 
+              if (goal.status === "completed") {
+                const promoted = await applyOpenCode2ControlPlaneMutation(
+                  directory,
+                  sessionID,
+                  parseGoalCommand("next"),
+                )
+                if (promoted?.kickoff && promoted.goal?.status === "active") {
+                  await scheduleAutonomousContinuation(
+                    sessionID,
+                    promoted.goal,
+                    continuationPrompt(promoted.goal),
+                    "sequence",
+                  )
+                }
+                continue
+              }
+
               const prepared = prepareOpenCode2Continuation(goal, event)
               if (!prepared.closed) continue
               await store.save(prepared.goal)

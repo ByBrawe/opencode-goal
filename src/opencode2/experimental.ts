@@ -12,6 +12,12 @@ import { prepareOpenCode2Continuation } from "./continuation-boundary.js"
 import { createOpenCode2AutonomousRuntime, armOpenCode2GoalExecution, clearOpenCode2GoalOwnership, consumeOpenCode2GoalExecution, consumeOpenCode2GoalKickoff, forgetOpenCode2GoalPrompt, rememberOpenCode2GoalKickoff, rememberOpenCode2GoalPrompt, type OpenCode2AutonomousRuntime, type OpenCode2GoalContinuationSource } from "./autonomous-runtime.js"
 import { createOpenCode2SemanticVerifierRuntime, OPENCODE2_VERIFIER_RESULT_TOOL } from "./semantic-verifier.js"
 import { createOpenCode2GoalWorkTools } from "./work-tools.js"
+import {
+  applyOpenCode2ControlPlaneMutation,
+  OPENCODE2_EXTRA_MUTATION_ACTIONS,
+  OPENCODE2_READ_CONTROL_ACTIONS,
+  readOpenCode2ControlPlane,
+} from "./control-plane.js"
 
 export const OPENCODE2_EXPERIMENTAL_PLUGIN_ID = "bybrawe.open-code-goals.v2-experimental"
 
@@ -212,8 +218,15 @@ function autonomousPreviewEnabled(): boolean {
 }
 
 const DIRECT_CAPABILITY_TTL_MS = 2 * 60_000
-const DIRECT_MUTATION_ACTIONS = new Set(["create", "edit", "pause", "resume", "clear"])
-const DIRECT_READ_ACTIONS = new Set(["status", "contract"])
+const DIRECT_MUTATION_ACTIONS = new Set<ReturnType<typeof parseGoalCommand>["action"]>([
+  "create",
+  "edit",
+  "pause",
+  "resume",
+  "clear",
+  ...OPENCODE2_EXTRA_MUTATION_ACTIONS,
+])
+const DIRECT_READ_ACTIONS = OPENCODE2_READ_CONTROL_ACTIONS
 
 export interface OpenCode2DirectCapability {
   sessionID: string
@@ -513,11 +526,14 @@ async function applyAuthorizedGoalMutation(
   sessionID: string,
   directory: string,
   parsed: ReturnType<typeof parseGoalCommand>,
-): Promise<GoalState | null> {
+): Promise<{ goal: GoalState | null; message?: string; kickoff?: boolean }> {
   const resolved = await resolveSessionDirectory(ctx, sessionID)
   if (resolved !== directory) {
     throw new Error("OpenCode Goals V2 direct lifecycle capability workspace changed before persistence; no Goal state was changed.")
   }
+
+  const controlPlane = await applyOpenCode2ControlPlaneMutation(directory, sessionID, parsed)
+  if (controlPlane) return controlPlane
 
   const store = new GoalStore(directory, { onTransition: createGoalTransitionNotifier(directory) })
   let goal = await store.load(sessionID)
@@ -527,12 +543,12 @@ async function applyAuthorizedGoalMutation(
       goal = pauseGoal(goal)
       await store.save(goal)
     }
-    return goal
+    return { goal }
   }
 
   if (parsed.action === "clear") {
     await store.clear(sessionID)
-    return null
+    return { goal: null }
   }
 
   if (parsed.action === "resume") {
@@ -542,7 +558,7 @@ async function applyAuthorizedGoalMutation(
     }
     goal = resumeGoal(goal)
     await store.save(goal)
-    return goal
+    return { goal }
   }
 
   if (!parsed.objective) {
@@ -564,7 +580,7 @@ async function applyAuthorizedGoalMutation(
       budget: directBudgetPatch(parsed),
     })
     await store.save(goal)
-    return goal
+    return { goal }
   }
 
   if (parsed.action !== "edit") {
@@ -583,7 +599,7 @@ async function applyAuthorizedGoalMutation(
   const budgetPatch = directBudgetPatch(parsed)
   if (Object.keys(budgetPatch).length) goal = applyGoalBudget(goal, budgetPatch)
   await store.save(goal)
-  return goal
+  return { goal }
 }
 
 async function executeAuthorizedGoalControl(
@@ -622,12 +638,18 @@ async function executeAuthorizedGoalControl(
   }
 
   if (autonomousRuntime) clearOpenCode2GoalOwnership(autonomousRuntime, sessionID)
-  const goal = await applyAuthorizedGoalMutation(ctx, sessionID, capability.directory, parsed)
-  if (
-    autonomousRuntime
-    && goal?.status === "active"
-    && (parsed.action === "create" || parsed.action === "edit" || parsed.action === "resume")
-  ) {
+  const applied = await applyAuthorizedGoalMutation(ctx, sessionID, capability.directory, parsed)
+  const goal = applied.goal
+  const shouldKickoff = Boolean(
+    goal?.status === "active"
+    && (
+      applied.kickoff
+      || parsed.action === "create"
+      || parsed.action === "edit"
+      || parsed.action === "resume"
+    )
+  )
+  if (autonomousRuntime && shouldKickoff && goal) {
     rememberOpenCode2GoalKickoff(
       autonomousRuntime,
       sessionID,
@@ -635,9 +657,11 @@ async function executeAuthorizedGoalControl(
       goal,
     )
   }
-  const message = goal
-    ? `Authorized /goal ${parsed.action} applied. Persisted Goal status: ${goal.status}. The single-use capability is consumed.`
-    : `Authorized /goal ${parsed.action} applied. No active Goal remains. The single-use capability is consumed.`
+  const message = applied.message
+    ? `${applied.message}\nThe single-use host capability is consumed.`
+    : goal
+      ? `Authorized /goal ${parsed.action} applied. Persisted Goal status: ${goal.status}. The single-use capability is consumed.`
+      : `Authorized /goal ${parsed.action} applied. No active Goal remains. The single-use capability is consumed.`
   return toolResponse(message, goal)
 }
 
@@ -661,12 +685,12 @@ export async function executeOpenCode2DirectGoalCommand(
   const directory = await resolveSessionDirectory(ctx, input.sessionID)
   const goal = await loadDirectGoal(ctx, input.sessionID, directory)
 
-  if (parsed.action === "status") {
-    await promptDirectReadOnly(ctx, input, readOnlyCommandPrompt("status", formatStatus(goal)))
-    return { action: parsed.action, goal, dispatched: false }
-  }
-  if (parsed.action === "contract") {
-    await promptDirectReadOnly(ctx, input, readOnlyCommandPrompt("contract", formatContract(goal)))
+  const readOnly = await readOpenCode2ControlPlane(directory, input.sessionID, parsed)
+  if (readOnly !== undefined) {
+    await promptDirectReadOnly(ctx, input, readOnlyCommandPrompt(
+      parsed.action === "contract" ? "contract" : "status",
+      readOnly,
+    ))
     return { action: parsed.action, goal, dispatched: false }
   }
 
@@ -758,8 +782,8 @@ export async function executeOpenCode2GoalControl(
   const parsed = parseGoalCommand(rawArguments ?? "")
   const goal = await store.load(toolContext.sessionID)
 
-  if (parsed.action === "status") return toolResponse(formatStatus(goal), goal)
-  if (parsed.action === "contract") return toolResponse(formatContract(goal), goal)
+  const shown = await readOpenCode2ControlPlane(directory, toolContext.sessionID, parsed)
+  if (shown !== undefined) return toolResponse(shown, goal)
   return toolResponse(V2_READ_ONLY_NOTICE, goal)
 }
 

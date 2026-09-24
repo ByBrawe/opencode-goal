@@ -20,6 +20,9 @@ type UnknownRecord = Record<string, unknown>
 
 export interface OpenCode2ExperimentalContext {
   options?: Readonly<UnknownRecord>
+  event?: {
+    subscribe(input?: { signal?: AbortSignal }): AsyncIterable<unknown>
+  }
   command?: {
     transform(callback: (commands: any) => void | Promise<void>): unknown | Promise<unknown>
   }
@@ -79,7 +82,13 @@ function firstString(...values: unknown[]): string | undefined {
 
 function sessionIDFromEvent(event: unknown): string | undefined {
   const item = record(event)
-  return firstString(item?.sessionID, nestedRecord(item?.request, "session")?.id, record(item?.request)?.sessionID)
+  return firstString(
+    item?.sessionID,
+    nestedRecord(item, "data")?.sessionID,
+    nestedRecord(item, "properties")?.sessionID,
+    nestedRecord(item?.request, "session")?.id,
+    record(item?.request)?.sessionID,
+  )
 }
 
 async function resolveSessionDirectory(ctx: OpenCode2ExperimentalContext, sessionID: string): Promise<string> {
@@ -276,6 +285,36 @@ function deleteSessionCapabilities(runtime: OpenCode2DirectLifecycleRuntime, ses
   }
   const armed = runtime.armedBySession.get(sessionID)
   if (armed && armed !== exceptKey) runtime.armedBySession.delete(sessionID)
+}
+
+export function observeOpenCode2LifecycleBoundary(
+  runtime: OpenCode2DirectLifecycleRuntime,
+  event: unknown,
+): "execution-terminal" | "session-deleted" | undefined {
+  const item = record(event)
+  const type = firstString(item?.type)
+  const sessionID = sessionIDFromEvent(event)
+  if (!type || !sessionID) return undefined
+
+  if (
+    type === "session.execution.succeeded"
+    || type === "session.execution.failed"
+    || type === "session.execution.interrupted"
+  ) {
+    // A direct-command mutation capability belongs to one execution only.
+    // Once OpenCode 2 declares that execution terminal, retaining pending or
+    // armed authority until its wall-clock TTL would allow a later request to
+    // observe stale mutation authority.
+    deleteSessionCapabilities(runtime, sessionID)
+    return "execution-terminal"
+  }
+
+  if (type === "session.deleted") {
+    deleteSessionCapabilities(runtime, sessionID)
+    return "session-deleted"
+  }
+
+  return undefined
 }
 
 function revokeCapability(runtime: OpenCode2DirectLifecycleRuntime, capability: OpenCode2DirectCapability): void {
@@ -660,6 +699,23 @@ export const OpenCode2GoalsExperimental = {
   setup: async (ctx: OpenCode2ExperimentalContext) => {
     const runtime = createOpenCode2DirectLifecycleRuntime()
     const previewEnabled = directLifecyclePreviewEnabled()
+    const lifecycleAbort = new AbortController()
+    let lifecycleTask: Promise<void> | undefined
+
+    if (typeof ctx.event?.subscribe === "function") {
+      lifecycleTask = (async () => {
+        try {
+          const events = ctx.event!.subscribe({ signal: lifecycleAbort.signal })
+          for await (const event of events) observeOpenCode2LifecycleBoundary(runtime, event)
+        } catch (error) {
+          // The V2 adapter is still an explicit preview. Raw-event loss must
+          // never manufacture lifecycle mutation; existing TTL/context guards
+          // remain fail-closed while stable recovery parity is unfinished.
+          if (!lifecycleAbort.signal.aborted) return
+        }
+      })()
+      void lifecycleTask.catch(() => undefined)
+    }
 
     if (previewEnabled) {
       if (typeof ctx.command?.transform !== "function") {
@@ -780,9 +836,23 @@ export const OpenCode2GoalsExperimental = {
       // can never arm a lifecycle capability.
     }
 
-    return () => {
+    try {
+      await ctx.session.hook("compaction", async (event: any) => {
+        // Compaction may run without the ordinary request/context hook. Carry
+        // the persisted Goal contract into that host-owned request, but never
+        // expose mutation authority from a direct lifecycle command.
+        await injectPersistedContext(event, false)
+      })
+    } catch {
+      // Older beta hosts may not expose compaction. Stable V2 compaction parity
+      // is not claimed unless the exact-host evidence gate proves this hook.
+    }
+
+    return async () => {
+      lifecycleAbort.abort()
       runtime.capabilities.clear()
       runtime.armedBySession.clear()
+      await lifecycleTask?.catch(() => undefined)
     }
   },
 }

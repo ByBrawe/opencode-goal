@@ -283,7 +283,7 @@ test("V2 status and contract stay readable while every lifecycle mutation fails 
     assert.match(status.content, /Status: active/)
 
     const contract = await executeOpenCode2GoalControl(host.ctx, "contract", { sessionID, agent: "build" })
-    assert.match(contract.content, /OpenCode Goals contract/)
+    assert.match(contract.content, /Goal Contract/)
     assert.match(contract.content, /docs match shipped behavior/)
     assert.match(contract.content, /no unrelated mutation/)
 
@@ -293,21 +293,36 @@ test("V2 status and contract stay readable while every lifecycle mutation fails 
     )
     assert.match(get.content, /Goal: ship docs/)
 
+    for (const [command, expected] of [
+      ["budget", /Budget:/],
+      ["history", /No archived goals|Archived goals/],
+      ["audit", /Goal Audit/],
+      ["doctor", /Goal storage doctor:/],
+      ["list", /Project Goal snapshots/],
+      ["queue", /Goal Sequence/],
+    ]) {
+      const result = await executeOpenCode2GoalControl(host.ctx, command, { sessionID, agent: "build" })
+      assert.match(result.content, expected, `${command} should expose the shared V1 read-only view`)
+      assert.deepEqual(await new GoalStore(root).load(sessionID), before, `${command} read must not mutate Goal state`)
+    }
+
     for (const command of [
       "pause",
       "resume",
       "clear",
       "edit changed objective",
       "ship replacement",
-      "budget",
-      "history",
+      "budget --max-turns 9",
+      "history prune --keep 1",
       "restore abc123",
       "add queued docs",
-      "queue",
+      "queue clear",
+      "queue remove abc123",
+      "queue move abc123 1",
       "next",
     ]) {
       const result = await executeOpenCode2GoalControl(host.ctx, command, { sessionID, agent: "build" })
-      assert.match(result.content, /model-visible lifecycle control remains read-only/i, `${command} must fail closed in V2`)
+      assert.match(result.content, /model-visible lifecycle control remains read-only/i, `${command} must fail closed without host command authority`)
       assert.match(result.content, /No Goal state was changed/i)
       assert.deepEqual(await new GoalStore(root).load(sessionID), before, `${command} must not mutate Goal state`)
     }
@@ -650,7 +665,7 @@ test("V2 completed Goal terminal auto-promotes exactly one queued Goal and trans
       await cleanup()
     })
   } finally {
-    await rm(root, { recursive: true, force: true })
+    await rm(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 50 })
   }
 })
 

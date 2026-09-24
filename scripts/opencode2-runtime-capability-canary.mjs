@@ -217,6 +217,7 @@ export default {
             type: event?.type,
             sessionID: eventSessionID(event),
             status: eventStatus(event),
+            created: event?.created,
           })
         }
       } catch (error) {
@@ -462,6 +463,11 @@ async function main() {
     )
 
     const sessionEvents = trace.filter((item) => item.phase === "event" && item.sessionID === sessionID)
+    const executionSucceeded = sessionEvents.find((item) => item.type === "session.execution.succeeded")
+    assert.ok(
+      executionSucceeded && Number.isFinite(Number(executionSucceeded.created)) && Number(executionSucceeded.created) > 0,
+      `session.execution.succeeded did not expose a durable created timestamp\n${await diagnostics()}`,
+    )
     console.log(JSON.stringify({
       ok: true,
       version,
@@ -484,7 +490,8 @@ async function main() {
         || item.type === "session.idle"
         || (item.type === "session.status" && (item.status?.type === "idle" || item.status === "idle"))
       ),
-      executionSucceededObserved: sessionEvents.some((item) => item.type === "session.execution.succeeded"),
+      executionSucceededObserved: Boolean(executionSucceeded),
+      executionSucceededCreated: executionSucceeded?.created,
     }, null, 2))
   } finally {
     await stopProcess(server)

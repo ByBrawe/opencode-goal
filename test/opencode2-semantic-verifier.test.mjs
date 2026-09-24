@@ -31,6 +31,8 @@ test("V2 semantic verifier is child-session bound, read-only, and host-corrobora
 
     let runtime
     let deleted = 0
+    let releaseVerifier
+    const verifierGate = new Promise((resolve) => { releaseVerifier = resolve })
     const session = {
       async create({ parentID, title }) {
         assert.equal(parentID, "parent")
@@ -42,6 +44,7 @@ test("V2 semantic verifier is child-session bound, read-only, and host-corrobora
         if (input.resume === false) return { id: "verifier-user-message" }
 
         assert.equal(input.id, "verifier-user-message")
+        await verifierGate
         const request = verificationRequest(input.text)
         const accepted = await runtime.resultTool.execute({
           auditToken: request.auditToken,
@@ -137,6 +140,7 @@ test("V2 semantic verifier is child-session bound, read-only, and host-corrobora
     }, { sessionID: "parent" })
     assert.match(forged.content, /no active semantic verification audit/i)
 
+    releaseVerifier()
     const verified = await verifiedPromise
     assert.equal(verified.requirements.filter((item) => item.verification === "semantic").every((item) => item.status === "proven"), true)
     assert.equal(verified.evidence.some((item) => item.trust === "verifier" && item.passed === true), true)

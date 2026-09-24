@@ -347,65 +347,53 @@ async function main() {
     const goalStore = new GoalStore(workspace)
     await goalStore.save(createGoal({
       sessionID,
-      objective: "prove exact OpenCode 2 successful-execution no-progress parity",
+      objective: "prove exact OpenCode 2 successful-execution autonomous continuation parity",
     }))
 
-    const promptAndSettleNoProgress = async (turn) => {
-      const prompt = await request(`${apiPrefix}/session/${encodeURIComponent(sessionID)}/prompt`, {
-        method: "POST",
-        body: JSON.stringify({
-          text: `prove exact OpenCode 2 successful execution boundary turn ${turn}`,
-          delivery: "steer",
-          resume: true,
-        }),
-      }, 120_000)
-      assert.ok(prompt.ok, `runtime prompt ${turn} failed: HTTP ${prompt.status} ${prompt.text}\n${await diagnostics()}`)
+    const prompt = await request(`${apiPrefix}/session/${encodeURIComponent(sessionID)}/prompt`, {
+      method: "POST",
+      body: JSON.stringify({
+        text: "start exact OpenCode 2 Goal-owned continuation proof",
+        delivery: "steer",
+        resume: true,
+      }),
+    }, 120_000)
+    assert.ok(prompt.ok, `initial runtime prompt failed: HTTP ${prompt.status} ${prompt.text}\n${await diagnostics()}`)
 
-      await waitFor(
-        () => provider.stats.requests.filter((item) => !item.isCompaction).length >= turn,
-        `provider request ${turn}`,
-        diagnostics,
-        60_000,
-      )
-      const terminalEvent = await waitFor(async () => {
-        const trace = await readTrace(traceFile)
-        const events = trace.filter((item) =>
-          item.phase === "event"
-          && item.sessionID === sessionID
-          && item.type === "session.execution.succeeded"
-        )
-        return events.length >= turn ? events[turn - 1] : null
-      }, `session.execution.succeeded #${turn} through ctx.event.subscribe()`, diagnostics, 60_000)
+    await waitFor(
+      () => provider.stats.requests.filter((item) => !item.isCompaction).length >= 3,
+      "initial provider turn plus two Goal-owned V2 continuations",
+      diagnostics,
+      120_000,
+    )
 
-      const settledGoal = await waitFor(async () => {
-        const goal = await goalStore.load(sessionID)
-        return goal && goal.stalledTurns >= turn ? goal : null
-      }, `persisted Goal close for successful execution #${turn}`, diagnostics, 60_000)
-
-      const trace = await readTrace(traceFile)
-      assert.ok(
-        trace.some((item) =>
-          item.phase === "goal.execution.boundary.closed"
-          && item.sessionID === sessionID
-          && item.stalledTurns === turn
-        ),
-        `probe did not record Goal boundary close #${turn}\n${await diagnostics()}`,
-      )
-      return settledGoal
-    }
-
-    const firstNoProgress = await promptAndSettleNoProgress(1)
-    assert.equal(firstNoProgress.status, "active")
-    assert.equal(firstNoProgress.stalledTurns, 1)
-
-    const secondNoProgress = await promptAndSettleNoProgress(2)
-    assert.equal(secondNoProgress.status, "active")
-    assert.equal(secondNoProgress.stalledTurns, 2)
-
-    const thirdNoProgress = await promptAndSettleNoProgress(3)
-    assert.equal(thirdNoProgress.status, "paused")
-    assert.equal(thirdNoProgress.stalledTurns, 3)
+    const thirdNoProgress = await waitFor(async () => {
+      const goal = await goalStore.load(sessionID)
+      return goal?.status === "paused" && goal.stalledTurns === 3 ? goal : null
+    }, "persisted V2 no-progress pause after autonomous continuations", diagnostics, 120_000)
     assert.match(thirdNoProgress.stopReason ?? "", /3 continuation turns without host-observed progress/)
+
+    const autonomousTrace = await readTrace(traceFile)
+    const closedTurns = autonomousTrace
+      .filter((item) => item.phase === "goal.execution.boundary.closed" && item.sessionID === sessionID)
+      .map((item) => item.stalledTurns)
+    assert.deepEqual(closedTurns.slice(0, 3), [1, 2, 3], `unexpected Goal boundary sequence\n${await diagnostics()}`)
+
+    const scheduledContinuations = autonomousTrace.filter((item) =>
+      item.phase === "goal.continuation.scheduled" && item.sessionID === sessionID
+    )
+    const dispatchedContinuations = autonomousTrace.filter((item) =>
+      item.phase === "goal.continuation.dispatched" && item.sessionID === sessionID
+    )
+    assert.equal(scheduledContinuations.length, 2, "only the two still-active successful boundaries may schedule continuation")
+    assert.equal(dispatchedContinuations.length, 2, "the probe must dispatch exactly two Goal-owned continuations")
+
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    assert.equal(
+      provider.stats.requests.filter((item) => !item.isCompaction).length,
+      3,
+      "paused third boundary must not dispatch a fourth Goal turn",
+    )
 
     const compact = await request(`${apiPrefix}/session/${encodeURIComponent(sessionID)}/compact`, {
       method: "POST",
@@ -469,6 +457,11 @@ async function main() {
         status: thirdNoProgress.status,
         stalledTurns: thirdNoProgress.stalledTurns,
         stopReason: thirdNoProgress.stopReason,
+      },
+      autonomousContinuation: {
+        scheduled: scheduledContinuations.length,
+        dispatched: dispatchedContinuations.length,
+        providerTurnsBeforeCompaction: provider.stats.requests.filter((item) => !item.isCompaction).length,
       },
     }, null, 2))
   } finally {

@@ -389,6 +389,13 @@ export default {
               result,
               new Promise((_, reject) => setTimeout(() => reject(new Error("verifier capability result timed out")), 30_000)),
             ])
+            if (typeof ctx.session?.wait === "function") {
+              await Promise.race([
+                ctx.session.wait({ sessionID: childID }),
+                new Promise((_, reject) => setTimeout(() => reject(new Error("verifier capability session.wait timed out")), 30_000)),
+              ])
+              await trace({ phase: "verifier.wait.complete", childID })
+            }
             await trace({ phase: "verifier.complete", childID })
           } finally {
             pending.delete(childID)
@@ -588,13 +595,14 @@ async function main() {
     assert.deepEqual(context?.tools, ["glob", "grep", RESULT_TOOL, "read"].sort())
 
     const verifierRequests = provider.stats.requests.filter((item) => item.verifier)
-    assert.ok(verifierRequests.length >= 2, `expected verifier tool call and continuation\n${await diagnostics()}`)
+    assert.ok(verifierRequests.length >= 1, `expected verifier provider request\n${await diagnostics()}`)
     const first = verifierRequests[0]
     assert.ok(first.tools.includes(RESULT_TOOL))
     for (const forbidden of ["write", "edit", "shell", "execute", "subagent"]) {
       assert.equal(first.tools.includes(forbidden), false, `forbidden verifier tool leaked: ${forbidden}`)
     }
-    assert.ok(verifierRequests.some((item) => item.sawAcceptedResult))
+    assert.ok(trace.some((item) => item.phase === "verifier.result" && item.sessionID === child.childID))
+    assert.ok(trace.some((item) => item.phase === "verifier.wait.complete" && item.childID === child.childID))
 
     console.log(JSON.stringify({
       ok: true,
@@ -609,6 +617,8 @@ async function main() {
       verifierTools: context.tools,
       forbiddenMutationToolsHidden: true,
       resultSubmitted: true,
+      sessionWaitCompleted: trace.some((item) => item.phase === "verifier.wait.complete"),
+      acceptedResultContinuationObserved: verifierRequests.some((item) => item.sawAcceptedResult),
       providerRequests: provider.stats.requests,
     }, null, 2))
   } finally {

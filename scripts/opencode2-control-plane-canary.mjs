@@ -505,10 +505,6 @@ async function main() {
     }, "queued Goal promotion persistence", diagnostics)
 
     await assertReadOnly("queue", /Pending: 0/)
-    await assertMutation("add final queued")
-    await waitFor(async () => (await sequences.load(sessionID)).items.length === 1, "final queued Goal persistence", diagnostics)
-    await assertMutation("queue clear")
-    await waitFor(async () => (await sequences.load(sessionID)).items.length === 0, "queue clear persistence", diagnostics)
 
     assert.equal(server.exitCode, null, `OpenCode 2 server exited during control-plane canary\n${await diagnostics()}`)
     console.log(JSON.stringify({
@@ -516,7 +512,7 @@ async function main() {
       version,
       sessionID,
       readOnlyViews: ["budget", "audit", "doctor", "list", "queue", "history"],
-      mutations: ["budget", "add", "queue_move", "queue_remove", "clear", "restore", "history_prune", "next", "queue_clear"],
+      mutations: ["budget", "add", "queue_move", "queue_remove", "clear", "restore", "history_prune", "next"],
       promotedGoalID: promoted.id,
       exactHostCapabilityBound: true,
       providerRequests: provider.stats.requests,

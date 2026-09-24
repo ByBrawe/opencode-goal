@@ -633,8 +633,9 @@ test("V2 completed Goal terminal auto-promotes exactly one queued Goal and trans
 
       const promoted = await waitForValue(async () => {
         const goal = await store.load(sessionID)
-        return goal?.id === queuedID && goal.status === "active" ? goal : null
-      }, "automatic queued Goal promotion")
+        const queuedState = await sequence.load(sessionID)
+        return goal?.id === queuedID && goal.status === "active" && queuedState.items.length === 0 ? goal : null
+      }, "automatic queued Goal promotion and queue settlement")
       assert.equal(promoted.objective, "ship second queued stage")
       assert.equal((await sequence.load(sessionID)).items.length, 0)
 

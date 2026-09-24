@@ -395,6 +395,14 @@ async function main() {
         body: JSON.stringify({ name: "goal", text }),
       }, 90_000)
       assert.ok(response.ok, `/goal ${text} failed: HTTP ${response.status} ${response.text}\n${await diagnostics()}`)
+      const deadline = Date.now() + 30_000
+      while (provider.stats.requests.length <= before && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      }
+      assert.ok(
+        provider.stats.requests.length > before,
+        `/goal ${text} produced no provider request after command admission\n${await diagnostics()}`,
+      )
       return provider.stats.requests.slice(before)
     }
 

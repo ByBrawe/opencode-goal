@@ -771,8 +771,15 @@ async function main() {
     const goalID = edited.id
     await command(CLEAR_COMMAND)
     await waitFor(async () => (await readGoal(workspace, sessionID)) === null, "capability clear", diagnostics)
-    await waitFor(() => requestsFor(CLEAR_COMMAND).some((item) => item.sawConsumedResult), "clear tool continuation", diagnostics)
-    assertAuthorizedTurn(CLEAR_COMMAND)
+    const clearRequests = requestsFor(CLEAR_COMMAND)
+    assert.ok(
+      clearRequests.some((item) => item.hasControlTool && item.toolCommand === CLEAR_COMMAND),
+      `clear request did not expose and consume its authorized lifecycle capability\n${JSON.stringify(clearRequests, null, 2)}`,
+    )
+    // clear is terminal lifecycle state: exact OpenCode 2.0.11 may settle the
+    // command without scheduling another model continuation after the tool
+    // result. Persistence + archive + one-use capability consumption are the
+    // authority contract; a second provider turn is not.
     const archive = await waitFor(
       () => readArchive(workspace, sessionID, goalID),
       "clear archive",

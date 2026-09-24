@@ -819,16 +819,182 @@ export const OpenCode2GoalsExperimental = {
   setup: async (ctx: OpenCode2ExperimentalContext) => {
     const runtime = createOpenCode2DirectLifecycleRuntime()
     const compactionRuntime = createOpenCode2CompactionBoundaryRuntime()
+    const autonomousRuntime = createOpenCode2AutonomousRuntime()
+    const autonomousDispatching = new Set<string>()
     const previewEnabled = directLifecyclePreviewEnabled()
     const lifecycleAbort = new AbortController()
     let lifecycleTask: Promise<void> | undefined
+
+    const coordinatorGoal = async (sessionID: string) => {
+      const directory = await resolveSessionDirectory(ctx, sessionID)
+      const store = new GoalStore(directory, { onTransition: createGoalTransitionNotifier(directory) })
+      const goal = await store.load(sessionID)
+      return { directory, store, goal }
+    }
+
+    const pauseAutonomousDispatchFailure = async (
+      sessionID: string,
+      goalID: string,
+      revision: number,
+      error: unknown,
+    ) => {
+      try {
+        const { store, goal } = await coordinatorGoal(sessionID)
+        if (!goal || goal.id !== goalID || goal.revision !== revision || goal.status !== "active") return
+        await store.save(pauseGoal(goal, `Continuation dispatch failed: ${String(error)}`))
+      } catch {
+        // Failure recovery is advisory to the original transport error. Never
+        // mutate a different Goal/revision because recovery itself raced.
+      }
+    }
+
+    const scheduleAutonomousContinuation = async (
+      sessionID: string,
+      expectedGoal: GoalState,
+      prompt: string,
+      source: OpenCode2GoalContinuationSource,
+    ) => {
+      if (!previewEnabled || autonomousDispatching.has(sessionID) || typeof ctx.session.prompt !== "function") return
+
+      const { goal } = await coordinatorGoal(sessionID)
+      if (
+        !goal
+        || goal.id !== expectedGoal.id
+        || goal.revision !== expectedGoal.revision
+        || goal.status !== "active"
+        || isReadOnlyAgent(goal.execution?.agent)
+        || budgetLimitHits(goal.usage, goal.budget).length > 0
+        || Boolean(goal.infrastructureRecovery?.nextRetryAt && goal.infrastructureRecovery.nextRetryAt > Date.now())
+      ) return
+
+      autonomousDispatching.add(sessionID)
+      let messageID = ""
+      const promptInput = {
+        sessionID,
+        text: prompt,
+        delivery: "steer" as const,
+        metadata: {
+          opencode_goal_v2_autonomous: true,
+          opencode_goal_v2_source: source,
+          opencode_goal_id: goal.id,
+          opencode_goal_revision: goal.revision,
+        },
+      }
+
+      try {
+        const admitted = await ctx.session.prompt({ ...promptInput, resume: false })
+        messageID = firstString(record(admitted)?.id, nestedRecord(admitted, "data")?.id) ?? ""
+        if (!messageID) throw new Error("OpenCode 2 did not return a host user-message ID for Goal continuation admission")
+
+        rememberOpenCode2GoalPrompt(autonomousRuntime, sessionID, messageID, goal, source)
+        queueMicrotask(() => {
+          void Promise.resolve(ctx.session.prompt!({ ...promptInput, id: messageID, resume: true }))
+            .then((resumed) => {
+              const resumedMessageID = firstString(record(resumed)?.id, nestedRecord(resumed, "data")?.id)
+              if (resumedMessageID && resumedMessageID !== messageID) {
+                throw new Error("OpenCode 2 resumed Goal continuation with a different host user-message ID")
+              }
+            })
+            .catch(async (error) => {
+              forgetOpenCode2GoalPrompt(autonomousRuntime, sessionID, messageID)
+              await pauseAutonomousDispatchFailure(sessionID, goal.id, goal.revision, error)
+            })
+            .finally(() => autonomousDispatching.delete(sessionID))
+        })
+      } catch (error) {
+        if (messageID) forgetOpenCode2GoalPrompt(autonomousRuntime, sessionID, messageID)
+        autonomousDispatching.delete(sessionID)
+        await pauseAutonomousDispatchFailure(sessionID, goal.id, goal.revision, error)
+      }
+    }
 
     if (typeof ctx.event?.subscribe === "function") {
       lifecycleTask = (async () => {
         try {
           const events = ctx.event!.subscribe({ signal: lifecycleAbort.signal })
           for await (const event of events) {
-            observeOpenCode2AuthorityBoundary(runtime, compactionRuntime, event)
+            const boundary = inspectOpenCode2AuthorityBoundary(runtime, compactionRuntime, event)
+            const sessionID = boundary.sessionID
+            const type = firstString(record(event)?.type)
+
+            if (boundary.kind === "session-deleted" && sessionID) {
+              clearOpenCode2GoalOwnership(autonomousRuntime, sessionID)
+              autonomousDispatching.delete(sessionID)
+              continue
+            }
+            if (!previewEnabled || !sessionID) continue
+
+            if (boundary.compaction.compactionFailed) {
+              continue
+            }
+            if (boundary.compaction.compactionCompleted) {
+              try {
+                const { goal } = await coordinatorGoal(sessionID)
+                if (goal) {
+                  const prepared = prepareOpenCode2PostCompactionContinuation(goal)
+                  if (prepared.shouldContinue && prepared.prompt) {
+                    await scheduleAutonomousContinuation(sessionID, goal, prepared.prompt, "compaction")
+                  }
+                }
+              } catch {
+                // Missing/unreadable state cannot authorize autonomous work.
+              }
+              continue
+            }
+
+            if (boundary.kind !== "execution-terminal" || boundary.generation === undefined) continue
+            const generation = boundary.generation
+            const succeeded = type === "session.execution.succeeded"
+
+            if (!succeeded) {
+              consumeOpenCode2GoalKickoff(autonomousRuntime, sessionID, generation)
+              consumeOpenCode2GoalExecution(autonomousRuntime, sessionID, generation)
+              continue
+            }
+
+            try {
+              const { store, goal } = await coordinatorGoal(sessionID)
+              if (!goal) continue
+
+              const kickoff = consumeOpenCode2GoalKickoff(autonomousRuntime, sessionID, generation)
+              if (kickoff) {
+                if (
+                  goal.id === kickoff.goalID
+                  && goal.revision === kickoff.revision
+                  && goal.status === "active"
+                ) {
+                  await scheduleAutonomousContinuation(
+                    sessionID,
+                    goal,
+                    continuationPrompt(goal),
+                    "kickoff",
+                  )
+                }
+                continue
+              }
+
+              const owner = consumeOpenCode2GoalExecution(autonomousRuntime, sessionID, generation)
+              if (
+                !owner
+                || owner.goalID !== goal.id
+                || owner.revision !== goal.revision
+              ) continue
+
+              const prepared = prepareOpenCode2Continuation(goal, event)
+              if (!prepared.closed) continue
+              await store.save(prepared.goal)
+              if (prepared.shouldContinue && prepared.prompt) {
+                await scheduleAutonomousContinuation(
+                  sessionID,
+                  prepared.goal,
+                  prepared.prompt,
+                  "execution",
+                )
+              }
+            } catch {
+              // Event delivery alone never authorizes fallback mutation or
+              // dispatch when persisted Goal state cannot be verified.
+            }
           }
         } catch {
           // Raw-event loss cannot authorize mutation. Existing message-bound
@@ -870,7 +1036,7 @@ export const OpenCode2GoalsExperimental = {
           input: authorizedControlInputSchema,
           output: controlOutputSchema,
           execute: async (input: { command?: unknown }, toolContext: OpenCode2ExperimentalToolContext) =>
-            await executeAuthorizedGoalControl(ctx, runtime, input, toolContext),
+            await executeAuthorizedGoalControl(ctx, runtime, autonomousRuntime, input, toolContext),
         })
       }
     })
@@ -941,6 +1107,18 @@ export const OpenCode2GoalsExperimental = {
 
     try {
       await ctx.session.hook("context", async (event: any) => {
+        if (previewEnabled) {
+          const sessionID = sessionIDFromEvent(event)
+          const lastUserMessageID = eventLastUserMessageID(event)
+          if (sessionID && lastUserMessageID && !isReadOnlyAgent(event?.agent)) {
+            armOpenCode2GoalExecution(
+              autonomousRuntime,
+              sessionID,
+              lastUserMessageID,
+              activeOrNextExecutionGeneration(runtime, sessionID),
+            )
+          }
+        }
         await injectPersistedContext(event, true)
       })
     } catch {
@@ -975,6 +1153,10 @@ export const OpenCode2GoalsExperimental = {
       runtime.executionGenerationBySession.clear()
       runtime.activeExecutionGenerationBySession.clear()
       compactionRuntime.sessions.clear()
+      autonomousRuntime.pendingPromptBySession.clear()
+      autonomousRuntime.executionOwnerBySession.clear()
+      autonomousRuntime.kickoffBySession.clear()
+      autonomousDispatching.clear()
       await lifecycleTask?.catch(() => undefined)
     }
   },

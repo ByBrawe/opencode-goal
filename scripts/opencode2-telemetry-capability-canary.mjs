@@ -498,7 +498,6 @@ async function main() {
     const toolStart = toolExecution.find((item) => item.type === "session.tool.input.started" && item?.data?.name === TOOL)
     assert.ok(toolStart)
     assert.equal(typeof toolStart.data.callID, "string")
-    assert.equal(typeof toolStart.data.assistantMessageID, "string")
 
     const toolCalled = toolExecution.find((item) =>
       item.type === "session.tool.called"

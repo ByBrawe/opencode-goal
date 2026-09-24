@@ -453,6 +453,7 @@ async function main() {
     await assertReadOnly("audit", /Goal Audit/)
     await assertReadOnly("doctor", /Goal storage doctor: OK/)
     await assertReadOnly("list", /Project Goal snapshots/)
+    await assertReadOnly("history", /No archived goals/)
 
     await assertMutation("budget --max-turns 9")
     await waitFor(async () => (await store.load(sessionID))?.budget.maxTurns === 9, "persisted V2 budget update", diagnostics)
@@ -485,7 +486,11 @@ async function main() {
     await assertMutation("clear")
     await waitFor(async () => (await store.load(sessionID)) === null, "cleared current Goal persistence", diagnostics)
 
-    await assertReadOnly("history", /Archived goals/)
+    const archivedAfterClear = await store.history(sessionID, 500)
+    assert.ok(
+      archivedAfterClear.some((item) => item.id === archivedID),
+      `clear did not durably archive the current Goal\n${await diagnostics()}`,
+    )
     await assertMutation(`restore ${archivedID.slice(0, 12)}`)
     await waitFor(async () => {
       const goal = await store.load(sessionID)

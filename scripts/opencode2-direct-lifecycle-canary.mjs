@@ -495,14 +495,15 @@ async function main() {
       return { ok: response.ok, status: response.status, body, text }
     }
 
-    for (const prefix of ["/api", ""]) {
-      const response = await request(`${prefix}/command`, { method: "GET" }, 10_000).catch(() => null)
-      if (response?.ok) {
-        apiPrefix = prefix
-        break
-      }
-    }
-    assert.notEqual(apiPrefix, null, `OpenCode 2 command API never became ready\n${await diagnostics()}`)
+    // Exact 2.0.11 can expose the root command endpoint before project-local
+    // plugin discovery finishes. The plugin-aware /api surface is the readiness
+    // authority for direct Goal commands.
+    await waitFor(async () => {
+      const response = await request("/api/command", { method: "GET" }, 5_000).catch(() => null)
+      if (!response?.ok) return false
+      apiPrefix = "/api"
+      return true
+    }, "OpenCode 2.0.11 plugin-aware command API", diagnostics, 30_000)
 
     await waitFor(async () => {
       const response = await request(`${apiPrefix}/command`, { method: "GET" }, 5_000)

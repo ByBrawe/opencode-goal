@@ -213,6 +213,7 @@ test("notify runner substitutes only stable lifecycle tokens and is fully adviso
     assert.equal(calls[0].options.detached, true)
     assert.equal(calls[0].options.stdio, "ignore")
     assert.equal(formatGoalNotifyCommand("x {goal} y {reason}", "g1", "completed"), "x g1 y completed")
+    assert.equal(formatGoalNotifyCommand("x {goal} y {reason}", "g1", "progress"), "x g1 y progress")
 
     assert.doesNotThrow(() => notifyGoal(root, goal, "paused", {
       spawn() { throw new Error("missing command") },

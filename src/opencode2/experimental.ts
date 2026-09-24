@@ -7,6 +7,7 @@ import { formatGoalRuntimeFingerprint } from "../runtime/fingerprint.js"
 import { parseGoalCommand } from "../opencode/command.js"
 import { createGoalTransitionNotifier } from "../opencode/notify.js"
 import { continuationPrompt } from "../opencode/prompt.js"
+import { createOpenCode2CompactionBoundaryRuntime, observeOpenCode2CompactionBoundary, type OpenCode2CompactionBoundaryRuntime } from "./compaction-boundary.js"
 
 export const OPENCODE2_EXPERIMENTAL_PLUGIN_ID = "bybrawe.open-code-goals.v2-experimental"
 
@@ -20,6 +21,9 @@ type UnknownRecord = Record<string, unknown>
 
 export interface OpenCode2ExperimentalContext {
   options?: Readonly<UnknownRecord>
+  event?: {
+    subscribe(input?: { signal?: AbortSignal }): AsyncIterable<unknown>
+  }
   command?: {
     transform(callback: (commands: any) => void | Promise<void>): unknown | Promise<unknown>
   }
@@ -79,7 +83,13 @@ function firstString(...values: unknown[]): string | undefined {
 
 function sessionIDFromEvent(event: unknown): string | undefined {
   const item = record(event)
-  return firstString(item?.sessionID, nestedRecord(item?.request, "session")?.id, record(item?.request)?.sessionID)
+  return firstString(
+    item?.sessionID,
+    nestedRecord(item, "data")?.sessionID,
+    nestedRecord(item, "properties")?.sessionID,
+    nestedRecord(item?.request, "session")?.id,
+    record(item?.request)?.sessionID,
+  )
 }
 
 async function resolveSessionDirectory(ctx: OpenCode2ExperimentalContext, sessionID: string): Promise<string> {
@@ -276,6 +286,75 @@ function deleteSessionCapabilities(runtime: OpenCode2DirectLifecycleRuntime, ses
   }
   const armed = runtime.armedBySession.get(sessionID)
   if (armed && armed !== exceptKey) runtime.armedBySession.delete(sessionID)
+}
+
+function lifecycleEventCreatedAt(event: unknown): number | undefined {
+  const item = record(event)
+  const value = item?.created ?? nestedRecord(item, "data")?.created ?? nestedRecord(item, "properties")?.created
+  const number = Number(value)
+  return Number.isFinite(number) && number >= 0 ? number : undefined
+}
+
+function revokeSessionCapabilitiesAtTerminal(
+  runtime: OpenCode2DirectLifecycleRuntime,
+  sessionID: string,
+  boundaryAt: number | undefined,
+): void {
+  for (const [key, capability] of runtime.capabilities) {
+    if (capability.sessionID !== sessionID) continue
+    // V2 event delivery can lag behind command admission. An older execution's
+    // terminal event must not revoke authority created for a newer direct
+    // command in the same session.
+    if (boundaryAt !== undefined && capability.createdAt > boundaryAt) continue
+    // Without a durable event timestamp, an unarmed capability cannot be
+    // ordered safely against a late terminal event. Leave it hidden behind the
+    // message-bound context match and short TTL instead of guessing.
+    if (boundaryAt === undefined && capability.state === "pending") continue
+    runtime.capabilities.delete(key)
+    if (runtime.armedBySession.get(sessionID) === key) runtime.armedBySession.delete(sessionID)
+  }
+}
+
+export function observeOpenCode2LifecycleBoundary(
+  runtime: OpenCode2DirectLifecycleRuntime,
+  event: unknown,
+): "execution-terminal" | "session-deleted" | undefined {
+  const item = record(event)
+  const type = firstString(item?.type)
+  const sessionID = sessionIDFromEvent(event)
+  if (!type || !sessionID) return undefined
+
+  if (
+    type === "session.execution.succeeded"
+    || type === "session.execution.failed"
+    || type === "session.execution.interrupted"
+  ) {
+    revokeSessionCapabilitiesAtTerminal(runtime, sessionID, lifecycleEventCreatedAt(event))
+    return "execution-terminal"
+  }
+
+  if (type === "session.deleted") {
+    deleteSessionCapabilities(runtime, sessionID)
+    return "session-deleted"
+  }
+
+  return undefined
+}
+
+export function observeOpenCode2AuthorityBoundary(
+  runtime: OpenCode2DirectLifecycleRuntime,
+  compactionRuntime: OpenCode2CompactionBoundaryRuntime,
+  event: unknown,
+): "compaction-execution" | "execution-terminal" | "session-deleted" | undefined {
+  const compaction = observeOpenCode2CompactionBoundary(compactionRuntime, event)
+  if (compaction.consumedExecution) return "compaction-execution"
+
+  const lifecycle = observeOpenCode2LifecycleBoundary(runtime, event)
+  if (lifecycle === "session-deleted") {
+    const sessionID = sessionIDFromEvent(event)
+    if (sessionID) compactionRuntime.sessions.delete(sessionID)
+  }
+  return lifecycle
 }
 
 function revokeCapability(runtime: OpenCode2DirectLifecycleRuntime, capability: OpenCode2DirectCapability): void {
@@ -659,7 +738,25 @@ export const OpenCode2GoalsExperimental = {
   id: OPENCODE2_EXPERIMENTAL_PLUGIN_ID,
   setup: async (ctx: OpenCode2ExperimentalContext) => {
     const runtime = createOpenCode2DirectLifecycleRuntime()
+    const compactionRuntime = createOpenCode2CompactionBoundaryRuntime()
     const previewEnabled = directLifecyclePreviewEnabled()
+    const lifecycleAbort = new AbortController()
+    let lifecycleTask: Promise<void> | undefined
+
+    if (typeof ctx.event?.subscribe === "function") {
+      lifecycleTask = (async () => {
+        try {
+          const events = ctx.event!.subscribe({ signal: lifecycleAbort.signal })
+          for await (const event of events) {
+            observeOpenCode2AuthorityBoundary(runtime, compactionRuntime, event)
+          }
+        } catch {
+          // Raw-event loss cannot authorize mutation. Existing message-bound
+          // capability checks and TTLs remain fail-closed.
+        }
+      })()
+      void lifecycleTask.catch(() => undefined)
+    }
 
     if (previewEnabled) {
       if (typeof ctx.command?.transform !== "function") {
@@ -780,9 +877,23 @@ export const OpenCode2GoalsExperimental = {
       // can never arm a lifecycle capability.
     }
 
-    return () => {
+    try {
+      await ctx.session.hook("compaction", async (event: any) => {
+        // Compaction is host-owned and must never inherit direct lifecycle
+        // mutation authority. Persisted Goal context is read-only here.
+        await injectPersistedContext(event, false)
+      })
+    } catch {
+      // Older beta hosts may not expose compaction. Stable V2 compaction parity
+      // remains gated by the exact-host evidence path.
+    }
+
+    return async () => {
+      lifecycleAbort.abort()
       runtime.capabilities.clear()
       runtime.armedBySession.clear()
+      compactionRuntime.sessions.clear()
+      await lifecycleTask?.catch(() => undefined)
     }
   },
 }

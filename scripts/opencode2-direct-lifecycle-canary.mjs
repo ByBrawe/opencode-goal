@@ -760,13 +760,15 @@ async function main() {
     assert.ok(provider.stats.requests.slice(replayBefore).every((item) => item.tools.includes(READ_ONLY_TOOL)), "post-mismatch request lost read-only Goal inspection")
     assert.equal(JSON.stringify(await readGoal(workspace, sessionID)), beforeMismatch)
 
-    const beforeUnsupported = JSON.stringify(await readGoal(workspace, sessionID))
-    const requestsBeforeUnsupported = provider.stats.requests.length
-    const unsupported = await command("history", false)
-    assert.equal(unsupported.ok, false, `unsupported history unexpectedly succeeded\n${await diagnostics()}`)
-    assert.equal(JSON.stringify(await readGoal(workspace, sessionID)), beforeUnsupported)
-    await new Promise((resolve) => setTimeout(resolve, 300))
-    assert.equal(provider.stats.requests.length, requestsBeforeUnsupported, "unsupported action must fail before dispatching model work")
+    const beforeHistory = JSON.stringify(await readGoal(workspace, sessionID))
+    const requestsBeforeHistory = provider.stats.requests.length
+    const history = await command("history")
+    assert.ok(history.ok, `read-only history failed unexpectedly\n${await diagnostics()}`)
+    await waitFor(() => provider.stats.requests.length > requestsBeforeHistory, "history provider request", diagnostics)
+    assert.equal(JSON.stringify(await readGoal(workspace, sessionID)), beforeHistory, "read-only history changed Goal persistence")
+    const historyRequests = provider.stats.requests.slice(requestsBeforeHistory)
+    assert.ok(historyRequests.every((item) => !item.hasControlTool), "read-only history exposed mutating control")
+    assert.ok(historyRequests.every((item) => item.tools.includes(READ_ONLY_TOOL)), "read-only history lost Goal inspection")
 
     const goalID = edited.id
     await command(CLEAR_COMMAND)

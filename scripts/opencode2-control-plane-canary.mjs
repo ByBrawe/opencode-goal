@@ -69,6 +69,16 @@ async function stopProcess(child, timeoutMs = 5_000) {
   })
 }
 
+async function waitFor(predicate, description, diagnostics, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const value = await predicate()
+    if (value) return value
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  }
+  throw new Error(`timed out waiting for ${description}\n${await diagnostics()}`)
+}
+
 function contentText(content) {
   if (typeof content === "string") return content
   if (!Array.isArray(content)) return ""
@@ -423,7 +433,10 @@ async function main() {
     }
 
     await assertMutation('ship control parity --accept "admin surfaces agree" --max-turns 3')
-    const initial = await store.load(sessionID)
+    const initial = await waitFor(async () => {
+      const goal = await store.load(sessionID)
+      return goal?.objective === "ship control parity" && goal.budget.maxTurns === 3 ? goal : null
+    }, "persisted initial V2 Goal", diagnostics)
     assert.equal(initial?.objective, "ship control parity")
     assert.equal(initial?.budget.maxTurns, 3)
 
@@ -433,47 +446,60 @@ async function main() {
     await assertReadOnly("list", /Project Goal snapshots/)
 
     await assertMutation("budget --max-turns 9")
-    assert.equal((await store.load(sessionID))?.budget.maxTurns, 9)
+    await waitFor(async () => (await store.load(sessionID))?.budget.maxTurns === 9, "persisted V2 budget update", diagnostics)
 
     await assertMutation('add queued first --accept "first queued done"')
+    await waitFor(async () => (await sequences.load(sessionID)).items.length === 1, "first queued Goal persistence", diagnostics)
     await assertMutation('add queued second --check "npm test"')
-    let queue = await sequences.load(sessionID)
+    let queue = await waitFor(async () => {
+      const state = await sequences.load(sessionID)
+      return state.items.length === 2 ? state : null
+    }, "second queued Goal persistence", diagnostics)
     assert.equal(queue.items.length, 2)
     const firstID = queue.items[0].id
     const secondID = queue.items[1].id
 
     await assertReadOnly("queue", /Goal Sequence/)
     await assertMutation(`queue move ${secondID.slice(0, 12)} 1`)
-    queue = await sequences.load(sessionID)
-    assert.equal(queue.items[0].id, secondID)
+    queue = await waitFor(async () => {
+      const state = await sequences.load(sessionID)
+      return state.items[0]?.id === secondID ? state : null
+    }, "queued Goal move persistence", diagnostics)
 
     await assertMutation(`queue remove ${firstID.slice(0, 12)}`)
-    queue = await sequences.load(sessionID)
-    assert.equal(queue.items.length, 1)
-    assert.equal(queue.items[0].id, secondID)
+    queue = await waitFor(async () => {
+      const state = await sequences.load(sessionID)
+      return state.items.length === 1 && state.items[0]?.id === secondID ? state : null
+    }, "queued Goal removal persistence", diagnostics)
 
     const archivedID = (await store.load(sessionID)).id
     await assertMutation("clear")
-    assert.equal(await store.load(sessionID), null)
+    await waitFor(async () => (await store.load(sessionID)) === null, "cleared current Goal persistence", diagnostics)
 
     await assertReadOnly("history", /Archived goals/)
     await assertMutation(`restore ${archivedID.slice(0, 12)}`)
-    assert.equal((await store.load(sessionID))?.status, "paused")
+    await waitFor(async () => {
+      const goal = await store.load(sessionID)
+      return goal?.id === archivedID && goal.status === "paused"
+    }, "restored archived Goal persistence", diagnostics)
 
     await assertMutation("clear")
+    await waitFor(async () => (await store.load(sessionID)) === null, "cleared restored Goal persistence", diagnostics)
     await assertMutation("history prune --keep 1")
-    assert.equal((await store.history(sessionID, 500)).length, 1)
+    await waitFor(async () => (await store.history(sessionID, 500)).length === 1, "pruned Goal history persistence", diagnostics)
 
     await assertMutation("next")
-    const promoted = await store.load(sessionID)
-    assert.equal(promoted?.id, secondID)
-    assert.equal(promoted?.status, "active")
-    assert.equal((await sequences.load(sessionID)).items.length, 0)
+    const promoted = await waitFor(async () => {
+      const goal = await store.load(sessionID)
+      const state = await sequences.load(sessionID)
+      return goal?.id === secondID && goal.status === "active" && state.items.length === 0 ? goal : null
+    }, "queued Goal promotion persistence", diagnostics)
 
     await assertReadOnly("queue", /Pending: 0/)
     await assertMutation("add final queued")
+    await waitFor(async () => (await sequences.load(sessionID)).items.length === 1, "final queued Goal persistence", diagnostics)
     await assertMutation("queue clear")
-    assert.equal((await sequences.load(sessionID)).items.length, 0)
+    await waitFor(async () => (await sequences.load(sessionID)).items.length === 0, "queue clear persistence", diagnostics)
 
     assert.equal(server.exitCode, null, `OpenCode 2 server exited during control-plane canary\n${await diagnostics()}`)
     console.log(JSON.stringify({

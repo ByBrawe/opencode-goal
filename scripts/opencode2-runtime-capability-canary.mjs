@@ -6,6 +6,9 @@ import net from "node:net"
 import os from "node:os"
 import path from "node:path"
 import process from "node:process"
+import { createGoal } from "../dist/domain/goal.js"
+import { GoalStore } from "../dist/persistence/store.js"
+import { settleGoalForOpenCode2ExecutionEvent } from "../dist/opencode2/execution-boundary.js"
 
 const OPENCODE_BINARY = process.env.OPENCODE2_BINARY || "opencode2"
 const SERVER_USERNAME = "opencode"
@@ -407,26 +410,59 @@ async function main() {
     sessionID = String((created.body?.data ?? created.body)?.id ?? "")
     assert.ok(sessionID, `session ID missing: ${created.text}`)
 
-    const prompt = await request(`${apiPrefix}/session/${encodeURIComponent(sessionID)}/prompt`, {
-      method: "POST",
-      body: JSON.stringify({ text: "prove exact OpenCode 2 runtime event delivery", delivery: "steer", resume: true }),
-    }, 120_000)
-    assert.ok(prompt.ok, `runtime prompt failed: HTTP ${prompt.status} ${prompt.text}\n${await diagnostics()}`)
+    const goalStore = new GoalStore(workspace)
+    await goalStore.save(createGoal({
+      sessionID,
+      objective: "prove exact OpenCode 2 successful-execution no-progress parity",
+    }))
 
-    await waitFor(() => provider.stats.requests.length >= 1, "provider request", diagnostics, 60_000)
-    await waitFor(async () => {
-      const trace = await readTrace(traceFile)
-      return trace.some((item) =>
-        item.phase === "event"
-        && item.sessionID === sessionID
-        && (
-          item.type === "session.execution.succeeded"
-          || item.type === "session.idle"
-          || (item.type === "session.status" && item.status?.type === "idle")
-          || (item.type === "session.status" && item.status === "idle")
-        )
+    const promptAndSettleNoProgress = async (turn) => {
+      const prompt = await request(`${apiPrefix}/session/${encodeURIComponent(sessionID)}/prompt`, {
+        method: "POST",
+        body: JSON.stringify({
+          text: `prove exact OpenCode 2 successful execution boundary turn ${turn}`,
+          delivery: "steer",
+          resume: true,
+        }),
+      }, 120_000)
+      assert.ok(prompt.ok, `runtime prompt ${turn} failed: HTTP ${prompt.status} ${prompt.text}\n${await diagnostics()}`)
+
+      await waitFor(
+        () => provider.stats.requests.filter((item) => !item.isCompaction).length >= turn,
+        `provider request ${turn}`,
+        diagnostics,
+        60_000,
       )
-    }, "terminal session execution event through ctx.event.subscribe()", diagnostics, 60_000)
+      const terminalEvent = await waitFor(async () => {
+        const trace = await readTrace(traceFile)
+        const events = trace.filter((item) =>
+          item.phase === "event"
+          && item.sessionID === sessionID
+          && item.type === "session.execution.succeeded"
+        )
+        return events.length >= turn ? events[turn - 1] : null
+      }, `session.execution.succeeded #${turn} through ctx.event.subscribe()`, diagnostics, 60_000)
+
+      const goal = await goalStore.load(sessionID)
+      assert.ok(goal, `Goal disappeared before successful execution boundary ${turn}`)
+      const settled = settleGoalForOpenCode2ExecutionEvent(goal, terminalEvent)
+      assert.equal(settled.closed, true, `successful execution ${turn} must close exactly one Goal turn`)
+      await goalStore.save(settled.goal)
+      return settled.goal
+    }
+
+    const firstNoProgress = await promptAndSettleNoProgress(1)
+    assert.equal(firstNoProgress.status, "active")
+    assert.equal(firstNoProgress.stalledTurns, 1)
+
+    const secondNoProgress = await promptAndSettleNoProgress(2)
+    assert.equal(secondNoProgress.status, "active")
+    assert.equal(secondNoProgress.stalledTurns, 2)
+
+    const thirdNoProgress = await promptAndSettleNoProgress(3)
+    assert.equal(thirdNoProgress.status, "paused")
+    assert.equal(thirdNoProgress.stalledTurns, 3)
+    assert.match(thirdNoProgress.stopReason ?? "", /3 continuation turns without host-observed progress/)
 
     const compact = await request(`${apiPrefix}/session/${encodeURIComponent(sessionID)}/compact`, {
       method: "POST",
@@ -485,6 +521,12 @@ async function main() {
         || (item.type === "session.status" && (item.status?.type === "idle" || item.status === "idle"))
       ),
       executionSucceededObserved: sessionEvents.some((item) => item.type === "session.execution.succeeded"),
+      successfulExecutionCount: sessionEvents.filter((item) => item.type === "session.execution.succeeded").length,
+      noProgressBoundary: {
+        status: thirdNoProgress.status,
+        stalledTurns: thirdNoProgress.stalledTurns,
+        stopReason: thirdNoProgress.stopReason,
+      },
     }, null, 2))
   } finally {
     await stopProcess(server)

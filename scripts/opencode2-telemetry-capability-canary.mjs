@@ -282,6 +282,7 @@ export default {
         messageID: event?.messageID,
         agent: event?.agent,
         model: event?.model,
+        options: event?.options,
         keys: event && typeof event === "object" ? Object.keys(event).sort() : [],
       })
     })
@@ -535,6 +536,7 @@ async function main() {
       contextShape: contextWithModel ? {
         keys: contextWithModel.keys,
         model: contextWithModel.model,
+        options: contextWithModel.options,
       } : null,
       emptyCompletionProvedBy: "third execution succeeded without requiring text activity",
     }, null, 2))

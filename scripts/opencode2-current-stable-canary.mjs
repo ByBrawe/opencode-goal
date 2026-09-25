@@ -15,10 +15,7 @@ const USERNAME = "opencode"
 const PASSWORD = "opencode-goal-v2-current-stable"
 const CONTROL_TOOL = "opencode_goals_v2_control"
 const COMMAND = "prove current V2 stable lifecycle --max-turns 1"
-const TODOS = [
-  { content: "Inspect current V2 tool surface", status: "in_progress", priority: "high" },
-  { content: "Prove native Todo call settles", status: "pending", priority: "medium" },
-]
+const REQUIRED_WORK_TOOLS = ["opencode_goal_checkpoint", "opencode_goal_complete"]
 
 function appendLog(current, chunk, limit = 120_000) {
   return (current + String(chunk)).slice(-limit)
@@ -287,12 +284,12 @@ async function main() {
     model: "canary/canary",
     providers: {
       canary: {
-        name: "Current V2 Todo Capability",
+        name: "Current V2 Stable Lifecycle",
         package: "@opencode-ai/ai/providers/openai-compatible",
         settings: { baseURL: `http://127.0.0.1:${providerPort}/v1` },
         models: {
           canary: {
-            name: "Current V2 Todo Capability",
+            name: "Current V2 Stable Lifecycle",
             capabilities: { tools: true, input: ["text"], output: ["text"] },
             limit: { context: 100000, output: 4096 },
           },

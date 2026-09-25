@@ -55,6 +55,16 @@ import {
   forgetOpenCode2ToolProgressSession,
   rememberOpenCode2ShellBefore,
 } from "./tool-progress.js"
+import {
+  activateUnitHandoffTarget,
+  createUnitHandoffTarget,
+  markUnitHandoffDispatched,
+  markUnitHandoffSourceTerminal,
+  observeInitialGoalUnit,
+  readGoalUnitIdentity,
+  unitHandoffMessageID,
+  unitRotationNeeded,
+} from "./unit-handoff.js"
 
 export const OPENCODE2_EXPERIMENTAL_PLUGIN_ID = "bybrawe.open-code-goals.v2-experimental"
 
@@ -636,6 +646,12 @@ async function applyAuthorizedGoalMutation(
       } : {}),
       budget: directBudgetPatch(parsed),
     })
+    if (goal.unitRotation) {
+      goal = observeInitialGoalUnit(
+        goal,
+        await readGoalUnitIdentity(goal.unitRotation.command, directory),
+      )
+    }
     await store.save(goal)
     return { goal }
   }
@@ -658,6 +674,12 @@ async function applyAuthorizedGoalMutation(
   })
   const budgetPatch = directBudgetPatch(parsed)
   if (Object.keys(budgetPatch).length) goal = applyGoalBudget(goal, budgetPatch)
+  if (goal.unitRotation && goal.unitRotation.currentUnit === undefined) {
+    goal = observeInitialGoalUnit(
+      goal,
+      await readGoalUnitIdentity(goal.unitRotation.command, directory),
+    )
+  }
   await store.save(goal)
   return { goal }
 }

@@ -1,9 +1,34 @@
 import { createHash, randomUUID } from "node:crypto"
 import { spawn } from "node:child_process"
+import path from "node:path"
 import type { GoalState, GoalUnitRotation } from "../domain/types.js"
+import { assertGoalStoragePathSafe } from "../persistence/store.js"
+import { acquireGoalStoreProcessLock } from "../persistence/process-lock.js"
 
 export const DEFAULT_UNIT_COMMAND_TIMEOUT_MS = 10_000
 export const MAX_UNIT_IDENTITY_CHARS = 4_096
+
+
+export async function withUnitHandoffLease<T>(
+  directory: string,
+  goalID: string,
+  fn: () => Promise<T>,
+  timeoutMs = 5_000,
+): Promise<T> {
+  const root = path.join(path.resolve(directory), ".opencode", "goal-handoff-locks")
+  const shard = createHash("sha256").update(goalID).digest("hex").slice(0, 32)
+  const lease = await acquireGoalStoreProcessLock({
+    lockRoot: root,
+    lockFile: path.join(root, `${shard}.lock`),
+    timeoutMs,
+    assertSafe: async (target) => await assertGoalStoragePathSafe(directory, target),
+  })
+  try {
+    return await fn()
+  } finally {
+    await lease.release()
+  }
+}
 
 function normalizedUnitIdentity(value: string): string {
   const normalized = value.replace(/\r\n/g, "\n").trim()

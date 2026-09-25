@@ -139,7 +139,7 @@ function multipleInProgressAnomaly(items: GoalTodoPlanItem[]): GoalTodoPlanAnoma
   if (active.length <= 1) return undefined
   return {
     kind: "multiple_in_progress",
-    summary: `${active.length} native Todo items are simultaneously in_progress; expected at most one.`,
+    summary: `${active.length} Todo items are simultaneously in_progress; expected at most one.`,
     itemKeys: active.map((item) => item.key),
   }
 }
@@ -178,7 +178,7 @@ function transitionAnomalies(previous: GoalTodoPlan | undefined, next: GoalTodoP
     ) {
       anomalies.push({
         kind: "substantial_replacement",
-        summary: `Native Todo plan changed substantially in the same Goal revision: ${removed.length} removed, ${added.length} added, ${shared.length} retained.`,
+        summary: `Todo plan changed substantially in the same Goal revision: ${removed.length} removed, ${added.length} added, ${shared.length} retained.`,
         itemKeys: [...new Set([...removed, ...added])],
       })
     }

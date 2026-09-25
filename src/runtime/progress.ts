@@ -15,7 +15,7 @@ function defaultStallLimit(goal: GoalState): number {
   if (!todoPlanIsCurrent(goal) || !goal.todoPlan) return 3
   const openItems = goal.todoPlan.pending + goal.todoPlan.inProgress
   if (openItems <= 0) return 3
-  // Long native Todo plans naturally contain reconnaissance, verification, and
+  // Long Todo plans naturally contain reconnaissance, verification, and
   // read-only turns that may not create a fresh mutation fingerprint. Keep the
   // guard bounded, but scale its tolerance with remaining plan size.
   return Math.min(12, Math.max(4, 3 + Math.ceil(openItems / 10)))

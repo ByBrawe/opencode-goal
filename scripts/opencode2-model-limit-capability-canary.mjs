@@ -108,6 +108,13 @@ export default {
       configKeys: keys(ctx.config),
     })
 
+    const registry = {}
+    try { registry.models = safe(await ctx.model?.list?.()) } catch (error) { registry.models = { error: String(error) } }
+    try { registry.defaultModel = safe(await ctx.model?.default?.()) } catch (error) { registry.defaultModel = { error: String(error) } }
+    try { registry.providers = safe(await ctx.provider?.list?.()) } catch (error) { registry.providers = { error: String(error) } }
+    try { registry.provider = safe(await ctx.provider?.get?.({ providerID: "canary" })) } catch (error) { registry.provider = { error: String(error) } }
+    await trace({ phase: "registry.reads", ...registry })
+
     let catalogRegistration
     if (typeof ctx.catalog?.transform === "function") {
       try {
@@ -289,8 +296,10 @@ async function main() {
     const setup = trace.find((item) => item.phase === "setup")
     const context = trace.find((item) => item.phase === "context")
     const catalog = trace.find((item) => item.phase === "catalog.transform")
+    const registry = trace.find((item) => item.phase === "registry.reads")
     assert.ok(setup)
     assert.ok(context)
+    assert.ok(registry)
 
     console.log(JSON.stringify({
       ok: true,
@@ -298,6 +307,7 @@ async function main() {
       expectedLimit: { context: MODEL_CONTEXT, output: MODEL_OUTPUT },
       setup,
       context,
+      registry,
       catalog: catalog ?? null,
       trace,
     }, null, 2))

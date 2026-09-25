@@ -35,13 +35,15 @@ This preview still does **not** establish stable OpenCode 2 support. The final c
 The host-authenticated V2 `/goal` command surface also reuses the stable V1 persistence and formatting layers for Goal administration:
 
 - read-only views: `status`, `contract`, `audit`, `budget` (without a patch), `history`, `doctor`, `list`, and `queue`;
-- one-use host-authorized mutations: `budget`, `history prune`, `restore`, `add`, `queue move/remove/clear`, and `next`;
+- lifecycle mutations (`create/edit/pause/resume/clear`) retain the one-use host-authorized control capability;
+- storage/admin mutations (`budget`, `history prune`, `restore`, `add`, `queue move/remove/clear`, and `next`) run directly inside the host-native `/goal` command callback, so persistence does not depend on a model/provider turn;
 - queue state is still stored by `GoalSequenceStore`; only one Goal can be live, queue entries remain inert until promotion, and storage locking/integrity behavior is shared with V1;
 - lifting a `budget_limited` Goal or explicitly activating `next` can re-arm autonomous V2 continuation, while restore remains paused until the user explicitly resumes;
 - after a Goal-owned V2 execution completes the current Goal, the successful execution boundary may promote the next queued Goal exactly through the same sequence store and schedule the promoted Goal as the new continuation owner;
-- ordinary prompt text cannot invoke these mutations: every mutating administration command still passes through the host-bound, single-use direct-command capability and current session Location check.
+- ordinary prompt text cannot invoke these mutations: model-visible Goal control remains read-only, while host-native admin commands are admitted only through the real `/goal` command callback after the current session Location is resolved;
+- presentation-only follow-up prompts are best effort and never determine whether an admin mutation committed or cause the mutation to be replayed.
 
-Stable promotion requires an exact OpenCode 2.0.11 canary to prove the read-only views remain mutation-free and representative budget/archive/restore/sequence mutations persist through that authority boundary.
+Stable promotion requires an exact OpenCode 2.0.11 canary to prove the read-only views remain mutation-free, lifecycle mutation still requires the one-use capability, and representative host-native budget/archive/restore/sequence mutations persist without depending on provider execution.
 
 ## V1-grade completion preview
 

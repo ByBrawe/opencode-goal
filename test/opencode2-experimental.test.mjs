@@ -723,6 +723,175 @@ test("V2 completed Goal terminal auto-promotes exactly one queued Goal and trans
   }
 })
 
+test("V2 foreground execution failure cannot mutate persisted Goal state", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-foreground-failure-"))
+  try {
+    await withAutonomousPreview(async () => {
+      const host = fakeV2EventContext(root)
+      const sessionID = "v2-foreground-failure"
+      const store = new GoalStore(root)
+      await seedGoal(root, sessionID, "preserve foreground isolation")
+      const before = await store.load(sessionID)
+      const cleanup = await OpenCode2GoalsExperimental.setup(host.ctx)
+
+      await host.emitEvent({ type: "session.execution.started", data: { sessionID } })
+      await host.emitEvent({
+        type: "session.execution.failed",
+        data: {
+          sessionID,
+          error: {
+            type: "provider.invalid-request",
+            message: "Prompt exceeds max length for foreground request",
+            status: 400,
+          },
+        },
+      })
+      await new Promise((resolve) => setTimeout(resolve, 25))
+
+      assert.deepEqual(
+        await store.load(sessionID),
+        before,
+        "unowned foreground failure must not pause, retry, or otherwise mutate the Goal",
+      )
+      await cleanup()
+    })
+  } finally {
+    await rm(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 50 })
+  }
+})
+
+test("V2 owned execution failure applies shared host-limit policy only to the matching Goal revision", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-owned-host-limit-"))
+  try {
+    await withAutonomousPreview(async () => {
+      const host = fakeV2EventContext(root)
+      const sessionID = "v2-owned-host-limit"
+      const store = new GoalStore(root)
+      const cleanup = await OpenCode2GoalsExperimental.setup(host.ctx)
+
+      const dispatched = await dispatchDirectCommand(host, sessionID, "ship owned host-limit parity")
+      await armCapability(host, sessionID, dispatched.messageID)
+      await host.emitEvent({ type: "session.execution.started", data: { sessionID } })
+      await consumeCapability(host, sessionID, "ship owned host-limit parity")
+      await host.emitEvent({ type: "session.execution.succeeded", data: { sessionID } })
+
+      const kickoff = await waitForValue(
+        () => host.prompts.find((item) =>
+          item.resume === false
+          && item.metadata?.opencode_goal_v2_source === "kickoff"
+        ),
+        "Goal-owned kickoff before host-limit failure",
+      )
+
+      await runHook(host, "context", {
+        sessionID,
+        agent: "build",
+        messageID: kickoff.returnedID,
+        text: "Goal-owned work that reaches provider overflow",
+      })
+      await host.emitEvent({ type: "session.execution.started", data: { sessionID } })
+
+      const beforeFailure = await store.load(sessionID)
+      assert.ok(beforeFailure)
+      await host.emitEvent({
+        type: "session.execution.failed",
+        data: {
+          sessionID,
+          error: {
+            type: "provider.invalid-request",
+            message: "Prompt exceeds max length for exact host-limit parity",
+            status: 400,
+          },
+        },
+      })
+
+      const paused = await waitForValue(async () => {
+        const goal = await store.load(sessionID)
+        return goal?.status === "paused" ? goal : null
+      }, "owned provider overflow pause")
+      assert.equal(paused.id, beforeFailure.id)
+      assert.equal(paused.revision, beforeFailure.revision)
+      assert.match(paused.stopReason ?? "", /prompt\/context limit/i)
+      assert.match(paused.stopReason ?? "", /native compaction did not recover/i)
+
+      const promptCount = host.prompts.filter((item) =>
+        item.resume === false
+        && item.metadata?.opencode_goal_v2_autonomous === true
+      ).length
+      await new Promise((resolve) => setTimeout(resolve, 25))
+      assert.equal(
+        host.prompts.filter((item) =>
+          item.resume === false
+          && item.metadata?.opencode_goal_v2_autonomous === true
+        ).length,
+        promptCount,
+        "fatal owned failure must not schedule another autonomous continuation",
+      )
+
+      await cleanup()
+    })
+  } finally {
+    await rm(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 50 })
+  }
+})
+
+test("V2 owned transient provider failure persists bounded recovery without foreground authority", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-owned-retry-"))
+  try {
+    await withAutonomousPreview(async () => {
+      const host = fakeV2EventContext(root)
+      const sessionID = "v2-owned-retry"
+      const store = new GoalStore(root)
+      const cleanup = await OpenCode2GoalsExperimental.setup(host.ctx)
+
+      const dispatched = await dispatchDirectCommand(host, sessionID, "ship transient recovery parity")
+      await armCapability(host, sessionID, dispatched.messageID)
+      await host.emitEvent({ type: "session.execution.started", data: { sessionID } })
+      await consumeCapability(host, sessionID, "ship transient recovery parity")
+      await host.emitEvent({ type: "session.execution.succeeded", data: { sessionID } })
+
+      const kickoff = await waitForValue(
+        () => host.prompts.find((item) =>
+          item.resume === false
+          && item.metadata?.opencode_goal_v2_source === "kickoff"
+        ),
+        "Goal-owned kickoff before transient failure",
+      )
+      await runHook(host, "context", {
+        sessionID,
+        agent: "build",
+        messageID: kickoff.returnedID,
+        text: "Goal-owned work with transient provider failure",
+      })
+      await host.emitEvent({ type: "session.execution.started", data: { sessionID } })
+      await host.emitEvent({
+        type: "session.execution.failed",
+        data: {
+          sessionID,
+          error: {
+            type: "provider.unavailable",
+            message: "temporary provider overload",
+            status: 503,
+          },
+        },
+      })
+
+      const recovering = await waitForValue(async () => {
+        const goal = await store.load(sessionID)
+        return goal?.infrastructureRecovery?.kind === "provider_retry" ? goal : null
+      }, "persisted V2 transient provider recovery")
+      assert.equal(recovering.status, "active")
+      assert.equal(recovering.infrastructureRecovery.attempt, 1)
+      assert.ok(recovering.infrastructureRecovery.nextRetryAt > Date.now())
+      assert.equal(recovering.skipNextStallCheck, true)
+
+      await cleanup()
+    })
+  } finally {
+    await rm(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 50 })
+  }
+})
+
 test("V2 direct lifecycle preview registers host command and mutating tool only when explicitly enabled", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-capability-register-"))
   try {

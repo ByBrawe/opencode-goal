@@ -4,6 +4,12 @@ import type { GoalState } from "../domain/types.js"
 import { GoalStore } from "../persistence/store.js"
 import { applyGoalBudget, budgetLimitHits } from "../runtime/accounting.js"
 import { formatGoalRuntimeFingerprint } from "../runtime/fingerprint.js"
+import {
+  clearInfrastructureRecovery,
+  enterInfrastructureRecovery,
+  isTransientInfrastructureError,
+  markInfrastructureRecoveryDispatched,
+} from "../runtime/infrastructure-recovery.js"
 import { parseGoalCommand } from "../opencode/command.js"
 import { createGoalTransitionNotifier, notifyGoal } from "../opencode/notify.js"
 import { markHostProgress } from "../runtime/progress.js"
@@ -33,6 +39,16 @@ import {
   openCode2ToolTelemetry,
 } from "./telemetry-runtime.js"
 import {
+  classifyOpenCode2ExecutionFailure,
+  clearOpenCode2HostLimitSession,
+  consumeOpenCode2CompactionReason,
+  createOpenCode2HostLimitRuntime,
+  markOpenCode2OwnedExecutionSuccess,
+  observeOpenCode2CompactionReason,
+  observeOpenCode2NativeCompaction,
+  repeatedOpenCode2CompactionReason,
+} from "./host-limits.js"
+import {
   collectOpenCode2SuccessfulToolProgress,
   createOpenCode2ToolProgressRuntime,
   forgetOpenCode2ToolProgressCall,
@@ -46,6 +62,7 @@ const V2_CONTROL_TOOL = "opencode_goals_v2_control"
 const V2_GET_TOOL = "opencode_goals_v2_get"
 export const OPENCODE2_DIRECT_LIFECYCLE_ENV = "OPENCODE_GOAL_V2_DIRECT_LIFECYCLE"
 export const OPENCODE2_AUTONOMOUS_ENV = "OPENCODE_GOAL_V2_AUTONOMOUS"
+const OPENCODE2_INFRA_RETRY_POLL_MS = 5_000
 const V2_READ_ONLY_NOTICE =
   "OpenCode Goals V2 model-visible lifecycle control remains read-only. Mutation is authorized only through the host-native direct command boundary when the explicit V2 lifecycle preview is enabled. No Goal state was changed."
 
@@ -917,6 +934,8 @@ export const OpenCode2GoalsExperimental = {
     const autonomousRuntime = createOpenCode2AutonomousRuntime()
     const telemetryRuntime = createOpenCode2TelemetryRuntime()
     const toolProgressRuntime = createOpenCode2ToolProgressRuntime()
+    const hostLimitRuntime = createOpenCode2HostLimitRuntime()
+    const hostLimitRetryTimers = new Map<string, ReturnType<typeof setTimeout>>()
     const autonomousDispatching = new Set<string>()
     const previewEnabled = directLifecyclePreviewEnabled()
     const autonomousEnabled = previewEnabled && autonomousPreviewEnabled()
@@ -1019,6 +1038,15 @@ export const OpenCode2GoalsExperimental = {
       try {
         const { store, goal } = await coordinatorGoal(sessionID)
         if (!goal || goal.id !== goalID || goal.revision !== revision || goal.status !== "active") return
+        if (isTransientInfrastructureError(error)) {
+          const recovering = enterInfrastructureRecovery(goal, {
+            kind: "continuation_dispatch",
+            reason: String(error),
+          })
+          await store.save(recovering)
+          armHostLimitRetry(recovering)
+          return
+        }
         await store.save(pauseGoal(goal, `Continuation dispatch failed: ${String(error)}`))
       } catch {
         // Failure recovery is advisory to the original transport error. Never
@@ -1086,6 +1114,62 @@ export const OpenCode2GoalsExperimental = {
       }
     }
 
+    const cancelHostLimitRetry = (sessionID: string) => {
+      const timer = hostLimitRetryTimers.get(sessionID)
+      if (timer) clearTimeout(timer)
+      hostLimitRetryTimers.delete(sessionID)
+    }
+
+    async function wakeHostLimitRetry(sessionID: string): Promise<void> {
+      cancelHostLimitRetry(sessionID)
+      try {
+        const { store, goal } = await coordinatorGoal(sessionID)
+        if (!goal || goal.status !== "active" || !goal.infrastructureRecovery) return
+
+        const now = Date.now()
+        if (goal.infrastructureRecovery.nextRetryAt > now) {
+          armHostLimitRetry(goal)
+          return
+        }
+
+        if (
+          runtime.activeExecutionGenerationBySession.has(sessionID)
+          || autonomousDispatching.has(sessionID)
+        ) {
+          const timer = setTimeout(() => {
+            void wakeHostLimitRetry(sessionID)
+          }, OPENCODE2_INFRA_RETRY_POLL_MS)
+          ;(timer as any).unref?.()
+          hostLimitRetryTimers.set(sessionID, timer)
+          return
+        }
+
+        const dispatched = markInfrastructureRecoveryDispatched(goal, now)
+        await store.save(dispatched)
+        await scheduleAutonomousContinuation(
+          sessionID,
+          dispatched,
+          continuationPrompt(dispatched),
+          "recovery",
+        )
+      } catch {
+        // A failed wake must not manufacture authority. Persisted recovery
+        // remains the source of truth and a later host/restart boundary can retry.
+      }
+    }
+
+    const armHostLimitRetry = (goal: GoalState) => {
+      cancelHostLimitRetry(goal.sessionID)
+      const retryAt = goal.infrastructureRecovery?.nextRetryAt
+      if (goal.status !== "active" || !retryAt || retryAt <= 0) return
+
+      const timer = setTimeout(() => {
+        void wakeHostLimitRetry(goal.sessionID)
+      }, Math.max(0, retryAt - Date.now()))
+      ;(timer as any).unref?.()
+      hostLimitRetryTimers.set(goal.sessionID, timer)
+    }
+
     if (typeof ctx.event?.subscribe === "function") {
       lifecycleTask = (async () => {
         try {
@@ -1096,6 +1180,7 @@ export const OpenCode2GoalsExperimental = {
             const type = firstString(record(event)?.type)
             const data = nestedRecord(event, "data")
             let completedTelemetry: ReturnType<typeof finishOpenCode2TelemetryExecution>
+            if (sessionID) observeOpenCode2CompactionReason(hostLimitRuntime, sessionID, event)
 
             if (sessionID && boundary.kind === "execution-started" && boundary.generation !== undefined) {
               beginOpenCode2TelemetryExecution(
@@ -1139,6 +1224,8 @@ export const OpenCode2GoalsExperimental = {
               clearOpenCode2GoalOwnership(autonomousRuntime, sessionID)
               clearOpenCode2TelemetrySession(telemetryRuntime, sessionID)
               forgetOpenCode2ToolProgressSession(toolProgressRuntime, sessionID)
+              clearOpenCode2HostLimitSession(hostLimitRuntime, sessionID)
+              cancelHostLimitRetry(sessionID)
               workTools.clearSession(sessionID)
               autonomousDispatching.delete(sessionID)
               continue
@@ -1146,12 +1233,45 @@ export const OpenCode2GoalsExperimental = {
             if (!autonomousEnabled || !sessionID) continue
 
             if (boundary.compaction.compactionFailed) {
+              const compactionReason = consumeOpenCode2CompactionReason(hostLimitRuntime, sessionID)
+              if (compactionReason === "auto") {
+                try {
+                  const { store, goal } = await coordinatorGoal(sessionID)
+                  if (goal?.status === "active") {
+                    const failure = classifyOpenCode2ExecutionFailure(goal, data?.error)
+                    const next = failure.kind === "ignore"
+                      ? pauseGoal(
+                          goal,
+                          "OpenCode automatic compaction failed before the active Goal could recover. Goal state is preserved. Run /compact, then /goal resume.",
+                        )
+                      : failure.goal
+                    await store.save(next)
+                    if (failure.kind === "transient") armHostLimitRetry(next)
+                    else cancelHostLimitRetry(sessionID)
+                    clearOpenCode2GoalOwnership(autonomousRuntime, sessionID)
+                  }
+                } catch {
+                  // A failed compaction never authorizes fallback dispatch.
+                }
+              }
               continue
             }
             if (boundary.compaction.compactionCompleted) {
+              const compactionReason = consumeOpenCode2CompactionReason(hostLimitRuntime, sessionID)
               try {
-                const { goal } = await coordinatorGoal(sessionID)
+                const { store, goal } = await coordinatorGoal(sessionID)
                 if (goal) {
+                  if (compactionReason === "auto" && goal.status === "active") {
+                    const attempt = observeOpenCode2NativeCompaction(hostLimitRuntime, goal)
+                    if (attempt.repeatedWithoutOwnedSuccess) {
+                      const paused = pauseGoal(goal, repeatedOpenCode2CompactionReason())
+                      await store.save(paused)
+                      cancelHostLimitRetry(sessionID)
+                      clearOpenCode2GoalOwnership(autonomousRuntime, sessionID)
+                      continue
+                    }
+                  }
+
                   const prepared = prepareOpenCode2PostCompactionContinuation(goal)
                   if (prepared.shouldContinue && prepared.prompt) {
                     await scheduleAutonomousContinuation(sessionID, goal, prepared.prompt, "compaction")
@@ -1168,8 +1288,31 @@ export const OpenCode2GoalsExperimental = {
             const succeeded = type === "session.execution.succeeded"
 
             if (!succeeded) {
-              consumeOpenCode2GoalKickoff(autonomousRuntime, sessionID, generation)
-              consumeOpenCode2GoalExecution(autonomousRuntime, sessionID, generation)
+              const kickoff = consumeOpenCode2GoalKickoff(autonomousRuntime, sessionID, generation)
+              const owner = consumeOpenCode2GoalExecution(autonomousRuntime, sessionID, generation)
+              if (type !== "session.execution.failed") continue
+
+              const expected = kickoff ?? owner
+              if (!expected) continue
+
+              try {
+                const { store, goal } = await coordinatorGoal(sessionID)
+                if (
+                  !goal
+                  || goal.status !== "active"
+                  || goal.id !== expected.goalID
+                  || goal.revision !== expected.revision
+                ) continue
+
+                const failure = classifyOpenCode2ExecutionFailure(goal, data?.error)
+                if (failure.kind === "ignore") continue
+                await store.save(failure.goal)
+                if (failure.kind === "transient") armHostLimitRetry(failure.goal)
+                else cancelHostLimitRetry(sessionID)
+              } catch {
+                // Failure events without fresh matching Goal ownership cannot
+                // mutate persisted state or manufacture a retry.
+              }
               continue
             }
 
@@ -1209,8 +1352,13 @@ export const OpenCode2GoalsExperimental = {
                   completedTelemetry,
                 )
                 observedGoal = accounted.goal
-                if (observedGoal !== goal) await store.save(observedGoal)
               }
+              if (observedGoal.infrastructureRecovery) {
+                observedGoal = clearInfrastructureRecovery(observedGoal)
+              }
+              if (observedGoal !== goal) await store.save(observedGoal)
+              cancelHostLimitRetry(sessionID)
+              markOpenCode2OwnedExecutionSuccess(hostLimitRuntime, sessionID)
 
               if (observedGoal.status === "completed") {
                 const promoted = await applyOpenCode2ControlPlaneMutation(
@@ -1457,6 +1605,11 @@ export const OpenCode2GoalsExperimental = {
       autonomousRuntime.kickoffBySession.clear()
       telemetryRuntime.currentBySession.clear()
       toolProgressRuntime.shellPending.clear()
+      for (const timer of hostLimitRetryTimers.values()) clearTimeout(timer)
+      hostLimitRetryTimers.clear()
+      hostLimitRuntime.successEpochBySession.clear()
+      hostLimitRuntime.compactionReasonBySession.clear()
+      hostLimitRuntime.compactionAttemptBySession.clear()
       autonomousDispatching.clear()
       await lifecycleTask?.catch(() => undefined)
     }

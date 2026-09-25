@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import { mkdtemp, rm } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import { createGoal, pauseGoal, resumeGoal } from "../dist/domain/goal.js"
+import { createGoal, pauseGoal, resumeGoal, waitForUserGoal } from "../dist/domain/goal.js"
 import {
   activateUnitHandoffTarget,
   createUnitHandoffTarget,
@@ -110,12 +110,14 @@ test("handoff phases keep exactly one runnable Goal owner", () => {
   assert.equal(target.unitRotation.handoff.dispatchedAt, 240)
 })
 
-test("completed or paused Goals never become unit-rotation candidates", () => {
+test("terminal, paused, and waiting-user Goals never become unit-rotation candidates", () => {
   const goal = seededGoal()
   const completed = { ...goal, status: "completed" }
   const paused = { ...goal, status: "paused" }
+  const waiting = waitForUserGoal(goal, { reason: "need release approval", now: 140 })
   assert.equal(unitRotationNeeded(completed, "unit-002"), false)
   assert.equal(unitRotationNeeded(paused, "unit-002"), false)
+  assert.equal(unitRotationNeeded(waiting, "unit-002"), false)
 })
 
 

@@ -1605,7 +1605,8 @@ export const OpenCode2GoalsExperimental = {
         const sessionID = sessionIDFromEvent(event)
         if (!sessionID) return
 
-        const metadata = record(event?.metadata) ?? nestedRecord(event, "prompt")?.metadata as UnknownRecord | undefined
+        const prompt = nestedRecord(event, "prompt")
+        const metadata = record(event?.metadata) ?? record(prompt?.metadata)
         if (
           metadata?.opencode_goal_v2_autonomous === true
           || metadata?.opencode_goal_v2_direct_command === true

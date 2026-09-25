@@ -86,10 +86,10 @@ export interface GoalInfrastructureRecovery {
 }
 
 /**
- * One durable item from OpenCode's native Todo plan.
+ * One durable item from the advisory Todo plan observed for this Goal.
  *
  * `key` is Goal-owned and deterministic from the item's planning identity; it
- * is not completion evidence and does not replace OpenCode's optional native
+ * is not completion evidence and does not replace an optional host-native
  * Todo id. Keeping the exact item text/status/order lets restart/compaction
  * recovery reconstruct the last observed work plan without making Goal a
  * second Todo authority.
@@ -115,9 +115,9 @@ export interface GoalTodoPlanAnomaly {
 }
 
 /**
- * Advisory telemetry for OpenCode's native session Todo plan.
+ * Advisory telemetry for the current execution Todo plan.
  *
- * The Todo list is owned by OpenCode and remains execution-planning state, not
+ * Native Todo state is owned by OpenCode; the V2 fallback is owned only by the\n * exact Goal execution. Both remain execution-planning state, not
  * Goal completion evidence. Aggregate counts/digest are retained for cheap
  * gating/status, while `items` keeps a revision-bound durable snapshot for
  * restart/compaction reconciliation. Older schema-v1 snapshots may omit items.
@@ -219,7 +219,7 @@ export interface GoalState {
   lastEmptyTurnAt?: number
   /** Persisted retry state for transient verifier/provider/dispatch failures. */
   infrastructureRecovery?: GoalInfrastructureRecovery | undefined
-  /** Native OpenCode Todo-plan telemetry/manifest. Advisory only; never completion evidence. */
+  /** Revision-bound Todo planning telemetry/manifest. Advisory only; never completion evidence. */
   todoPlan?: GoalTodoPlan
   blockerAudit?: BlockerAudit
   progressNotes: ProgressNote[]

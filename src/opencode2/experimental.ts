@@ -5,7 +5,8 @@ import { GoalStore } from "../persistence/store.js"
 import { applyGoalBudget, budgetLimitHits } from "../runtime/accounting.js"
 import { formatGoalRuntimeFingerprint } from "../runtime/fingerprint.js"
 import { parseGoalCommand } from "../opencode/command.js"
-import { createGoalTransitionNotifier } from "../opencode/notify.js"
+import { createGoalTransitionNotifier, notifyGoal } from "../opencode/notify.js"
+import { markHostProgress } from "../runtime/progress.js"
 import { continuationPrompt } from "../opencode/prompt.js"
 import { createOpenCode2CompactionBoundaryRuntime, observeOpenCode2CompactionBoundary, prepareOpenCode2PostCompactionContinuation, type OpenCode2CompactionBoundaryResult, type OpenCode2CompactionBoundaryRuntime } from "./compaction-boundary.js"
 import { prepareOpenCode2Continuation } from "./continuation-boundary.js"
@@ -18,6 +19,22 @@ import {
   OPENCODE2_READ_CONTROL_ACTIONS,
   readOpenCode2ControlPlane,
 } from "./control-plane.js"
+import {
+  applyOpenCode2GoalTelemetry,
+  beginOpenCode2TelemetryExecution,
+  clearOpenCode2TelemetrySession,
+  createOpenCode2TelemetryRuntime,
+  finishOpenCode2TelemetryExecution,
+  observeOpenCode2TelemetryEvent,
+  openCode2ToolTelemetry,
+} from "./telemetry-runtime.js"
+import {
+  collectOpenCode2SuccessfulToolProgress,
+  createOpenCode2ToolProgressRuntime,
+  forgetOpenCode2ToolProgressCall,
+  forgetOpenCode2ToolProgressSession,
+  rememberOpenCode2ShellBefore,
+} from "./tool-progress.js"
 
 export const OPENCODE2_EXPERIMENTAL_PLUGIN_ID = "bybrawe.open-code-goals.v2-experimental"
 
@@ -893,6 +910,8 @@ export const OpenCode2GoalsExperimental = {
     const runtime = createOpenCode2DirectLifecycleRuntime()
     const compactionRuntime = createOpenCode2CompactionBoundaryRuntime()
     const autonomousRuntime = createOpenCode2AutonomousRuntime()
+    const telemetryRuntime = createOpenCode2TelemetryRuntime()
+    const toolProgressRuntime = createOpenCode2ToolProgressRuntime()
     const autonomousDispatching = new Set<string>()
     const previewEnabled = directLifecyclePreviewEnabled()
     const autonomousEnabled = previewEnabled && autonomousPreviewEnabled()
@@ -913,6 +932,77 @@ export const OpenCode2GoalsExperimental = {
       const store = new GoalStore(directory, { onTransition: createGoalTransitionNotifier(directory) })
       const goal = await store.load(sessionID)
       return { directory, store, goal }
+    }
+
+    const applySuccessfulToolProgress = async (sessionID: string, callID: string) => {
+      const owner = autonomousRuntime.executionOwnerBySession.get(sessionID)
+      const tool = openCode2ToolTelemetry(telemetryRuntime, sessionID, callID)
+      if (!owner || !tool?.name) return
+
+      try {
+        const { directory, store, goal } = await coordinatorGoal(sessionID)
+        if (
+          !goal
+          || goal.status !== "active"
+          || goal.id !== owner.goalID
+          || goal.revision !== owner.revision
+        ) return
+
+        const fingerprints = await collectOpenCode2SuccessfulToolProgress(toolProgressRuntime, {
+          sessionID,
+          callID,
+          tool: tool.name,
+          args: tool.input,
+          metadata: tool.metadata,
+          directory,
+          goalID: goal.id,
+          revision: goal.revision,
+        })
+        if (!fingerprints.length) return
+
+        let next = goal
+        const before = next.progressRevision
+        for (const item of fingerprints) {
+          next = markHostProgress(next, {
+            fingerprint: item.fingerprint,
+            source: `tool:${tool.name}`,
+            summary: item.summary,
+          })
+        }
+        if (next.progressRevision === before) return
+        await store.save(next)
+        notifyGoal(directory, next, "progress")
+      } catch {
+        // Progress telemetry is advisory. Never kill the V2 event subscriber
+        // or authorize fallback mutation when hashing/state races fail.
+      }
+    }
+
+    const rememberShellProgressStart = async (sessionID: string, callID: string) => {
+      const owner = autonomousRuntime.executionOwnerBySession.get(sessionID)
+      const tool = openCode2ToolTelemetry(telemetryRuntime, sessionID, callID)
+      if (!owner || !tool?.name || (tool.name !== "shell" && tool.name !== "bash")) return
+
+      try {
+        const { directory, goal } = await coordinatorGoal(sessionID)
+        if (
+          !goal
+          || goal.status !== "active"
+          || goal.id !== owner.goalID
+          || goal.revision !== owner.revision
+        ) return
+        await rememberOpenCode2ShellBefore(toolProgressRuntime, {
+          sessionID,
+          callID,
+          tool: tool.name,
+          args: tool.input,
+          directory,
+          goalID: goal.id,
+          revision: goal.revision,
+        })
+      } catch {
+        // Missing/unreadable state cannot authorize progress.
+      }
     }
 
     const pauseAutonomousDispatchFailure = async (

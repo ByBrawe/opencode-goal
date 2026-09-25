@@ -392,19 +392,39 @@ async function main() {
     const overflow = await sendPrompt(overflowSession, "OVERFLOW_PROBE")
     assert.ok(overflow.ok || overflow.status >= 400, `unexpected overflow response ${overflow.status}`)
 
-    const errorEvent = await waitFor(async () => {
+    const overflowTrace = await waitFor(async () => {
       const trace = await readTrace(traceFile)
-      return trace.find((item) =>
+      const compacted = trace.some((item) =>
+        item.phase === "event"
+        && item.type === "session.compaction.ended"
+        && item.data?.sessionID === overflowSession
+      )
+      const succeeded = trace.some((item) =>
+        item.phase === "event"
+        && item.type === "session.execution.succeeded"
+        && item.data?.sessionID === overflowSession
+      )
+      return compacted && succeeded ? trace : null
+    }, "native V2 overflow compaction recovery", diagnostics, 60_000)
+    assert.equal(p.stats.overflow, 1, "the provider must observe the original overflow exactly once")
+    assert.ok(
+      overflowTrace.some((item) =>
+        item.phase === "event"
+        && item.type === "session.compaction.started"
+        && item.data?.sessionID === overflowSession
+        && item.data?.reason === "auto"
+      ),
+      "exact host must classify overflow recovery as automatic compaction",
+    )
+    assert.equal(
+      overflowTrace.some((item) =>
         item.phase === "event"
         && item.type === "session.execution.failed"
         && item.data?.sessionID === overflowSession
-      )
-    }, "exact session.execution.failed overflow event", diagnostics)
-    assert.equal(errorEvent.data.sessionID, overflowSession)
-    assert.ok(errorEvent.data.error && typeof errorEvent.data.error === "object")
-    assert.equal(errorEvent.data.error.type, "provider.invalid-request")
-    assert.equal(errorEvent.data.error.status, 400)
-    assert.match(String(errorEvent.data.error.message ?? ""), /prompt exceeds max length/i)
+      ),
+      false,
+      "a successfully recovered provider overflow must not surface as a terminal Goal execution failure",
+    )
 
     const retrySession = await createSession("V2 host limit retry")
     const retryResult = await sendPrompt(retrySession, "RETRY_PROBE")
@@ -454,8 +474,9 @@ async function main() {
       ok: true,
       version,
       overflow: {
-        event: errorEvent,
         providerRequests: p.stats.overflow,
+        nativeAutoCompaction: true,
+        executionSucceeded: true,
       },
       retry: {
         providerRequests: p.stats.retry,

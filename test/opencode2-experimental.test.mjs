@@ -872,6 +872,60 @@ test("V2 unit session creation failure leaves the original Goal active and conti
   }
 })
 
+test("V2 unit handoff deletes an orphan native session when target persistence fails", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-unit-persist-fail-"))
+  try {
+    await withAutonomousPreview(async () => {
+      const host = fakeV2EventContext(root)
+      const sessionID = "v2-unit-persist-fail"
+      const targetSessionID = "../unsafe-target"
+      const unitFile = path.join(root, "unit.txt")
+      await writeFile(unitFile, "unit-a\n", "utf8")
+      host.ctx.location = { directory: root }
+      const deleted = []
+      host.ctx.session.create = async () => ({ id: targetSessionID })
+      host.ctx.session.delete = async (input) => { deleted.push(input); return {} }
+
+      const store = new GoalStore(root)
+      const cleanup = await OpenCode2GoalsExperimental.setup(host.ctx)
+      const command = 'ship units --unit "node -e \\"process.stdout.write(require(\'fs\').readFileSync(\'unit.txt\',\'utf8\'))\\"" --fresh-session-per-unit'
+      const dispatched = await dispatchDirectCommand(host, sessionID, command)
+      await armCapability(host, sessionID, dispatched.messageID)
+      await host.emitEvent({ type: "session.execution.started", data: { sessionID } })
+      await consumeCapability(host, sessionID, command)
+      await host.emitEvent({ type: "session.execution.succeeded", data: { sessionID } })
+
+      const kickoff = await waitForValue(
+        () => host.prompts.find((item) => item.resume === false && item.metadata?.opencode_goal_v2_source === "kickoff"),
+        "persist-fail kickoff",
+      )
+      await runHook(host, "context", {
+        sessionID,
+        agent: "build",
+        messageID: kickoff.returnedID,
+        text: "finish first unit",
+      })
+      await host.emitEvent({ type: "session.execution.started", data: { sessionID } })
+      await host.emitEvent({
+        type: "session.text.ended",
+        data: { sessionID, assistantMessageID: "persist-fail-assistant", text: "first unit done" },
+      })
+      await writeFile(unitFile, "unit-b\n", "utf8")
+      await host.emitEvent({ type: "session.execution.succeeded", data: { sessionID } })
+
+      await waitForValue(() => deleted.length === 1 ? deleted : null, "orphan session rollback")
+      assert.deepEqual(deleted, [{ sessionID: targetSessionID }])
+      const source = await store.load(sessionID)
+      assert.equal(source?.status, "active")
+      assert.equal((await store.list()).filter((goal) => goal.id === source?.id).length, 1)
+
+      await cleanup()
+    })
+  } finally {
+    await rm(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 50 })
+  }
+})
+
 test("V2 completed Goal terminal auto-promotes exactly one queued Goal and transfers continuation ownership", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-sequence-auto-"))
   try {

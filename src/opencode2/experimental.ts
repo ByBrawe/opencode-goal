@@ -64,6 +64,7 @@ import {
   observeInitialGoalUnit,
   readGoalUnitIdentity,
   unitHandoffMessageID,
+  unitIdentityDigest,
   unitRotationNeeded,
 } from "./unit-handoff.js"
 
@@ -980,6 +981,7 @@ export const OpenCode2GoalsExperimental = {
     const hostLimitRetryTimers = new Map<string, ReturnType<typeof setTimeout>>()
     const autonomousDispatching = new Set<string>()
     const handoffDispatching = new Set<string>()
+    const handoffRetryTimers = new Map<string, ReturnType<typeof setTimeout>>()
     const lifecycleEnabled = directLifecycleEnabled()
     const autonomousEnabled = lifecycleEnabled && autonomousEnabledByConfig()
     const semanticVerifier = createOpenCode2SemanticVerifierRuntime(
@@ -1309,7 +1311,15 @@ export const OpenCode2GoalsExperimental = {
       // Once source is terminal, failure cannot return ownership to it.
       // Retry uses the same persisted inbox ID, so a crash or transport retry
       // cannot admit a second continuation.
-      await dispatchUnitHandoffTarget(directory, target)
+      const dispatched = await dispatchUnitHandoffTarget(directory, target)
+      if (!dispatched && !handoffRetryTimers.has(target.sessionID)) {
+        const timer = setTimeout(() => {
+          handoffRetryTimers.delete(target.sessionID)
+          void recoverUnitHandoffs(directory)
+        }, OPENCODE2_INFRA_RETRY_POLL_MS)
+        ;(timer as any).unref?.()
+        handoffRetryTimers.set(target.sessionID, timer)
+      }
       return true
     }
 
@@ -1656,6 +1666,28 @@ export const OpenCode2GoalsExperimental = {
               cancelHostLimitRetry(sessionID)
               markOpenCode2OwnedExecutionSuccess(hostLimitRuntime, sessionID)
 
+              let nextUnitIdentity: string | undefined
+              if (observedGoal.status === "active" && observedGoal.unitRotation) {
+                try {
+                  const unit = await readGoalUnitIdentity(observedGoal.unitRotation.command, directory)
+                  if (observedGoal.unitRotation.currentUnit === undefined) {
+                    observedGoal = observeInitialGoalUnit(observedGoal, unit)
+                    await store.save(observedGoal)
+                  } else if (unitRotationNeeded(observedGoal, unit)) {
+                    nextUnitIdentity = unit
+                    observedGoal = markHostProgress(observedGoal, {
+                      fingerprint: `unit:${unitIdentityDigest(unit)}`,
+                      source: "unit-boundary",
+                      summary: `Host unit identity advanced to ${JSON.stringify(unit)}`,
+                    })
+                    await store.save(observedGoal)
+                  }
+                } catch {
+                  // Unit observation is fail-closed. A broken unit command never
+                  // invents a boundary or interrupts the existing session owner.
+                }
+              }
+
               if (observedGoal.status === "completed") {
                 const promoted = await applyOpenCode2ControlPlaneMutation(
                   directory,
@@ -1677,6 +1709,14 @@ export const OpenCode2GoalsExperimental = {
               if (!prepared.closed) continue
               await store.save(prepared.goal)
               if (prepared.shouldContinue && prepared.prompt) {
+                if (
+                  nextUnitIdentity
+                  && prepared.goal.status === "active"
+                  && unitRotationNeeded(prepared.goal, nextUnitIdentity)
+                ) {
+                  const handedOff = await attemptUnitRotation(directory, prepared.goal, nextUnitIdentity)
+                  if (handedOff) continue
+                }
                 await scheduleAutonomousContinuation(
                   sessionID,
                   prepared.goal,
@@ -1889,6 +1929,15 @@ export const OpenCode2GoalsExperimental = {
       // remains gated by the exact-host evidence path.
     }
 
+    if (autonomousEnabled) {
+      const setupDirectory = firstString(ctx.location?.directory, ctx.options?.directory)
+      if (setupDirectory) {
+        queueMicrotask(() => {
+          void recoverUnitHandoffs(path.resolve(setupDirectory))
+        })
+      }
+    }
+
     return async () => {
       lifecycleAbort.abort()
       runtime.capabilities.clear()
@@ -1903,10 +1952,13 @@ export const OpenCode2GoalsExperimental = {
       toolProgressRuntime.shellPending.clear()
       for (const timer of hostLimitRetryTimers.values()) clearTimeout(timer)
       hostLimitRetryTimers.clear()
+      for (const timer of handoffRetryTimers.values()) clearTimeout(timer)
+      handoffRetryTimers.clear()
       hostLimitRuntime.successEpochBySession.clear()
       hostLimitRuntime.compactionReasonBySession.clear()
       hostLimitRuntime.compactionAttemptBySession.clear()
       autonomousDispatching.clear()
+      handoffDispatching.clear()
       await lifecycleTask?.catch(() => undefined)
     }
   },

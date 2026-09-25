@@ -15,7 +15,7 @@ const USERNAME = "opencode"
 const PASSWORD = "opencode-goal-v2-current-stable"
 const CONTROL_TOOL = "opencode_goals_v2_control"
 const COMMAND = "prove current V2 stable lifecycle --max-turns 1"
-const REQUIRED_WORK_TOOLS = ["opencode_goal_checkpoint", "opencode_goal_complete"]
+const REQUIRED_WORK_TOOLS = ["opencode_goal_progress", "opencode_goal_complete", "opencode_goal_evidence_file", "opencode_goal_blocked", "opencode_goal_wait_for_user"]
 
 function appendLog(current, chunk, limit = 120_000) {
   return (current + String(chunk)).slice(-limit)

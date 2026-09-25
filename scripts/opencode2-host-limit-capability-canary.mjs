@@ -457,18 +457,18 @@ async function main() {
       method: "POST",
       body: JSON.stringify({ name: "host_limit_compact_probe", text: "" }),
     }, 90_000)
-    assert.ok(compactCommand.ok, `plugin compact command probe failed: ${compactCommand.status} ${compactCommand.text}\n${await diagnostics()}`)
-    const compactTrace = await waitFor(async () => {
-      const trace = await readTrace(traceFile)
-      const ended = trace.find((item) =>
-        item.phase === "event"
-        && item.type === "session.compaction.ended"
-        && (item.data?.sessionID === compactSession || item.properties?.sessionID === compactSession)
-      )
-      return ended ? trace : null
-    }, "plugin-initiated exact-host compaction", diagnostics, 60_000)
+    assert.equal(compactCommand.status, 500, `unexpected plugin compact probe status: ${compactCommand.status} ${compactCommand.text}`)
+    assert.match(
+      compactCommand.text,
+      /Command not found: compact/,
+      "exact 2.0.11 plugin session.command must not be treated as a hidden manual compaction API",
+    )
+    const compactTrace = await readTrace(traceFile)
     assert.ok(compactTrace.some((item) => item.phase === "compact.command.requested" && item.sessionID === compactSession))
-    assert.ok(compactTrace.some((item) => item.phase === "compact.command.returned" && item.sessionID === compactSession))
+    assert.equal(
+      compactTrace.some((item) => item.phase === "compact.command.returned" && item.sessionID === compactSession),
+      false,
+    )
 
     console.log(JSON.stringify({
       ok: true,
@@ -484,7 +484,8 @@ async function main() {
         executionSucceeded: true,
       },
       pluginCompactionCommand: {
-        supported: true,
+        supported: false,
+        failure: "Command not found: compact",
         sessionID: compactSession,
       },
     }, null, 2))

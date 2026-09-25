@@ -19,12 +19,13 @@ test("broad Goal continuation coordinates native Todos without making them compl
   })
 
   let prompt = continuationPrompt(goal)
-  assert.match(prompt, /Native OpenCode Todos are the execution plan; this Goal contract is the persistent success boundary/)
-  assert.match(prompt, /broad\/discovery-shaped objectives or work with 3\+ distinct required steps, use the native todowrite tool/)
+  assert.match(prompt, /Todo state is advisory execution planning; this Goal contract is the persistent success boundary/)
+  assert.match(prompt, /use native todowrite when it is available and permitted/)
+  assert.match(prompt, /opencode_goal_todo_plan is exposed, use that Goal-owned advisory fallback/)
   assert.match(prompt, /First inspect enough current repository\/external state to derive concrete required work/)
   assert.match(prompt, /Assistant suggestions, nice-to-haves, and unrelated cleanup are not authorized scope/)
   assert.match(prompt, /Todo completion itself still proves nothing/)
-  assert.match(prompt, /If todowrite is unavailable or denied, continue with the Goal normally/)
+  assert.match(prompt, /If neither native todowrite nor opencode_goal_todo_plan is available, continue with the Goal normally/)
 
   goal = observeTodoPlan(goal, todos, 200)
   prompt = continuationPrompt(goal)
@@ -32,7 +33,7 @@ test("broad Goal continuation coordinates native Todos without making them compl
   assert.match(prompt, /no item should remain in_progress; any pending item that is actually required means keep working/)
 
   const compacted = compactionContext(goal)
-  assert.match(compacted, /Native Todos are advisory execution-planning state only/)
+  assert.match(compacted, /Todo state is advisory execution-planning state only/)
   assert.match(compacted, /never use Todo completion as Goal evidence/)
 
   const audit = formatGoalAudit(goal)

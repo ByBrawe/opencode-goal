@@ -1037,6 +1037,15 @@ export const OpenCode2GoalsExperimental = {
       try {
         const { store, goal } = await coordinatorGoal(sessionID)
         if (!goal || goal.id !== goalID || goal.revision !== revision || goal.status !== "active") return
+        if (isTransientInfrastructureError(error)) {
+          const recovering = enterInfrastructureRecovery(goal, {
+            kind: "continuation_dispatch",
+            reason: String(error),
+          })
+          await store.save(recovering)
+          armHostLimitRetry(recovering)
+          return
+        }
         await store.save(pauseGoal(goal, `Continuation dispatch failed: ${String(error)}`))
       } catch {
         // Failure recovery is advisory to the original transport error. Never
@@ -1102,6 +1111,50 @@ export const OpenCode2GoalsExperimental = {
         autonomousDispatching.delete(sessionID)
         await pauseAutonomousDispatchFailure(sessionID, goal.id, goal.revision, error)
       }
+    }
+
+    const cancelHostLimitRetry = (sessionID: string) => {
+      const timer = hostLimitRetryTimers.get(sessionID)
+      if (timer) clearTimeout(timer)
+      hostLimitRetryTimers.delete(sessionID)
+    }
+
+    async function wakeHostLimitRetry(sessionID: string): Promise<void> {
+      cancelHostLimitRetry(sessionID)
+      try {
+        const { store, goal } = await coordinatorGoal(sessionID)
+        if (!goal || goal.status !== "active" || !goal.infrastructureRecovery) return
+
+        const now = Date.now()
+        if (goal.infrastructureRecovery.nextRetryAt > now) {
+          armHostLimitRetry(goal)
+          return
+        }
+
+        const dispatched = markInfrastructureRecoveryDispatched(goal, now)
+        await store.save(dispatched)
+        await scheduleAutonomousContinuation(
+          sessionID,
+          dispatched,
+          continuationPrompt(dispatched),
+          "recovery",
+        )
+      } catch {
+        // A failed wake must not manufacture authority. Persisted recovery
+        // remains the source of truth and a later host/restart boundary can retry.
+      }
+    }
+
+    const armHostLimitRetry = (goal: GoalState) => {
+      cancelHostLimitRetry(goal.sessionID)
+      const retryAt = goal.infrastructureRecovery?.nextRetryAt
+      if (goal.status !== "active" || !retryAt || retryAt <= 0) return
+
+      const timer = setTimeout(() => {
+        void wakeHostLimitRetry(goal.sessionID)
+      }, Math.max(0, retryAt - Date.now()))
+      ;(timer as any).unref?.()
+      hostLimitRetryTimers.set(goal.sessionID, timer)
     }
 
     if (typeof ctx.event?.subscribe === "function") {

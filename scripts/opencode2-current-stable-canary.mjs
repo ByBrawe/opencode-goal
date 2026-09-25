@@ -332,7 +332,7 @@ async function main() {
       env,
       encoding: "utf8",
     })).trim()
-    assert.ok(version.includes("2.0.15"), `expected OpenCode 2.0.15, got ${version}`)
+    assert.ok(version.includes("2.0.16"), `expected OpenCode 2.0.16, got ${version}`)
 
     const port = await reservePort()
     child = spawn(OPENCODE_BINARY, ["serve", "--hostname", "127.0.0.1", "--port", String(port)], {

@@ -1,11 +1,13 @@
-# Goal to native OpenCode Todo orchestration
+# Goal Todo orchestration
 
-OpenCode Goals treats a Goal and OpenCode's native Todo list as two different layers:
+OpenCode Goals treats a Goal and Todo planning as two different layers:
 
 - **Goal**: the persistent user-authorized outcome, constraints, requirements, budgets, and completion proof boundary.
-- **Native Todo list**: the current execution plan the active OpenCode agent uses to organize concrete work toward that Goal.
+- **Todo plan**: advisory execution-planning state used to organize concrete work toward that Goal.
 
-The Todo list is never copied into the Goal requirement ledger and never becomes completion evidence.
+On V1, Goal observes OpenCode's native `todowrite` state. Exact packaged OpenCode 2.0.11 and 2.0.15 do not materialize `todowrite` into the provider tool list, including on a stock host with no Goal plugin. When that native tool is absent, the V2 adapter may expose `opencode_goal_todo_plan` only to the exact Goal-owned execution as a transparent advisory fallback. If native `todowrite` is present, the fallback is hidden automatically so there is never more than one live planning authority.
+
+Todo state is never copied into the Goal requirement ledger and never becomes completion evidence.
 
 ## Intended broad-Goal flow
 
@@ -19,7 +21,7 @@ For a broad/discovery-shaped Goal, the active agent should:
 
 1. inspect enough current repository/external state to understand the existing product scope;
 2. derive concrete work that is actually required by the Goal, repository policy, current tests/docs, or declared constraints;
-3. use OpenCode's native `todowrite` tool when it is available and permitted for a multi-step plan;
+3. use OpenCode's native `todowrite` tool when it is available and permitted; otherwise, if the V2 Goal-owned fallback is exposed, use `opencode_goal_todo_plan` for the same advisory planning role;
 4. keep at most one Todo item `in_progress`, updating items when work actually starts or finishes;
 5. add newly discovered work only when current evidence shows it is required by the already-authorized Goal scope;
 6. use normal read/edit/write/shell/test/task tools to perform the work while the Goal remains unchanged;
@@ -30,7 +32,7 @@ Assistant-generated nice-to-haves, unrelated cleanup, speculative improvements, 
 
 ## Persistence and ownership model
 
-OpenCode remains the live owner of the native Todo list for the session. OpenCode Goals additionally persists a **revision-bound advisory snapshot** so long plans can survive restart/compaction without reducing the work plan to aggregate counts.
+OpenCode remains the live owner when a native Todo list exists. When the packaged V2 host does not expose native `todowrite`, only the exact Goal-owned execution may update the fallback plan. In both cases OpenCode Goals persists a **revision-bound advisory snapshot** so long plans can survive restart/compaction without reducing the work plan to aggregate counts.
 
 The persisted Todo snapshot contains:
 
@@ -41,11 +43,11 @@ The persisted Todo snapshot contains:
 - exact Todo item text, status, priority, order, and optional native Todo id;
 - a deterministic Goal-owned item key that remains stable across status transitions.
 
-This durable item manifest is recovery/reconciliation data only. It does not turn Goal into a second Todo database, requirement ledger, or completion authority. Older schema-v1 Goal files that contain only aggregate Todo telemetry remain valid; the next current native Todo observation upgrades them to the item-level snapshot without a schema bump.
+This durable item manifest is recovery/reconciliation data only. It is not a requirement ledger or completion authority. The snapshot records its source as `native` or `goal_fallback`; older snapshots with no source remain valid and are interpreted as native. A later native Todo observation outranks and upgrades an identical fallback snapshot, while fallback state can never downgrade a native snapshot.
 
-A native `todowrite` result is attached to Goal telemetry only when the tool call belongs to the exact current assistant Goal turn (`goalID + revision`). A tool call from an older revision, or one that finishes after the Goal is paused, is ignored.
+Native `todo.updated` state or a fallback plan update is attached to Goal telemetry only when it belongs to the exact current assistant Goal turn (`goalID + revision`). A stale, foreground, read-only, verifier, or post-pause update is ignored.
 
-Editing a Goal keeps the prior Todo snapshot visible as **STALE** so continuation can rebuild the plan for the new revision. An unchanged native replay cannot silently bind that stale manifest to the new revision; a genuinely rebuilt/changed native plan can bind current. Restoring an archived Goal still clears the old Todo binding because the session Todo database may have changed while the Goal was archived.
+Editing a Goal keeps the prior Todo snapshot visible as **STALE** so continuation can rebuild the plan for the new revision. An unchanged replay cannot silently bind that stale manifest to the new revision; a genuinely rebuilt/changed plan can bind current. Restoring an archived Goal still clears the old Todo binding because planning state may have changed while the Goal was archived.
 
 Todo telemetry/manifest state:
 
@@ -53,7 +55,7 @@ Todo telemetry/manifest state:
 - does **not** create evidence records;
 - does **not** prove requirements;
 - does **not** authorize scope changes;
-- does **not** block Goal execution if `todowrite` is unavailable or denied.
+- does **not** block Goal execution if native `todowrite` and/or the fallback planning tool are unavailable or denied.
 
 ## Restart and compaction recovery
 
@@ -61,20 +63,22 @@ Repeated autonomous continuation prompts intentionally do **not** re-append all 
 
 When OpenCode compacts a Goal session, the persistent compaction context re-anchors a bounded rendering of the durable Todo manifest together with the Goal contract. If the manifest is larger than the context budget, the full item list remains persisted in Goal state while the model-facing compaction block explicitly reports that additional items were omitted to keep context bounded.
 
-The worktree and current native Todo state remain authoritative for execution. The persisted manifest exists to recover the last observed plan after restart/compaction and to make stale/current revision ownership visible; it is not proof that any task was performed.
+The worktree remains authoritative for execution evidence. Native Todo state is authoritative when the host exposes it; otherwise the revision-bound Goal fallback is only advisory recovery context. The persisted manifest exists to recover the last observed plan after restart/compaction and to make stale/current revision ownership visible; it is not proof that any task was performed.
 
-## Deterministic real-host canary
+## Deterministic real-host canaries
 
-`scripts/host-todo-canary.mjs` runs against a real OpenCode server with a local deterministic OpenAI-compatible provider, so it spends no model quota. The provider forces the real Build agent to call its native `todowrite` tool and the canary verifies the resulting Goal snapshot.
+The V1 canary `scripts/host-todo-canary.mjs` still proves native `todowrite` behavior on its pinned stable V1 host.
 
-The canary requires all of these conditions at once:
+For V2, a stock-vs-Goal diagnostic canary proved that exact packaged OpenCode 2.0.15 omits `todowrite` from both provider tool lists; Goal did not remove it. The V2 fallback canary therefore proves that a real Goal-owned autonomous turn receives `opencode_goal_todo_plan` only when native `todowrite` is absent, and that the resulting snapshot is explicitly tagged `goal_fallback`.
 
-- the real Build agent exposes `todowrite`;
-- the continuation contains the Goal/Todo orchestration guidance;
-- exactly one real native Todo call creates a three-item plan for the current Goal revision;
-- `progressRevision` and `observedProgressRevision` remain zero;
-- no evidence or requirement proof is created by Todo planning;
-- the Goal remains unfinished until explicitly paused by the canary.
+The V2 fallback canary requires all of these conditions at once:
+
+- the first Goal-owned autonomous provider request does **not** expose native `todowrite`;
+- it does expose `opencode_goal_todo_plan`;
+- the direct lifecycle mutation tool remains hidden during Goal work;
+- exactly one fallback call creates a current-revision multi-item plan tagged `goal_fallback`;
+- `progressRevision` remains unchanged and no evidence/requirement proof is created;
+- the Goal remains active and unfinished after planning.
 
 The PR CI runs this canary on both Ubuntu and Windows immediately before the existing semantic completion canary. The current model-test template pins OpenCode `1.18.16`, the exact host version exercised successfully by this branch's deterministic canary. Changing that host pin requires rerunning the complete repository gates.
 

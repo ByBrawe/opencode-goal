@@ -11,6 +11,10 @@ OpenCode 2 now enables both layers by default:
 - host-native `/goal` lifecycle and administration;
 - Goal-owned autonomous continuation, semantic verification, accounting, recovery, and compaction coordination.
 
+OpenCode 2-native plugin options are also supported through object-form `plugins` entries. `options.lifecycle` and `options.autonomous` default to `true`; explicit environment overrides take precedence so operators retain an emergency kill switch.
+
+The stable V2 runtime uses the domain APIs introduced by OpenCode 2 rather than emulating V1 hooks: `ctx.session.hook("prompt")` marks user steering at prompt admission, `ctx.session.hook("context")` owns model-request authorization/context, `ctx.session.hook("compaction")` keeps compaction read-only, `ctx.tool.hook("execute.before/after")` drives tool telemetry/progress when present, and long-running Goal work tools use the native executor `context.progress()` surface for UI progress without changing persistence semantics.
+
 The historical environment variables remain as emergency fail-closed kill switches:
 
 ```text

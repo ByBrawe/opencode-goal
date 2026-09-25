@@ -18,7 +18,14 @@ const DIRECT_ENV = "OPENCODE_GOAL_V2_DIRECT_LIFECYCLE"
 const AUTONOMOUS_ENV = "OPENCODE_GOAL_V2_AUTONOMOUS"
 const CONTROL_TOOL = "opencode_goals_v2_control"
 const READ_ONLY_TOOL = "opencode_goals_v2_get"
+const TODO_TOOL = "todowrite"
 const CREATE_COMMAND = 'ship autonomous v2 parity --constraint "do not invent progress"'
+const TODO_COMMAND = 'prove V2 native Todo parity --max-turns 1'
+const TODOS = [
+  { content: "Inspect exact V2 Todo state", status: "in_progress", priority: "high" },
+  { content: "Keep Todo advisory only", status: "pending", priority: "high" },
+  { content: "Verify Goal evidence stays unchanged", status: "pending", priority: "medium" },
+]
 
 function appendLog(current, chunk, limit = 120_000) {
   return (current + String(chunk)).slice(-limit)
@@ -149,7 +156,7 @@ function streamText(res, sequence, text) {
   res.end("data: [DONE]\n\n")
 }
 
-function streamControlTool(res, sequence) {
+function streamControlTool(res, sequence, command = CREATE_COMMAND) {
   const id = `chatcmpl-goal-v2-autonomous-control-${sequence}`
   const created = Math.floor(Date.now() / 1000)
   streamHeaders(res)
@@ -183,7 +190,7 @@ function streamControlTool(res, sequence) {
       delta: {
         tool_calls: [{
           index: 0,
-          function: { arguments: JSON.stringify({ command: CREATE_COMMAND }) },
+          function: { arguments: JSON.stringify({ command }) },
         }],
       },
       finish_reason: null,
@@ -200,11 +207,64 @@ function streamControlTool(res, sequence) {
   res.end("data: [DONE]\n\n")
 }
 
+function streamTodoTool(res, sequence) {
+  const id = `chatcmpl-goal-v2-todo-${sequence}`
+  const created = Math.floor(Date.now() / 1000)
+  streamHeaders(res)
+  writeSse(res, {
+    id,
+    object: "chat.completion.chunk",
+    created,
+    model: "canary",
+    choices: [{
+      index: 0,
+      delta: {
+        role: "assistant",
+        content: null,
+        tool_calls: [{
+          index: 0,
+          id: `call-goal-v2-todo-${sequence}`,
+          type: "function",
+          function: { name: TODO_TOOL, arguments: "" },
+        }],
+      },
+      finish_reason: null,
+    }],
+  })
+  writeSse(res, {
+    id,
+    object: "chat.completion.chunk",
+    created,
+    model: "canary",
+    choices: [{
+      index: 0,
+      delta: {
+        tool_calls: [{
+          index: 0,
+          function: { arguments: JSON.stringify({ todos: TODOS }) },
+        }],
+      },
+      finish_reason: null,
+    }],
+  })
+  writeSse(res, {
+    id,
+    object: "chat.completion.chunk",
+    created,
+    model: "canary",
+    choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
+    usage: { prompt_tokens: 44, completion_tokens: 16, total_tokens: 60 },
+  })
+  res.end("data: [DONE]\n\n")
+}
+
 function startProvider() {
   const stats = { requests: [] }
   let releaseFirstAutonomous
   const firstAutonomousGate = new Promise((resolve) => { releaseFirstAutonomous = resolve })
   let firstAutonomousHeld = false
+  let todoIssued = false
+  let todoCalls = 0
 
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1")
@@ -233,6 +293,7 @@ function startProvider() {
     const hasReadOnlyTool = tools.includes(READ_ONLY_TOOL)
     const sawConsumedResult = /single-use capability is consumed/i.test(current.turnText)
     const autonomous = current.userText.includes("Continue working toward the active OpenCode goal.")
+    const todoGoal = raw.includes("prove V2 native Todo parity")
 
     stats.requests.push({
       sequence,
@@ -242,10 +303,27 @@ function startProvider() {
       hasReadOnlyTool,
       sawConsumedResult,
       autonomous,
+      todoGoal,
     })
 
     if (hasControlTool && current.userText.includes(CREATE_COMMAND) && !sawConsumedResult) {
-      streamControlTool(res, sequence)
+      streamControlTool(res, sequence, CREATE_COMMAND)
+      return
+    }
+    if (hasControlTool && current.userText.includes(TODO_COMMAND) && !sawConsumedResult) {
+      streamControlTool(res, sequence, TODO_COMMAND)
+      return
+    }
+
+    if (autonomous && todoGoal) {
+      assert.ok(tools.includes(TODO_TOOL), `native todowrite missing from exact V2 Goal execution: ${JSON.stringify(tools)}`)
+      if (!todoIssued) {
+        todoIssued = true
+        todoCalls += 1
+        streamTodoTool(res, sequence)
+        return
+      }
+      streamText(res, sequence, "TODO_PARITY_SETTLED")
       return
     }
 
@@ -265,6 +343,7 @@ function startProvider() {
 
   return {
     stats,
+    get todoCalls() { return todoCalls },
     releaseFirstAutonomous() {
       releaseFirstAutonomous?.()
     },
@@ -465,10 +544,48 @@ async function main() {
 
     await new Promise((resolve) => setTimeout(resolve, 750))
     assert.equal(
-      provider.stats.requests.filter((item) => item.autonomous).length,
+      provider.stats.requests.filter((item) => item.autonomous && !item.todoGoal).length,
       3,
       "paused third Goal turn must not dispatch a fourth autonomous request",
     )
+
+    const todoCreated = await request("/api/session", {
+      method: "POST",
+      body: JSON.stringify({ title: "OpenCode Goal V2 native Todo parity" }),
+    })
+    assert.ok(todoCreated.ok, `Todo session create failed: HTTP ${todoCreated.status} ${todoCreated.text}`)
+    const todoSessionID = String((todoCreated.body?.data ?? todoCreated.body)?.id ?? "")
+    assert.ok(todoSessionID)
+
+    const previousSessionID = sessionID
+    sessionID = todoSessionID
+    const todoCommandResult = await request(`/api/session/${encodeURIComponent(todoSessionID)}/command`, {
+      method: "POST",
+      body: JSON.stringify({ name: "goal", text: TODO_COMMAND }),
+    }, 120_000)
+    assert.ok(todoCommandResult.ok, `direct Todo Goal create failed: HTTP ${todoCommandResult.status} ${todoCommandResult.text}\n${await diagnostics()}`)
+
+    const todoGoal = await waitFor(async () => {
+      const goal = await goalStore.load(todoSessionID)
+      return goal?.status === "budget_limited"
+        && goal.usage.turns === 1
+        && goal.todoPlan?.goalRevision === goal.revision
+        && goal.todoPlan?.total === TODOS.length
+        ? goal
+        : null
+    }, "exact V2 native Todo telemetry and bounded Goal turn", diagnostics, 90_000)
+
+    assert.equal(provider.todoCalls, 1, "exact V2 owned execution should invoke native todowrite once")
+    assert.equal(todoGoal.todoPlan.inProgress, 1)
+    assert.equal(todoGoal.todoPlan.pending, 2)
+    assert.equal(todoGoal.todoPlan.completed, 0)
+    assert.equal(todoGoal.progressRevision, 0, "native Todo telemetry must not count as host progress")
+    assert.equal(todoGoal.observedProgressRevision, 0)
+    assert.deepEqual(todoGoal.evidence, [], "native Todo telemetry must not create completion evidence")
+    assert.ok(todoGoal.requirements.every((item) => item.status === "pending"))
+    assert.match(todoGoal.stopReason ?? "", /Goal budget reached: turns 1 \/ 1/)
+
+    sessionID = previousSessionID
     assert.equal(server.exitCode, null, `OpenCode 2 server exited during autonomous canary\n${await diagnostics()}`)
 
     console.log(JSON.stringify({
@@ -481,6 +598,14 @@ async function main() {
       finalStalledTurns: paused.stalledTurns,
       directControlHiddenDuringAutonomousWork: autonomousRequests.every((item) => !item.hasControlTool),
       readOnlyGoalToolPresent: autonomousRequests.every((item) => item.hasReadOnlyTool),
+      nativeTodoParity: {
+        todoCalls: provider.todoCalls,
+        status: todoGoal.status,
+        usageTurns: todoGoal.usage.turns,
+        todoPlan: todoGoal.todoPlan,
+        progressRevision: todoGoal.progressRevision,
+        evidenceCount: todoGoal.evidence.length,
+      },
       providerRequests: provider.stats.requests,
     }, null, 2))
   } finally {

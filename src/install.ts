@@ -99,6 +99,7 @@ async function writeAtomic(target: string, content: string): Promise<void> {
 }
 
 async function assertManagedCommandWritable(): Promise<void> {
+  if (nativeGoalCommandMode) return
   if (!(await fileExists(goalCommandPath))) return
   const existing = await readFile(goalCommandPath, "utf8")
   if (existing.includes(managedCommandMarker)) return

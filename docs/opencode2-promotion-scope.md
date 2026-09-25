@@ -74,7 +74,22 @@ Exact OpenCode 2.0.11 now exposes enough host telemetry to reuse the stable V1 t
 
 The exact-host parity canary must prove one real Goal-owned write/tool loop counts as one logical turn and produces durable host progress, followed by two fully empty executions that preserve billable usage and trigger the same bounded pause as V1.
 
-One V1 model-context capability remains intentionally unclaimed here: exact OpenCode 2.0.11 `session.context.model` exposes model identity but not context/input/output limits in the proven hook payload, so context-limit/headroom enforcement is not inferred from undocumented data.
+
+## V1 host-limit / provider-recovery parity preview
+
+Exact OpenCode 2.0.11 does not expose provider failures exactly like V1, so V2 recovery follows the proven host semantics rather than copying legacy event names:
+
+- deterministic context overflow is normally recovered by **native OpenCode auto-compaction**; the exact host emits `session.compaction.started(reason=auto)` / `session.compaction.ended` and a successful execution terminal, so Goal must not independently trigger a second compaction;
+- plugin-side `session.command("compact")` is not a hidden recovery API on exact 2.0.11, so V2 never fabricates a manual compaction path;
+- only a real terminal `session.execution.failed` for the exact Goal-owned kickoff/continuation generation can enter Goal host-limit policy; foreground/unowned failures are ignored;
+- exact V2 provider failures are normalized into the shared V1 `runtime/limits.ts` rules for prompt overflow, transient provider infrastructure, and fatal/auth failures;
+- unrecovered prompt overflow and fatal provider failures pause fail-closed while preserving Goal state;
+- transient owned failures use the shared persisted exponential infrastructure-recovery state and a bounded retry wake; another active execution delays the wake rather than injecting a competing prompt;
+- successful Goal-owned execution clears persisted provider-recovery state;
+- repeated automatic compaction of the same Goal revision without an intervening successful Goal-owned execution pauses fail-closed to prevent a compaction/continuation spin;
+- generic custom-provider HTTP 429 retries observed on exact 2.0.11 remain internal to the host execution and do not create synthetic durable Goal usage-limit state unless the host exposes a structured durable limit signal.
+
+The exact host-limit capability canary and production ownership tests must remain green before stable promotion.
 
 ## V1-grade completion preview
 

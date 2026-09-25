@@ -1,0 +1,31 @@
+name: OpenCode 2 Model Limit Capabilities
+
+on:
+  pull_request:
+    paths:
+      - "scripts/opencode2-model-limit-capability-canary.mjs"
+      - ".github/workflows/opencode2-model-limit-canary.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  exact-model-limit-surface:
+    name: OpenCode 2.0.11 model-limit plugin surface
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+      - run: npm install
+      - name: Install exact OpenCode 2.0.11
+        run: npm install -g @opencode/cli@2.0.11
+      - name: Check canary syntax
+        run: node --check scripts/opencode2-model-limit-capability-canary.mjs
+      - name: Probe exact plugin/model limit surface
+        run: node scripts/opencode2-model-limit-capability-canary.mjs

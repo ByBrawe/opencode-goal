@@ -8,6 +8,7 @@ import {
   observeTodoPlan,
   summarizeTodoPlan,
   todoPlanIsCurrent,
+  todoPlanSource,
   validGoalTodoPlan,
 } from "../dist/runtime/todo-plan.js"
 
@@ -31,6 +32,7 @@ test("native Todo telemetry is advisory, deterministic, and revision-bound", () 
   assert.equal(summary.cancelled, 1)
   assert.match(summary.digest, /^sha256:[0-9a-f]{64}$/)
   assert.equal(validGoalTodoPlan(summary), true)
+  assert.equal(summary.source, "native")
 
   const observed = observeTodoPlan(goal, normalized, 200)
   assert.equal(todoPlanIsCurrent(observed), true)
@@ -57,7 +59,7 @@ test("current unfinished Todo plan vetoes completion without becoming evidence",
 
   const openAudit = auditCompletion(open)
   assert.equal(openAudit.ok, false)
-  assert.ok(openAudit.reasons.some((reason) => reason.includes("current native Todo plan still has unfinished work")))
+  assert.ok(openAudit.reasons.some((reason) => reason.includes("current Todo plan still has unfinished work")))
   assert.deepEqual(open.evidence, [], "an unfinished Todo plan remains planning state, not evidence")
 
   const reconciled = observeTodoPlan(goal, [
@@ -66,14 +68,40 @@ test("current unfinished Todo plan vetoes completion without becoming evidence",
   ], 250)
   const reconciledAudit = auditCompletion(reconciled)
   assert.equal(reconciledAudit.ok, false, "completed Todos must not prove the Goal requirement")
-  assert.equal(reconciledAudit.reasons.some((reason) => reason.includes("current native Todo plan still has unfinished work")), false)
+  assert.equal(reconciledAudit.reasons.some((reason) => reason.includes("current Todo plan still has unfinished work")), false)
   assert.ok(reconciled.requirements.some((item) => item.required && item.status !== "proven"))
   assert.deepEqual(reconciled.evidence, [])
 
   const edited = editGoal(open, { objective: "finish the required work without changing the public API", now: 300 })
   const staleAudit = auditCompletion(edited)
   assert.equal(todoPlanIsCurrent(edited), false)
-  assert.equal(staleAudit.reasons.some((reason) => reason.includes("current native Todo plan still has unfinished work")), false, "stale advisory Todo telemetry must not veto a newer Goal revision")
+  assert.equal(staleAudit.reasons.some((reason) => reason.includes("current Todo plan still has unfinished work")), false, "stale advisory Todo telemetry must not veto a newer Goal revision")
+})
+
+test("fallback Todo source is explicit, native source upgrades it, and legacy snapshots remain native", () => {
+  const goal = createGoal({ sessionID: "todo-source", objective: "keep planning source honest", now: 100 })
+  const items = [{ content: "Ship required work", status: "in_progress" }]
+
+  const fallback = observeTodoPlan(goal, items, 200, "goal_fallback")
+  assert.equal(todoPlanSource(fallback), "goal_fallback")
+  assert.equal(fallback.todoPlan?.source, "goal_fallback")
+
+  const native = observeTodoPlan(fallback, items, 250, "native")
+  assert.equal(todoPlanSource(native), "native")
+  assert.equal(native.todoPlan?.source, "native")
+
+  const attemptedDowngrade = observeTodoPlan(native, items, 300, "goal_fallback")
+  assert.strictEqual(attemptedDowngrade, native, "fallback must not downgrade an already observed native plan")
+
+  const legacy = {
+    ...native,
+    todoPlan: {
+      ...native.todoPlan,
+      source: undefined,
+    },
+  }
+  assert.equal(validGoalTodoPlan(legacy.todoPlan), true)
+  assert.equal(todoPlanSource(legacy), "native")
 })
 
 test("malformed native Todo input and malformed advisory telemetry are ignored safely", () => {

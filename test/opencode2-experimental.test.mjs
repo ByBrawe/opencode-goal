@@ -823,6 +823,7 @@ test("V2 unit session creation failure leaves the original Goal active and conti
       host.ctx.session.create = async () => { throw new Error("session create unavailable") }
 
       const store = new GoalStore(root)
+      await store.save(createGoal({ sessionID: targetSessionID, objective: "foreign live goal", now: 50 }))
       const cleanup = await OpenCode2GoalsExperimental.setup(host.ctx)
       const command = 'ship units --unit "node -e \\"process.stdout.write(require(\'fs\').readFileSync(\'unit.txt\',\'utf8\'))\\"" --fresh-session-per-unit'
       const dispatched = await dispatchDirectCommand(host, sessionID, command)
@@ -878,7 +879,7 @@ test("V2 unit handoff deletes an orphan native session when target persistence f
     await withAutonomousPreview(async () => {
       const host = fakeV2EventContext(root)
       const sessionID = "v2-unit-persist-fail"
-      const targetSessionID = "../unsafe-target"
+      const targetSessionID = "v2-unit-orphan-target"
       const unitFile = path.join(root, "unit.txt")
       await writeFile(unitFile, "unit-a\n", "utf8")
       host.ctx.location = { directory: root }

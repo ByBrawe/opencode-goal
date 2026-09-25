@@ -12,12 +12,16 @@ Before a stable release reaches `main`, the exact pull-request head should have 
 - `Real Restart Recovery`
 - `Release Readiness`
 - `Experimental OpenCode 2 Host`
+- `Current OpenCode 2 Stable Host`
+- `OpenCode 2 Todo Materialization Diff`
 
 `CI` exercises the minimum supported OpenCode compatibility target, the current published OpenCode plugin SDK, and real OpenCode lifecycle/semantic/steering/Todo canaries.
 
 `Release Readiness` runs on Ubuntu and Windows with Node 20 and Node 24. It runs checks/tests/evals, builds the npm tarball, installs it into a clean production-only consumer without manually injecting runtime dependencies, imports the public API plus dedicated server/TUI entrypoints, and executes the packed installer artifact.
 
-`Experimental OpenCode 2 Host` is the historical workflow name for the required OpenCode 2 stable-host gate. It exercises the exact-host server entry, lifecycle authority, autonomous ownership, control plane, telemetry/accounting, semantic completion, verifier boundaries, provider recovery, and related V2 canaries. The workflow name is retained so existing required-check configuration stays stable.
+`Experimental OpenCode 2 Host` is the historical workflow name for the pinned OpenCode 2.0.11 parity matrix. It exercises the exact-host server entry, lifecycle authority, autonomous ownership, control plane, telemetry/accounting, semantic completion, verifier boundaries, provider recovery, and related V2 canaries. The workflow name is retained so existing required-check configuration stays stable.
+
+`Current OpenCode 2 Stable Host` separately proves that the default lifecycle/autonomous path still works on the current stable host pin. `OpenCode 2 Todo Materialization Diff` compares stock and Goal tool exposure on the same current host so a Goal regression cannot be confused with an upstream tool-surface change.
 
 For installer releases, package smoke must verify all of these from the packed artifact:
 

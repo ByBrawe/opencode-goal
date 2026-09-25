@@ -11,7 +11,7 @@ export type { GoalStoreConcurrencyKind } from "./process-lock.js"
 
 export type GoalArchiveReason = "cleared" | "replaced"
 export type GoalStoreIntegrityKind = "invalid_json" | "invalid_state" | "invalid_archive" | "unsafe_path"
-export type GoalStoreTransitionReason = "completed" | "blocked" | "paused"
+export type GoalStoreTransitionReason = "completed" | "blocked" | "paused" | "handoff"
 
 export class GoalStoreIntegrityError extends Error {
   readonly code = "GOAL_STORE_INTEGRITY"
@@ -56,6 +56,7 @@ export interface GoalStoreOptions {
 
 function transitionReason(status: GoalState["status"]): GoalStoreTransitionReason | undefined {
   if (status === "completed") return "completed"
+  if (status === "handed_off") return "handoff"
   if (status === "blocked") return "blocked"
   if (status === "paused" || status === "waiting_user" || status === "budget_limited" || status === "usage_limited") return "paused"
   return undefined

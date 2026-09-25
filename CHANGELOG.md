@@ -12,7 +12,7 @@ OpenCode 2 bounded per-unit session handoff release.
 - Serialize handoffs with a Goal-scoped cross-process lease, clean up orphan native sessions when target persistence fails, and recover incomplete handoffs after restart without reactivating predecessors.
 - Keep paused, waiting-user, blocked/limited, and completed Goals out of rotation; verified final completion ends the chain instead of opening another session.
 - Use OpenCode 2 native prompt admission, tool execution hooks/progress, plugin options, `session.create/delete`, and native admit/resume session prompts where those stronger host boundaries are available.
-- Add a current OpenCode 2.0.15 real-host gate that proves a three-unit Goal crosses exactly three native sessions and completes with host + independent semantic verifier evidence.
+- Add a current OpenCode 2.0.16 real-host gate that proves a three-unit Goal crosses exactly three native sessions and completes with host + independent semantic verifier evidence.
 
 ## 1.3.37 — 2026-09-25
 
@@ -21,9 +21,9 @@ OpenCode 2 stable-support release.
 - Promote the OpenCode 2 lifecycle and autonomous coordinator to the default runtime path while preserving explicit fail-closed environment kill switches.
 - Fix the installer to use OpenCode 2's native plural `plugins` configuration and plugin-native `/goal` command, while preserving unrelated V1/V2 plugin entries.
 - Add clean-package installer smoke coverage for both OpenCode 1 and OpenCode 2 configuration dialects.
-- Add a current OpenCode 2.0.15 lifecycle/autonomous real-host gate in addition to the pinned 2.0.11 parity matrix.
+- Add a current OpenCode 2.0.16 lifecycle/autonomous real-host gate in addition to the pinned 2.0.11 parity matrix.
 - Re-run the stock-vs-Goal tool-materialization comparison whenever the V2 runtime changes so upstream tool-surface changes cannot be mistaken for Goal regressions.
-- Document the Todo boundary: stock OpenCode 2.0.15 does not expose native `todowrite` in the tested provider surface, and Goal removes no stock tools.
+- Document the Todo boundary: stock OpenCode 2.0.16 does not expose native `todowrite` in the tested provider surface, and Goal removes no stock tools.
 
 ## 1.3.36 — 2026-09-21
 

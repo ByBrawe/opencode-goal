@@ -72,7 +72,7 @@ Windows:
 
 OpenCode loads the npm package through its dedicated `./server` entrypoint. The root export remains the public JavaScript API.
 
-OpenCode 2 uses the V2 lifecycle and autonomous coordinator by default. The legacy `OPENCODE_GOAL_V2_DIRECT_LIFECYCLE` and `OPENCODE_GOAL_V2_AUTONOMOUS` environment variables remain available as emergency kill switches: set either to `0`, `false`, `no`, or `off` to disable that V2 layer. Unknown explicit values fail closed.
+OpenCode 2 uses the V2 lifecycle and autonomous coordinator by default. Native `plugins` entries may set `options.lifecycle` and `options.autonomous` to `false` when a deployment wants either layer disabled. The legacy `OPENCODE_GOAL_V2_DIRECT_LIFECYCLE` and `OPENCODE_GOAL_V2_AUTONOMOUS` environment variables remain higher-priority emergency overrides: set either to `0`, `false`, `no`, or `off` to disable that V2 layer. Unknown explicit environment values fail closed.
 
 ## Why use OpenCode Goals?
 
@@ -321,13 +321,13 @@ npx -y @bybrawe/opencode-goal@latest
 
 Then:
 
-1. confirm the installer reports an exact package pin and a managed `/goal` command;
-2. confirm `commands/goal.md` exists in the global OpenCode config directory;
+1. confirm the installer reports an exact package pin;
+2. on OpenCode 1.x, confirm the managed `commands/goal.md` bridge exists; on OpenCode 2.x, confirm the package is registered in native `plugins` and no managed bridge is required;
 3. fully close every OpenCode CLI/TUI/Desktop process and reopen it;
 4. do not start OpenCode with `--pure`, which disables external plugins;
 5. inspect OpenCode config diagnostics for plugin-load errors.
 
-The installer does **not** overwrite a user-owned `commands/goal.md`.
+The installer does **not** overwrite a user-owned `commands/goal.md`; OpenCode 2 leaves such a legacy file untouched and uses the plugin-native command.
 
 ### Goal is paused after completion work finished
 

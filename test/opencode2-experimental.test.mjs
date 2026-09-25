@@ -138,6 +138,23 @@ function fakeV2PromiseToolContext(directory) {
   return host
 }
 
+async function withStableV2Disabled(fn) {
+  const directKey = OPENCODE2_DIRECT_LIFECYCLE_ENV
+  const autonomousKey = OPENCODE2_AUTONOMOUS_ENV
+  const previousDirect = process.env[directKey]
+  const previousAutonomous = process.env[autonomousKey]
+  process.env[directKey] = "0"
+  process.env[autonomousKey] = "0"
+  try {
+    return await fn()
+  } finally {
+    if (previousDirect === undefined) delete process.env[directKey]
+    else process.env[directKey] = previousDirect
+    if (previousAutonomous === undefined) delete process.env[autonomousKey]
+    else process.env[autonomousKey] = previousAutonomous
+  }
+}
+
 async function withDirectLifecyclePreview(fn) {
   const key = OPENCODE2_DIRECT_LIFECYCLE_ENV
   const previous = process.env[key]
@@ -248,23 +265,54 @@ async function consumeCapability(host, sessionID, command, agent = "build") {
   )
 }
 
-test("experimental V2 plugin registers read-only inspection without command wrapping or mutating control", async () => {
+test("stable V2 kill switch preserves the read-only fail-closed adapter", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-readonly-"))
   try {
-    const host = fakeV2Context(root)
-    assert.equal(OpenCode2GoalsExperimental.id, OPENCODE2_EXPERIMENTAL_PLUGIN_ID)
-    const cleanup = await OpenCode2GoalsExperimental.setup(host.ctx)
+    await withStableV2Disabled(async () => {
+      const host = fakeV2Context(root)
+      assert.equal(OpenCode2GoalsExperimental.id, OPENCODE2_EXPERIMENTAL_PLUGIN_ID)
+      const cleanup = await OpenCode2GoalsExperimental.setup(host.ctx)
 
-    assert.equal(host.commandTransformCalls(), 0, "read-only V2 adapter must not wrap model-visible command text")
-    assert.equal(host.commands.size, 0)
-    assert.equal(host.tools.has("opencode_goals_v2_control"), false)
-    assert.equal(host.tools.get("opencode_goals_v2_get")?.options?.codemode, false)
-    assert.equal(typeof host.tools.get("opencode_goals_v2_get")?.definition?.execute, "function")
-    assert.equal(typeof host.hooks.get("context"), "function")
-    assert.equal(typeof host.hooks.get("request"), "function")
-    assert.equal(typeof host.hooks.get("compaction"), "function")
-    assert.equal(typeof cleanup, "function")
-    cleanup()
+      assert.equal(host.commandTransformCalls(), 0, "disabled V2 lifecycle must not register the host-native /goal command")
+      assert.equal(host.commands.size, 0)
+      assert.equal(host.tools.has("opencode_goals_v2_control"), false)
+      assert.equal(host.tools.get("opencode_goals_v2_get")?.options?.codemode, false)
+      assert.equal(typeof host.tools.get("opencode_goals_v2_get")?.definition?.execute, "function")
+      assert.equal(typeof host.hooks.get("context"), "function")
+      assert.equal(typeof host.hooks.get("request"), "function")
+      assert.equal(typeof host.hooks.get("compaction"), "function")
+      assert.equal(typeof cleanup, "function")
+      await cleanup()
+    })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("stable V2 registers lifecycle and autonomous work controls by default", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-stable-default-"))
+  try {
+    const directKey = OPENCODE2_DIRECT_LIFECYCLE_ENV
+    const autonomousKey = OPENCODE2_AUTONOMOUS_ENV
+    const previousDirect = process.env[directKey]
+    const previousAutonomous = process.env[autonomousKey]
+    delete process.env[directKey]
+    delete process.env[autonomousKey]
+    try {
+      const host = fakeV2Context(root)
+      const cleanup = await OpenCode2GoalsExperimental.setup(host.ctx)
+      assert.equal(host.commandTransformCalls(), 1)
+      assert.equal(typeof host.commands.get("goal")?.execute, "function")
+      assert.equal(typeof host.tools.get("opencode_goals_v2_control")?.definition?.execute, "function")
+      assert.equal(typeof host.tools.get("opencode_goals_v2_get")?.definition?.execute, "function")
+      assert.equal(typeof host.tools.get("opencode_goal_complete")?.definition?.execute, "function")
+      await cleanup()
+    } finally {
+      if (previousDirect === undefined) delete process.env[directKey]
+      else process.env[directKey] = previousDirect
+      if (previousAutonomous === undefined) delete process.env[autonomousKey]
+      else process.env[autonomousKey] = previousAutonomous
+    }
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -892,7 +940,7 @@ test("V2 owned transient provider failure persists bounded recovery without fore
   }
 })
 
-test("V2 direct lifecycle preview registers host command and mutating tool only when explicitly enabled", async () => {
+test("V2 lifecycle override can explicitly enable host command and mutating tool", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-capability-register-"))
   try {
     await withDirectLifecyclePreview(async () => {

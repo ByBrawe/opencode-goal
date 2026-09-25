@@ -514,7 +514,7 @@ async function uninstall(): Promise<void> {
 
 async function installOrUpdate(): Promise<void> {
   await mkdir(configDir, { recursive: true })
-  await assertGoalCommandAvailable()
+  if (!nativeGoalCommandMode) await assertGoalCommandAvailable()
 
   let target: string | undefined
   for (const name of configCandidates) {

@@ -1,5 +1,11 @@
 import { createHash } from "node:crypto"
-import type { GoalState, GoalTodoPlan, GoalTodoPlanAnomaly, GoalTodoPlanItem } from "../domain/types.js"
+import type {
+  GoalState,
+  GoalTodoPlan,
+  GoalTodoPlanAnomaly,
+  GoalTodoPlanItem,
+  GoalTodoPlanSource,
+} from "../domain/types.js"
 
 export type NativeTodoStatus = "pending" | "in_progress" | "completed" | "cancelled"
 
@@ -93,6 +99,7 @@ export function validGoalTodoPlan(value: unknown): value is GoalTodoPlan {
   if (!value || typeof value !== "object") return false
   const plan = value as Partial<GoalTodoPlan>
   return nonNegativeInteger(plan.goalRevision)
+    && (plan.source === undefined || plan.source === "native" || plan.source === "goal_fallback")
     && typeof plan.digest === "string"
     && /^sha256:[0-9a-f]{64}$/i.test(plan.digest)
     && nonNegativeInteger(plan.total)
@@ -180,7 +187,12 @@ function transitionAnomalies(previous: GoalTodoPlan | undefined, next: GoalTodoP
   return anomalies
 }
 
-export function summarizeTodoPlan(goalRevision: number, todos: NativeTodoItem[], observedAt = Date.now()): GoalTodoPlan {
+export function summarizeTodoPlan(
+  goalRevision: number,
+  todos: NativeTodoItem[],
+  observedAt = Date.now(),
+  source: GoalTodoPlanSource = "native",
+): GoalTodoPlan {
   const canonical = todos.map((item) => ({
     content: item.content,
     status: item.status,
@@ -191,6 +203,7 @@ export function summarizeTodoPlan(goalRevision: number, todos: NativeTodoItem[],
   const multipleInProgress = multipleInProgressAnomaly(items)
   return {
     goalRevision,
+    source,
     digest,
     total: todos.length,
     pending: todos.filter((item) => item.status === "pending").length,
@@ -203,9 +216,17 @@ export function summarizeTodoPlan(goalRevision: number, todos: NativeTodoItem[],
   }
 }
 
-export function observeTodoPlan(goal: GoalState, todos: NativeTodoItem[], observedAt = Date.now()): GoalState {
-  let next = summarizeTodoPlan(goal.revision, todos, observedAt)
+export function observeTodoPlan(
+  goal: GoalState,
+  todos: NativeTodoItem[],
+  observedAt = Date.now(),
+  source: GoalTodoPlanSource = "native",
+): GoalState {
+  let next = summarizeTodoPlan(goal.revision, todos, observedAt, source)
   const previous = validGoalTodoPlan(goal.todoPlan) ? goal.todoPlan : undefined
+  const previousSource: GoalTodoPlanSource | undefined = previous
+    ? (previous.source ?? "native")
+    : undefined
 
   // After a Goal edit, preserve the old Todo snapshot as visibly stale and do
   // not let an unchanged native list become current merely because OpenCode
@@ -222,7 +243,12 @@ export function observeTodoPlan(goal: GoalState, todos: NativeTodoItem[], observ
     && previous.completed === next.completed
     && previous.cancelled === next.cancelled
     && Array.isArray(previous.items)
-  ) return goal
+  ) {
+    if (previousSource === source) return goal
+    // Native host state outranks the Goal fallback. Do not downgrade an
+    // already observed native plan merely because the fallback tool repeats it.
+    if (previousSource === "native" && source === "goal_fallback") return goal
+  }
 
   const anomalies = [...(next.anomalies ?? []), ...transitionAnomalies(previous, next)]
   if (anomalies.length) next = { ...next, anomalies }
@@ -232,6 +258,17 @@ export function observeTodoPlan(goal: GoalState, todos: NativeTodoItem[], observ
     todoPlan: next,
     updatedAt: observedAt,
   }
+}
+
+export function todoPlanSource(goal: GoalState): GoalTodoPlanSource | undefined {
+  const plan = validGoalTodoPlan(goal.todoPlan) ? goal.todoPlan : undefined
+  return plan ? (plan.source ?? "native") : undefined
+}
+
+export function todoPlanSourceLabel(goal: GoalState): string {
+  const source = todoPlanSource(goal)
+  if (source === "goal_fallback") return "OpenCode Goal fallback Todo plan"
+  return "Native OpenCode Todo plan"
 }
 
 export function todoPlanIsCurrent(goal: GoalState): boolean {

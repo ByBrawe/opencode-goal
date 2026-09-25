@@ -73,18 +73,47 @@ export async function observeOpenCode2ModelRegistryLimits(
   const model = selectOpenCode2RegistryModel(models, selected)
   if (!model) return goal
 
+  const selection = record(selected)
+  const providerID = firstString(selection?.providerID)
+  const modelID = firstString(selection?.id, selection?.modelID)
+  if (!providerID || !modelID) return goal
+
+  const execution = goal.execution ?? {}
+  const previousModel = execution.model
+  const modelChanged = Boolean(
+    previousModel
+    && (
+      previousModel.providerID !== providerID
+      || previousModel.modelID !== modelID
+    )
+  )
+
+  let base = goal
+  if (!previousModel || modelChanged) {
+    const { modelContext: previousContext, ...rest } = execution
+    base = {
+      ...goal,
+      execution: {
+        ...rest,
+        model: { providerID, modelID },
+        ...(!modelChanged && previousContext ? { modelContext: previousContext } : {}),
+      },
+      updatedAt: now,
+    }
+  }
+
   const limit = record(model.limit)
   const contextLimit = nonNegative(limit?.context)
   const inputLimit = nonNegative(limit?.input)
   const outputLimit = nonNegative(limit?.output)
-  if (contextLimit === undefined && inputLimit === undefined && outputLimit === undefined) return goal
+  if (contextLimit === undefined && inputLimit === undefined && outputLimit === undefined) return base
 
-  const current = goal.execution?.modelContext
+  const current = base.execution?.modelContext
   if (
     current?.contextLimit === contextLimit
     && current?.inputLimit === inputLimit
     && current?.outputLimit === outputLimit
-  ) return goal
+  ) return base
 
-  return observeModelContextLimits(goal, { model, now })
+  return observeModelContextLimits(base, { model, now })
 }

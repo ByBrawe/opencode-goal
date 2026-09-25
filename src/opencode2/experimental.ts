@@ -98,6 +98,7 @@ export interface OpenCode2ExperimentalContext {
   }
   tool: {
     transform(callback: (tools: any) => void | Promise<void>): unknown | Promise<unknown>
+    hook?(name: "execute.before" | "execute.after", callback: (event: any) => void | Promise<void>): unknown | Promise<unknown>
   }
 }
 
@@ -1179,6 +1180,51 @@ export const OpenCode2GoalsExperimental = {
       hostLimitRetryTimers.set(goal.sessionID, timer)
     }
 
+    const nativeToolHooks = typeof ctx.tool.hook === "function"
+    if (nativeToolHooks) {
+      await ctx.tool.hook!("execute.before", async (event: any) => {
+        const sessionID = firstString(event?.sessionID)
+        const callID = firstString(event?.callID, event?.id)
+        const tool = firstString(event?.tool, event?.name)
+        if (!sessionID || !callID || !tool) return
+
+        // OpenCode 2 exposes a native tool-execution boundary. Feed it into the
+        // same telemetry/progress core instead of depending on loosely-shaped
+        // server events when this stronger hook is available.
+        observeOpenCode2TelemetryEvent(telemetryRuntime, sessionID, {
+          type: "session.tool.called",
+          data: {
+            id: callID,
+            name: tool,
+            input: event?.input,
+          },
+        })
+        await rememberShellProgressStart(sessionID, callID)
+      })
+
+      await ctx.tool.hook!("execute.after", async (event: any) => {
+        const sessionID = firstString(event?.sessionID)
+        const callID = firstString(event?.callID, event?.id)
+        const tool = firstString(event?.tool, event?.name)
+        if (!sessionID || !callID) return
+
+        const completed = event?.status === "completed" || event?.status === "success" || event?.status === undefined
+        observeOpenCode2TelemetryEvent(telemetryRuntime, sessionID, {
+          type: completed ? "session.tool.success" : "session.tool.failed",
+          data: {
+            id: callID,
+            ...(tool ? { name: tool } : {}),
+            ...(event?.input !== undefined ? { input: event.input } : {}),
+            ...(event?.result?.metadata !== undefined ? { metadata: event.result.metadata } : {}),
+            executed: completed,
+          },
+        })
+
+        if (completed) await applySuccessfulToolProgress(sessionID, callID)
+        else forgetOpenCode2ToolProgressCall(toolProgressRuntime, sessionID, callID)
+      })
+    }
+
     if (typeof ctx.event?.subscribe === "function") {
       lifecycleTask = (async () => {
         try {
@@ -1202,15 +1248,15 @@ export const OpenCode2GoalsExperimental = {
               observeOpenCode2TelemetryEvent(telemetryRuntime, sessionID, event)
             }
 
-            if (sessionID && type === "session.tool.called") {
+            if (!nativeToolHooks && sessionID && type === "session.tool.called") {
               const callID = firstString(data?.id, data?.callID)
               if (callID) await rememberShellProgressStart(sessionID, callID)
             }
-            if (sessionID && type === "session.tool.success") {
+            if (!nativeToolHooks && sessionID && type === "session.tool.success") {
               const callID = firstString(data?.id, data?.callID)
               if (callID) await applySuccessfulToolProgress(sessionID, callID)
             }
-            if (sessionID && type === "session.tool.failed") {
+            if (!nativeToolHooks && sessionID && type === "session.tool.failed") {
               const callID = firstString(data?.id, data?.callID)
               if (callID) forgetOpenCode2ToolProgressCall(toolProgressRuntime, sessionID, callID)
             }

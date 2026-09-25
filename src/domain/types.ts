@@ -189,6 +189,8 @@ export interface GoalUnitRotation {
     toUnit: string
     phase: "prepared" | "source_terminal" | "dispatch_pending" | "dispatched"
     createdAt: number
+    /** Preselected V2 inbox ID makes crash retry admission idempotent. */
+    messageID?: string
     dispatchedAt?: number
   }
 }

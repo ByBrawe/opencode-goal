@@ -55,6 +55,19 @@ import {
   forgetOpenCode2ToolProgressSession,
   rememberOpenCode2ShellBefore,
 } from "./tool-progress.js"
+import {
+  activateUnitHandoffTarget,
+  createUnitHandoffTarget,
+  markUnitHandoffAdmitted,
+  markUnitHandoffDispatched,
+  markUnitHandoffSourceTerminal,
+  observeInitialGoalUnit,
+  readGoalUnitIdentity,
+  unitHandoffMessageID,
+  unitIdentityDigest,
+  unitRotationNeeded,
+  withUnitHandoffLease,
+} from "./unit-handoff.js"
 
 export const OPENCODE2_EXPERIMENTAL_PLUGIN_ID = "bybrawe.open-code-goals.v2-experimental"
 
@@ -69,6 +82,7 @@ const V2_READ_ONLY_NOTICE =
 type UnknownRecord = Record<string, unknown>
 
 export interface OpenCode2ExperimentalContext {
+  location?: { directory?: string }
   options?: Readonly<UnknownRecord>
   event?: {
     subscribe(input?: { signal?: AbortSignal }): AsyncIterable<unknown>
@@ -168,7 +182,10 @@ async function resolveSessionDirectory(ctx: OpenCode2ExperimentalContext, sessio
 function formatStatus(goal: GoalState | null): string {
   if (!goal) return "No active goal."
   const req = goal.requirements.map((item, index) => `${index + 1}. [${item.status}] ${item.text}`).join("\n")
-  return `Goal: ${goal.objective}\nStatus: ${goal.status}\nRevision: ${goal.revision}\nRuntime: ${formatGoalRuntimeFingerprint(goal.runtimeFingerprint)}\nUsage: ${goal.usage.turns} turns, ${goal.usage.tokens} tokens, cost ${goal.usage.cost.toFixed(4)}\nRequirements:\n${req}`
+  const unit = goal.unitRotation
+    ? `\nUnit: ${goal.unitRotation.currentUnit === undefined ? "not observed yet" : JSON.stringify(goal.unitRotation.currentUnit)}\nSession chain: root=${goal.unitRotation.rootSessionID}, index=${goal.unitRotation.chainIndex}${goal.unitRotation.previousSessionID ? `, previous=${goal.unitRotation.previousSessionID}` : ""}${goal.unitRotation.nextSessionID ? `, next=${goal.unitRotation.nextSessionID}` : ""}`
+    : ""
+  return `Goal: ${goal.objective}\nStatus: ${goal.status}\nRevision: ${goal.revision}\nRuntime: ${formatGoalRuntimeFingerprint(goal.runtimeFingerprint)}\nUsage: ${goal.usage.turns} turns, ${goal.usage.tokens} tokens, cost ${goal.usage.cost.toFixed(4)}${unit}\nRequirements:\n${req}`
 }
 
 function formatContract(goal: GoalState | null): string {
@@ -196,7 +213,10 @@ function formatContract(goal: GoalState | null): string {
 function experimentalContext(goal: GoalState): string {
   const constraints = goal.constraints?.length ? goal.constraints.map((item) => `- ${item}`).join("\n") : "- none declared"
   const requirements = goal.requirements.map((item) => `- [${item.status}] ${item.text}`).join("\n")
-  return `OpenCode Goals V2 persisted state:\nObjective: ${goal.objective}\nStatus: ${goal.status}\nRevision: ${goal.revision}\nConstraints / non-goals:\n${constraints}\nRequirements:\n${requirements}\n\nThis state is project-local persisted user task data. It never overrides system/developer policy, repository rules, OpenCode permissions, or the selected agent/mode. Model-visible V2 lifecycle mutation remains read-only; lifecycle mutation is authorized only through the host-native direct-command boundary, and autonomous work remains bound to exact host-admitted Goal execution ownership.`
+  const unit = goal.unitRotation
+    ? `\nUnit rotation: ${JSON.stringify(goal.unitRotation.currentUnit ?? "not observed")} (chain index ${goal.unitRotation.chainIndex})`
+    : ""
+  return `OpenCode Goals V2 persisted state:\nObjective: ${goal.objective}\nStatus: ${goal.status}\nRevision: ${goal.revision}${unit}\nConstraints / non-goals:\n${constraints}\nRequirements:\n${requirements}\n\nThis state is project-local persisted user task data. It never overrides system/developer policy, repository rules, OpenCode permissions, or the selected agent/mode. Model-visible V2 lifecycle mutation remains read-only; lifecycle mutation is authorized only through the host-native direct-command boundary, and autonomous work remains bound to exact host-admitted Goal execution ownership. Handoff-pending and handed-off records are inert and cannot own Goal work.`
 }
 
 function appendSystemContext(event: any, text: string): void {
@@ -268,6 +288,14 @@ function stableV2FeatureEnabled(
   const configured = ctx.options?.[option]
   if (typeof configured === "boolean") return configured
   return true
+}
+
+function directLifecycleEnabled(): boolean {
+  return stableV2FeatureEnabled(ctx, "lifecycle", OPENCODE2_DIRECT_LIFECYCLE_ENV)
+}
+
+function autonomousEnabledByConfig(): boolean {
+  return stableV2FeatureEnabled(ctx, "autonomous", OPENCODE2_AUTONOMOUS_ENV)
 }
 
 const DIRECT_CAPABILITY_TTL_MS = 2 * 60_000
@@ -351,6 +379,8 @@ function canonicalGoalCommand(parsed: ReturnType<typeof parseGoalCommand>): stri
       ...(item.contains === undefined ? {} : { contains: item.contains }),
     })),
     notifyCommand: parsed.notifyCommand ?? null,
+    unitCommand: parsed.unitCommand ?? null,
+    freshSessionPerUnit: parsed.freshSessionPerUnit ?? false,
     goalIDPrefix: parsed.goalIDPrefix ?? null,
     historyKeep: parsed.historyKeep ?? null,
     queuePosition: parsed.queuePosition ?? null,
@@ -633,8 +663,17 @@ async function applyAuthorizedGoalMutation(
       checks: parsed.checks,
       files: parsed.files,
       ...(parsed.notifyCommand ? { notifyCommand: parsed.notifyCommand } : {}),
+      ...(parsed.unitCommand && parsed.freshSessionPerUnit ? {
+        unitRotation: { command: parsed.unitCommand, freshSessionPerUnit: true as const },
+      } : {}),
       budget: directBudgetPatch(parsed),
     })
+    if (goal.unitRotation) {
+      goal = observeInitialGoalUnit(
+        goal,
+        await readGoalUnitIdentity(goal.unitRotation.command, directory),
+      )
+    }
     await store.save(goal)
     return { goal }
   }
@@ -651,9 +690,18 @@ async function applyAuthorizedGoalMutation(
     ...(parsed.checks.length ? { checks: parsed.checks } : {}),
     ...(parsed.files.length ? { files: parsed.files } : {}),
     ...(parsed.notifyCommand ? { notifyCommand: parsed.notifyCommand } : {}),
+    ...(parsed.unitCommand && parsed.freshSessionPerUnit ? {
+      unitRotation: { command: parsed.unitCommand, freshSessionPerUnit: true as const },
+    } : {}),
   })
   const budgetPatch = directBudgetPatch(parsed)
   if (Object.keys(budgetPatch).length) goal = applyGoalBudget(goal, budgetPatch)
+  if (goal.unitRotation && goal.unitRotation.currentUnit === undefined) {
+    goal = observeInitialGoalUnit(
+      goal,
+      await readGoalUnitIdentity(goal.unitRotation.command, directory),
+    )
+  }
   await store.save(goal)
   return { goal }
 }
@@ -733,7 +781,7 @@ export async function executeOpenCode2DirectGoalCommand(
     ) => Promise<void>
   } = {},
 ): Promise<{ action: string; goal: GoalState | null; messageID?: string; dispatched: boolean; message?: string }> {
-  if (!stableV2FeatureEnabled(ctx, "lifecycle", OPENCODE2_DIRECT_LIFECYCLE_ENV)) {
+  if (!directLifecycleEnabled()) {
     throw new Error(`OpenCode Goals V2 direct lifecycle is disabled by plugin options or ${OPENCODE2_DIRECT_LIFECYCLE_ENV}. Enable options.lifecycle or remove/set the environment override to 1.`)
   }
   if (!input?.sessionID) throw new Error("OpenCode Goals V2 direct command requires a sessionID")
@@ -955,8 +1003,10 @@ export const OpenCode2GoalsExperimental = {
     const hostLimitRuntime = createOpenCode2HostLimitRuntime()
     const hostLimitRetryTimers = new Map<string, ReturnType<typeof setTimeout>>()
     const autonomousDispatching = new Set<string>()
-    const lifecycleEnabled = stableV2FeatureEnabled(ctx, "lifecycle", OPENCODE2_DIRECT_LIFECYCLE_ENV)
-    const autonomousEnabled = lifecycleEnabled && stableV2FeatureEnabled(ctx, "autonomous", OPENCODE2_AUTONOMOUS_ENV)
+    const handoffDispatching = new Set<string>()
+    const handoffRetryTimers = new Map<string, ReturnType<typeof setTimeout>>()
+    const lifecycleEnabled = directLifecycleEnabled()
+    const autonomousEnabled = lifecycleEnabled && autonomousEnabledByConfig()
     const semanticVerifier = createOpenCode2SemanticVerifierRuntime(
       ctx.session,
       async (sessionID) => await resolveSessionDirectory(ctx, sessionID),
@@ -1129,6 +1179,235 @@ export const OpenCode2GoalsExperimental = {
         if (messageID) forgetOpenCode2GoalPrompt(autonomousRuntime, sessionID, messageID)
         autonomousDispatching.delete(sessionID)
         await pauseAutonomousDispatchFailure(sessionID, goal.id, goal.revision, error)
+      }
+    }
+
+    const findPreparedUnitHandoff = async (
+      directory: string,
+      source: GoalState,
+      nextUnit: string,
+    ): Promise<GoalState | undefined> => {
+      const goals = await new GoalStore(directory).list()
+      return goals.find((candidate) =>
+        candidate.id === source.id
+        && candidate.sessionID !== source.sessionID
+        && candidate.unitRotation?.handoff?.fromSessionID === source.sessionID
+        && candidate.unitRotation?.handoff?.toUnit === nextUnit
+        && candidate.status !== "completed"
+        && candidate.status !== "handed_off"
+      )
+    }
+
+    const admitUnitHandoffPrompt = async (
+      directory: string,
+      target: GoalState,
+    ): Promise<GoalState> => {
+      const handoff = target.unitRotation?.handoff
+      const messageID = unitHandoffMessageID(target)
+      if (!handoff || !messageID || typeof ctx.session.prompt !== "function") {
+        throw new Error("OpenCode 2 unit handoff requires a durable prompt ID and session.prompt().")
+      }
+      if (handoff.phase !== "prepared") return target
+
+      const activePreview = activateUnitHandoffTarget(target)
+      const admitted = await ctx.session.prompt({
+        sessionID: target.sessionID,
+        id: messageID,
+        text: continuationPrompt(activePreview),
+        delivery: "steer",
+        resume: false,
+        metadata: {
+          opencode_goal_v2_autonomous: true,
+          opencode_goal_v2_source: "handoff",
+          opencode_goal_id: target.id,
+          opencode_goal_revision: target.revision,
+          opencode_goal_unit_handoff: true,
+        },
+      })
+      const admittedID = firstString(record(admitted)?.id, nestedRecord(admitted, "data")?.id)
+      if (admittedID && admittedID !== messageID) {
+        throw new Error("OpenCode 2 unit handoff admission returned a different host message ID")
+      }
+
+      const admittedTarget = markUnitHandoffAdmitted(target)
+      await new GoalStore(directory, { onTransition: createGoalTransitionNotifier(directory) }).save(admittedTarget)
+      return admittedTarget
+    }
+
+    const dispatchUnitHandoffTarget = async (
+      directory: string,
+      target: GoalState,
+    ): Promise<boolean> => {
+      if (handoffDispatching.has(target.sessionID)) return true
+      const handoff = target.unitRotation?.handoff
+      const messageID = unitHandoffMessageID(target)
+      if (!handoff || !messageID || typeof ctx.session.prompt !== "function") return false
+      if (handoff.phase === "dispatched") return true
+      if (target.status !== "active" || handoff.phase !== "dispatch_pending") return false
+
+      handoffDispatching.add(target.sessionID)
+      try {
+        rememberOpenCode2GoalPrompt(
+          autonomousRuntime,
+          target.sessionID,
+          messageID,
+          target,
+          "handoff",
+        )
+        const resumed = await ctx.session.prompt({
+          sessionID: target.sessionID,
+          id: messageID,
+          text: continuationPrompt(target),
+          delivery: "steer",
+          resume: true,
+          metadata: {
+            opencode_goal_v2_autonomous: true,
+            opencode_goal_v2_source: "handoff",
+            opencode_goal_id: target.id,
+            opencode_goal_revision: target.revision,
+            opencode_goal_unit_handoff: true,
+          },
+        })
+        const resumedID = firstString(record(resumed)?.id, nestedRecord(resumed, "data")?.id)
+        if (resumedID && resumedID !== messageID) {
+          throw new Error("OpenCode 2 unit handoff resume returned a different host message ID")
+        }
+        const dispatched = markUnitHandoffDispatched(target)
+        await new GoalStore(directory, { onTransition: createGoalTransitionNotifier(directory) }).save(dispatched)
+        return true
+      } catch {
+        forgetOpenCode2GoalPrompt(autonomousRuntime, target.sessionID, messageID)
+        return false
+      } finally {
+        handoffDispatching.delete(target.sessionID)
+      }
+    }
+
+    const completeUnitHandoff = async (
+      directory: string,
+      sourceSnapshot: GoalState,
+      targetSnapshot: GoalState,
+    ): Promise<boolean> => {
+      const store = new GoalStore(directory, { onTransition: createGoalTransitionNotifier(directory) })
+      let source = await store.load(sourceSnapshot.sessionID)
+      let target = await store.load(targetSnapshot.sessionID)
+      if (!source || !target || source.id !== target.id) return false
+      const handoff = target.unitRotation?.handoff
+      if (!handoff || handoff.fromSessionID !== source.sessionID) return false
+
+      if (target.status === "handoff_pending" && handoff.phase === "prepared") {
+        try {
+          target = await admitUnitHandoffPrompt(directory, target)
+        } catch {
+          // Admission happens before source ownership is retired. Failure means
+          // no rotation: the source session remains active and can continue.
+          return false
+        }
+      }
+
+      source = await store.load(source.sessionID)
+      target = await store.load(target.sessionID)
+      if (!source || !target) return false
+
+      if (source.status === "active" && target.status === "handoff_pending" && target.unitRotation?.handoff?.phase === "admitted") {
+        const terminal = markUnitHandoffSourceTerminal(source, target)
+        try {
+          await store.save(terminal)
+          source = terminal
+        } catch {
+          return false
+        }
+      }
+
+      if (source.status !== "handed_off" || source.unitRotation?.nextSessionID !== target.sessionID) {
+        return false
+      }
+
+      target = await store.load(target.sessionID)
+      if (!target) return false
+      if (target.status === "handoff_pending") {
+        const active = activateUnitHandoffTarget(target)
+        await store.save(active)
+        target = active
+      }
+
+      // Once source is terminal, failure cannot return ownership to it.
+      // Retry uses the same persisted inbox ID, so a crash or transport retry
+      // cannot admit a second continuation.
+      const dispatched = await dispatchUnitHandoffTarget(directory, target)
+      if (!dispatched && !handoffRetryTimers.has(target.sessionID)) {
+        const timer = setTimeout(() => {
+          handoffRetryTimers.delete(target.sessionID)
+          void recoverUnitHandoffs(directory)
+        }, OPENCODE2_INFRA_RETRY_POLL_MS)
+        ;(timer as any).unref?.()
+        handoffRetryTimers.set(target.sessionID, timer)
+      }
+      return true
+    }
+
+    const attemptUnitRotation = async (
+      directory: string,
+      source: GoalState,
+      nextUnit: string,
+    ): Promise<boolean> => {
+      if (!source.unitRotation || !unitRotationNeeded(source, nextUnit)) return false
+      if (typeof ctx.session.create !== "function" || typeof ctx.session.prompt !== "function") return false
+
+      return await withUnitHandoffLease(directory, source.id, async () => {
+        const freshSource = await new GoalStore(directory).load(source.sessionID)
+        if (!freshSource || freshSource.id !== source.id || !unitRotationNeeded(freshSource, nextUnit)) return false
+
+        let target = await findPreparedUnitHandoff(directory, freshSource, nextUnit)
+        if (!target) {
+          let created: unknown
+          try {
+            created = await ctx.session.create({
+              parentID: freshSource.sessionID,
+              title: `Goal unit ${freshSource.unitRotation!.chainIndex + 1}: ${freshSource.objective.slice(0, 80)}`,
+            })
+          } catch {
+            return false
+          }
+          const targetSessionID = firstString(record(created)?.id, nestedRecord(created, "data")?.id)
+          if (!targetSessionID || targetSessionID === freshSource.sessionID) return false
+
+          target = createUnitHandoffTarget(freshSource, targetSessionID, nextUnit)
+          try {
+            await new GoalStore(directory, { onTransition: createGoalTransitionNotifier(directory) }).save(target)
+          } catch {
+            if (typeof ctx.session.delete === "function") {
+              await Promise.resolve(ctx.session.delete({ sessionID: targetSessionID })).catch(() => undefined)
+            }
+            return false
+          }
+        }
+
+        return await completeUnitHandoff(directory, freshSource, target)
+      })
+    }
+
+    const recoverUnitHandoffs = async (directory: string): Promise<void> => {
+      const store = new GoalStore(directory, { onTransition: createGoalTransitionNotifier(directory) })
+      let goals: GoalState[]
+      try {
+        goals = await store.list()
+      } catch {
+        return
+      }
+      for (const target of goals) {
+        const handoff = target.unitRotation?.handoff
+        if (!handoff || handoff.phase === "dispatched") continue
+        if (target.status !== "handoff_pending" && target.status !== "active") continue
+        const source = goals.find((goal) => goal.sessionID === handoff.fromSessionID && goal.id === target.id)
+          ?? await store.load(handoff.fromSessionID).catch(() => null)
+        if (!source) continue
+        await withUnitHandoffLease(directory, target.id, async () => {
+          const freshSource = await store.load(source.sessionID)
+          const freshTarget = await store.load(target.sessionID)
+          if (!freshSource || !freshTarget) return
+          await completeUnitHandoff(directory, freshSource, freshTarget)
+        }).catch(() => undefined)
       }
     }
 
@@ -1423,6 +1702,28 @@ export const OpenCode2GoalsExperimental = {
               cancelHostLimitRetry(sessionID)
               markOpenCode2OwnedExecutionSuccess(hostLimitRuntime, sessionID)
 
+              let nextUnitIdentity: string | undefined
+              if (observedGoal.status === "active" && observedGoal.unitRotation) {
+                try {
+                  const unit = await readGoalUnitIdentity(observedGoal.unitRotation.command, directory)
+                  if (observedGoal.unitRotation.currentUnit === undefined) {
+                    observedGoal = observeInitialGoalUnit(observedGoal, unit)
+                    await store.save(observedGoal)
+                  } else if (unitRotationNeeded(observedGoal, unit)) {
+                    nextUnitIdentity = unit
+                    observedGoal = markHostProgress(observedGoal, {
+                      fingerprint: `unit:${unitIdentityDigest(unit)}`,
+                      source: "unit-boundary",
+                      summary: `Host unit identity advanced to ${JSON.stringify(unit)}`,
+                    })
+                    await store.save(observedGoal)
+                  }
+                } catch {
+                  // Unit observation is fail-closed. A broken unit command never
+                  // invents a boundary or interrupts the existing session owner.
+                }
+              }
+
               if (observedGoal.status === "completed") {
                 const promoted = await applyOpenCode2ControlPlaneMutation(
                   directory,
@@ -1444,6 +1745,14 @@ export const OpenCode2GoalsExperimental = {
               if (!prepared.closed) continue
               await store.save(prepared.goal)
               if (prepared.shouldContinue && prepared.prompt) {
+                if (
+                  nextUnitIdentity
+                  && prepared.goal.status === "active"
+                  && unitRotationNeeded(prepared.goal, nextUnitIdentity)
+                ) {
+                  const handedOff = await attemptUnitRotation(directory, prepared.goal, nextUnitIdentity)
+                  if (handedOff) continue
+                }
                 await scheduleAutonomousContinuation(
                   sessionID,
                   prepared.goal,
@@ -1611,16 +1920,17 @@ export const OpenCode2GoalsExperimental = {
           metadata?.opencode_goal_v2_autonomous === true
           || metadata?.opencode_goal_v2_direct_command === true
           || metadata?.opencode_goal_v2_verifier === true
+          || metadata?.opencode_goal_unit_handoff === true
         ) return
 
-        // V2 prompt admission runs before durable inbox admission and before the
-        // model context is built. Mark steering here so an in-flight semantic
-        // completion cannot finish during the gap before the later context hook.
+        // V2 prompt admission runs before durable inbox admission and before
+        // model context construction. Mark steering here so in-flight Goal
+        // verification cannot race an ordinary foreground user prompt.
         workTools.markForegroundAdmission(sessionID)
       })
     } catch {
-      // Older hosts may not expose prompt admission. The context hook below
-      // remains the conservative fallback steering boundary.
+      // Older hosts may not expose prompt admission. The context hook remains
+      // the conservative fallback steering boundary.
     }
 
     try {
@@ -1680,6 +1990,15 @@ export const OpenCode2GoalsExperimental = {
       // remains gated by the exact-host evidence path.
     }
 
+    if (autonomousEnabled) {
+      const setupDirectory = firstString(ctx.location?.directory, ctx.options?.directory)
+      if (setupDirectory) {
+        queueMicrotask(() => {
+          void recoverUnitHandoffs(path.resolve(setupDirectory))
+        })
+      }
+    }
+
     return async () => {
       lifecycleAbort.abort()
       runtime.capabilities.clear()
@@ -1694,10 +2013,13 @@ export const OpenCode2GoalsExperimental = {
       toolProgressRuntime.shellPending.clear()
       for (const timer of hostLimitRetryTimers.values()) clearTimeout(timer)
       hostLimitRetryTimers.clear()
+      for (const timer of handoffRetryTimers.values()) clearTimeout(timer)
+      handoffRetryTimers.clear()
       hostLimitRuntime.successEpochBySession.clear()
       hostLimitRuntime.compactionReasonBySession.clear()
       hostLimitRuntime.compactionAttemptBySession.clear()
       autonomousDispatching.clear()
+      handoffDispatching.clear()
       await lifecycleTask?.catch(() => undefined)
     }
   },

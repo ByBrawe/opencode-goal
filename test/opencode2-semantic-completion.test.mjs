@@ -81,11 +81,18 @@ test("V2 completion reaches completed only through host checks/files plus indepe
       semanticVerifier: verifier,
     })
 
+    const nativeStatuses = []
     const result = await work.definitions.opencode_goal_complete.execute(
       { summary: "verified V2 completion shipped" },
-      { sessionID },
+      { sessionID, progress: async ({ status }) => nativeStatuses.push(status) },
     )
     assert.equal(result.content, "Goal completed with host and verifier-backed evidence.")
+    assert.deepEqual(nativeStatuses, [
+      "Running Goal host checks",
+      "Verifying declared file contracts",
+      "Running independent semantic verification",
+      "Finalizing verified Goal completion",
+    ])
 
     const completed = await store.load(sessionID)
     assert.equal(completed.status, "completed")

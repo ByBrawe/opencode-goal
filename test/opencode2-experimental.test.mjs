@@ -300,6 +300,46 @@ test("stable V2 kill switch preserves the read-only fail-closed adapter", async 
   }
 })
 
+test("OpenCode 2 native plugin options can disable lifecycle/autonomous while environment overrides stay authoritative", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-native-options-"))
+  const directKey = OPENCODE2_DIRECT_LIFECYCLE_ENV
+  const autonomousKey = OPENCODE2_AUTONOMOUS_ENV
+  const previousDirect = process.env[directKey]
+  const previousAutonomous = process.env[autonomousKey]
+  try {
+    delete process.env[directKey]
+    delete process.env[autonomousKey]
+    const disabled = fakeV2Context(root)
+    disabled.ctx.options.lifecycle = false
+    disabled.ctx.options.autonomous = false
+    const disabledCleanup = await OpenCode2GoalsExperimental.setup(disabled.ctx)
+    assert.equal(disabled.commandTransformCalls(), 0)
+    assert.equal(disabled.commands.size, 0)
+    assert.equal(disabled.tools.has("opencode_goals_v2_control"), false)
+    assert.equal(disabled.tools.has("opencode_goal_complete"), false)
+    assert.equal(disabled.tools.has("opencode_goals_v2_get"), true)
+    await disabledCleanup()
+
+    process.env[directKey] = "1"
+    process.env[autonomousKey] = "1"
+    const overridden = fakeV2Context(root)
+    overridden.ctx.options.lifecycle = false
+    overridden.ctx.options.autonomous = false
+    const overriddenCleanup = await OpenCode2GoalsExperimental.setup(overridden.ctx)
+    assert.equal(overridden.commandTransformCalls(), 1)
+    assert.equal(typeof overridden.commands.get("goal")?.execute, "function")
+    assert.equal(typeof overridden.tools.get("opencode_goals_v2_control")?.definition?.execute, "function")
+    assert.equal(typeof overridden.tools.get("opencode_goal_complete")?.definition?.execute, "function")
+    await overriddenCleanup()
+  } finally {
+    if (previousDirect === undefined) delete process.env[directKey]
+    else process.env[directKey] = previousDirect
+    if (previousAutonomous === undefined) delete process.env[autonomousKey]
+    else process.env[autonomousKey] = previousAutonomous
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test("stable V2 registers lifecycle and autonomous work controls by default", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-stable-default-"))
   try {

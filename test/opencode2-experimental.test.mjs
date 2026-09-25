@@ -138,6 +138,17 @@ function fakeV2PromiseToolContext(directory) {
   return host
 }
 
+function fakeV2NativeToolHookContext(directory) {
+  const host = fakeV2Context(directory)
+  const toolHooks = new Map()
+  host.ctx.tool.hook = async (name, callback) => {
+    toolHooks.set(name, callback)
+    return { async dispose() {} }
+  }
+  host.toolHooks = toolHooks
+  return host
+}
+
 async function withStableV2Disabled(fn) {
   const directKey = OPENCODE2_DIRECT_LIFECYCLE_ENV
   const autonomousKey = OPENCODE2_AUTONOMOUS_ENV
@@ -475,6 +486,33 @@ test("V2 presentation hooks remove stale control and never mutate persisted stat
     assert.match(compactionEvent.system[0]?.text ?? "", /OpenCode Goals V2 persisted state/)
     assert.match(compactionEvent.system[0]?.text ?? "", /Objective: ship context/)
     assert.deepEqual(await new GoalStore(root).load(sessionID), before, "compaction context injection must stay read-only")
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("current OpenCode 2 native tool hooks are registered when the host exposes them", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-native-tool-hooks-"))
+  try {
+    const host = fakeV2NativeToolHookContext(root)
+    const cleanup = await OpenCode2GoalsExperimental.setup(host.ctx)
+    assert.equal(typeof host.toolHooks.get("execute.before"), "function")
+    assert.equal(typeof host.toolHooks.get("execute.after"), "function")
+    await host.toolHooks.get("execute.before")({
+      sessionID: "native-hook-session",
+      callID: "native-hook-call",
+      tool: "read",
+      input: { filePath: "README.md" },
+    })
+    await host.toolHooks.get("execute.after")({
+      sessionID: "native-hook-session",
+      callID: "native-hook-call",
+      tool: "read",
+      status: "completed",
+      input: { filePath: "README.md" },
+      result: { metadata: {} },
+    })
+    await cleanup()
   } finally {
     await rm(root, { recursive: true, force: true })
   }

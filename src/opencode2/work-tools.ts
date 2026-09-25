@@ -34,10 +34,22 @@ interface SemanticVerifierLike {
 }
 
 type ToolContext = {
+  id?: string
   sessionID?: string
   messageID?: string
   callID?: string
   agent?: string
+  progress?: (input: { status: string }) => void | Promise<void>
+}
+
+async function nativeProgress(context: ToolContext, status: string): Promise<void> {
+  if (typeof context?.progress !== "function") return
+  try {
+    await context.progress({ status })
+  } catch {
+    // OpenCode 2 progress rendering is advisory. A TUI/UI progress failure
+    // must never change Goal persistence or verification semantics.
+  }
 }
 
 function response(message: string, goal: GoalState | null = null) {
@@ -223,6 +235,7 @@ export function createOpenCode2GoalWorkTools(input: {
         return await serialize(id, async () => {
           const current = await currentOwnedGoal(context)
           if ("rejection" in current) return response(current.rejection)
+          await nativeProgress(context, "Verifying declared file evidence")
           const checked = await recordFileEvidence(current.goal, {
             root: current.directory,
             requirementID: String(args?.requirementID ?? ""),
@@ -254,13 +267,16 @@ export function createOpenCode2GoalWorkTools(input: {
         const owner = snapshotResult.owner
         const directory = snapshotResult.directory
 
+        await nativeProgress(context, "Running Goal host checks")
         let evaluated = await runConfiguredChecks(snapshot, directory)
+        await nativeProgress(context, "Verifying declared file contracts")
         evaluated = await verifyDeclaredFiles(evaluated, directory)
         if (currentSteeringEpoch(id) !== startingEpoch) {
           return response("Completion rejected: user steering arrived while host verification was running. Goal remains active.", snapshot)
         }
 
         try {
+          await nativeProgress(context, "Running independent semantic verification")
           evaluated = await input.semanticVerifier.verify(id, evaluated, { currentMessageID: owner.messageID })
         } catch (error) {
           if (currentSteeringEpoch(id) !== startingEpoch) {
@@ -302,6 +318,7 @@ export function createOpenCode2GoalWorkTools(input: {
           if (current.goal.id !== snapshot.id || current.goal.revision !== snapshot.revision) {
             return response("Completion rejected: goal changed, paused, or stopped while verification was running.", current.goal)
           }
+          await nativeProgress(context, "Finalizing verified Goal completion")
           const merged = settleCurrentProgress(mergeAuditEvaluation(current.goal, evaluated))
           const result = completeGoal(merged, String(args?.summary ?? ""))
           await current.store.save(result.goal)

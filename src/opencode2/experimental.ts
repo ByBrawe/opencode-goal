@@ -66,6 +66,7 @@ import {
   unitHandoffMessageID,
   unitIdentityDigest,
   unitRotationNeeded,
+  withUnitHandoffLease,
 } from "./unit-handoff.js"
 
 export const OPENCODE2_EXPERIMENTAL_PLUGIN_ID = "bybrawe.open-code-goals.v2-experimental"
@@ -1353,29 +1354,37 @@ export const OpenCode2GoalsExperimental = {
       if (!source.unitRotation || !unitRotationNeeded(source, nextUnit)) return false
       if (typeof ctx.session.create !== "function" || typeof ctx.session.prompt !== "function") return false
 
-      let target = await findPreparedUnitHandoff(directory, source, nextUnit)
-      if (!target) {
-        let created: unknown
-        try {
-          created = await ctx.session.create({
-            parentID: source.sessionID,
-            title: `Goal unit ${source.unitRotation.chainIndex + 1}: ${source.objective.slice(0, 80)}`,
-          })
-        } catch {
-          return false
-        }
-        const targetSessionID = firstString(record(created)?.id, nestedRecord(created, "data")?.id)
-        if (!targetSessionID || targetSessionID === source.sessionID) return false
+      return await withUnitHandoffLease(directory, source.id, async () => {
+        const freshSource = await new GoalStore(directory).load(source.sessionID)
+        if (!freshSource || freshSource.id !== source.id || !unitRotationNeeded(freshSource, nextUnit)) return false
 
-        target = createUnitHandoffTarget(source, targetSessionID, nextUnit)
-        try {
-          await new GoalStore(directory, { onTransition: createGoalTransitionNotifier(directory) }).save(target)
-        } catch {
-          return false
-        }
-      }
+        let target = await findPreparedUnitHandoff(directory, freshSource, nextUnit)
+        if (!target) {
+          let created: unknown
+          try {
+            created = await ctx.session.create({
+              parentID: freshSource.sessionID,
+              title: `Goal unit ${freshSource.unitRotation!.chainIndex + 1}: ${freshSource.objective.slice(0, 80)}`,
+            })
+          } catch {
+            return false
+          }
+          const targetSessionID = firstString(record(created)?.id, nestedRecord(created, "data")?.id)
+          if (!targetSessionID || targetSessionID === freshSource.sessionID) return false
 
-      return await completeUnitHandoff(directory, source, target)
+          target = createUnitHandoffTarget(freshSource, targetSessionID, nextUnit)
+          try {
+            await new GoalStore(directory, { onTransition: createGoalTransitionNotifier(directory) }).save(target)
+          } catch {
+            if (typeof ctx.session.delete === "function") {
+              await Promise.resolve(ctx.session.delete({ sessionID: targetSessionID })).catch(() => undefined)
+            }
+            return false
+          }
+        }
+
+        return await completeUnitHandoff(directory, freshSource, target)
+      })
     }
 
     const recoverUnitHandoffs = async (directory: string): Promise<void> => {
@@ -1393,7 +1402,12 @@ export const OpenCode2GoalsExperimental = {
         const source = goals.find((goal) => goal.sessionID === handoff.fromSessionID && goal.id === target.id)
           ?? await store.load(handoff.fromSessionID).catch(() => null)
         if (!source) continue
-        await completeUnitHandoff(directory, source, target).catch(() => undefined)
+        await withUnitHandoffLease(directory, target.id, async () => {
+          const freshSource = await store.load(source.sessionID)
+          const freshTarget = await store.load(target.sessionID)
+          if (!freshSource || !freshTarget) return
+          await completeUnitHandoff(directory, freshSource, freshTarget)
+        }).catch(() => undefined)
       }
     }
 

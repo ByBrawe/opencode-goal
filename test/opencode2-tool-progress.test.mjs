@@ -40,7 +40,7 @@ test("V2 write/edit success becomes progress only through current project file h
     })
     assert.deepEqual(ignored, [], "Goal control-plane writes must never manufacture project progress")
   } finally {
-    await rm(root, { recursive: true, force: true })
+    await rm(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 50 })
   }
 })
 
@@ -101,6 +101,6 @@ test("V2 shell success keeps the V1 read-only guard and bounded pending state", 
     forgetOpenCode2ToolProgressSession(runtime, "s1")
     assert.equal(runtime.shellPending.size, 0)
   } finally {
-    await rm(root, { recursive: true, force: true })
+    await rm(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 50 })
   }
 })

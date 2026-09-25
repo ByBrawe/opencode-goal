@@ -14,8 +14,6 @@ const serverFile = path.join(root, "dist", "server.js")
 const OPENCODE_BINARY = process.env.OPENCODE2_BINARY || "opencode2"
 const SERVER_USERNAME = "opencode"
 const SERVER_PASSWORD = "opencode-goal-v2-autonomous"
-const DIRECT_ENV = "OPENCODE_GOAL_V2_DIRECT_LIFECYCLE"
-const AUTONOMOUS_ENV = "OPENCODE_GOAL_V2_AUTONOMOUS"
 const CONTROL_TOOL = "opencode_goals_v2_control"
 const READ_ONLY_TOOL = "opencode_goals_v2_get"
 const CREATE_COMMAND = 'ship autonomous v2 parity --constraint "do not invent progress"'
@@ -348,8 +346,6 @@ async function main() {
     XDG_DATA_HOME: path.join(home, ".local", "share"),
     XDG_STATE_HOME: path.join(home, ".local", "state"),
     XDG_CACHE_HOME: path.join(home, ".cache"),
-    [DIRECT_ENV]: "1",
-    [AUTONOMOUS_ENV]: "1",
     OPENCODE_SERVER_USERNAME: SERVER_USERNAME,
     OPENCODE_SERVER_PASSWORD: SERVER_PASSWORD,
     OPENCODE_DISABLE_AUTOUPDATE: "true",

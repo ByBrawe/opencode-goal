@@ -14,7 +14,6 @@ const serverFile = path.join(root, "dist", "server.js")
 const SERVER_USERNAME = "opencode"
 const SERVER_PASSWORD = "opencode-goal-v2-direct-lifecycle"
 const OPENCODE_BINARY = process.env.OPENCODE2_BINARY || "opencode2"
-const DIRECT_ENV = "OPENCODE_GOAL_V2_DIRECT_LIFECYCLE"
 const CONTROL_TOOL = "opencode_goals_v2_control"
 const READ_ONLY_TOOL = "opencode_goals_v2_get"
 const CREATE_COMMAND = 'ship v2 capability --accept "preview persists" --constraint "no spoof mutation" --max-turns 7'
@@ -426,7 +425,6 @@ async function main() {
     XDG_DATA_HOME: path.join(home, ".local", "share"),
     XDG_STATE_HOME: path.join(home, ".local", "state"),
     XDG_CACHE_HOME: path.join(home, ".cache"),
-    [DIRECT_ENV]: "1",
     OPENCODE_SERVER_USERNAME: SERVER_USERNAME,
     OPENCODE_SERVER_PASSWORD: SERVER_PASSWORD,
     OPENCODE_DISABLE_AUTOUPDATE: "true",
@@ -657,7 +655,7 @@ async function main() {
     assert.ok(compact.ok, `V2 Goal compaction admission failed: HTTP ${compact.status} ${compact.text}\n${await diagnostics()}`)
     await waitFor(
       () => provider.stats.requests.slice(compactionRequestsBefore).some((item) =>
-        item.text.includes("OpenCode Goals experimental V2 persisted state")
+        item.text.includes("OpenCode Goals V2 persisted state")
         && item.text.includes("Objective: ship v2 capability")
       ),
       "active Goal context inside exact-host V2 compaction request",

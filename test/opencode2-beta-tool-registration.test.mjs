@@ -1,8 +1,8 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import OpenCode2GoalsExperimental from "../dist/opencode2/experimental.js"
+import OpenCode2GoalsExperimental, { OPENCODE2_AUTONOMOUS_ENV, OPENCODE2_DIRECT_LIFECYCLE_ENV } from "../dist/opencode2/experimental.js"
 
-test("experimental V2 uses beta one-object add contract for read-only inspection only", async () => {
+test("V2 kill switch preserves beta one-object read-only registration", async () => {
   const tools = new Map()
   const hooks = new Map()
   let commandTransformCalls = 0
@@ -37,18 +37,29 @@ test("experimental V2 uses beta one-object add contract for read-only inspection
     },
   }
 
-  const cleanup = await OpenCode2GoalsExperimental.setup(ctx)
+  const previousDirect = process.env[OPENCODE2_DIRECT_LIFECYCLE_ENV]
+  const previousAutonomous = process.env[OPENCODE2_AUTONOMOUS_ENV]
+  process.env[OPENCODE2_DIRECT_LIFECYCLE_ENV] = "0"
+  process.env[OPENCODE2_AUTONOMOUS_ENV] = "0"
+  try {
+    const cleanup = await OpenCode2GoalsExperimental.setup(ctx)
 
-  assert.equal(commandTransformCalls, 0, "read-only V2 adapter must not depend on command template mutation")
-  assert.equal(tools.size, 1)
-  assert.equal(tools.has("opencode_goals_v2_control"), false)
-  const get = tools.get("opencode_goals_v2_get")
-  assert.ok(get)
-  assert.equal(get.name, "opencode_goals_v2_get")
-  assert.equal(get.codemode, false)
-  assert.equal(typeof get.execute, "function")
-  assert.equal(typeof hooks.get("context"), "function")
-  assert.equal(typeof hooks.get("request"), "function")
-  assert.equal(typeof cleanup, "function")
-  cleanup()
+    assert.equal(commandTransformCalls, 0, "V2 kill switch must retain the read-only beta-host fallback")
+    assert.equal(tools.size, 1)
+    assert.equal(tools.has("opencode_goals_v2_control"), false)
+    const get = tools.get("opencode_goals_v2_get")
+    assert.ok(get)
+    assert.equal(get.name, "opencode_goals_v2_get")
+    assert.equal(get.codemode, false)
+    assert.equal(typeof get.execute, "function")
+    assert.equal(typeof hooks.get("context"), "function")
+    assert.equal(typeof hooks.get("request"), "function")
+    assert.equal(typeof cleanup, "function")
+    await cleanup()
+  } finally {
+    if (previousDirect === undefined) delete process.env[OPENCODE2_DIRECT_LIFECYCLE_ENV]
+    else process.env[OPENCODE2_DIRECT_LIFECYCLE_ENV] = previousDirect
+    if (previousAutonomous === undefined) delete process.env[OPENCODE2_AUTONOMOUS_ENV]
+    else process.env[OPENCODE2_AUTONOMOUS_ENV] = previousAutonomous
+  }
 })

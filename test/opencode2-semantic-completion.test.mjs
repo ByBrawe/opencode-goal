@@ -81,11 +81,18 @@ test("V2 completion reaches completed only through host checks/files plus indepe
       semanticVerifier: verifier,
     })
 
+    const nativeStatuses = []
     const result = await work.definitions.opencode_goal_complete.execute(
       { summary: "verified V2 completion shipped" },
-      { sessionID },
+      { sessionID, progress: async ({ status }) => nativeStatuses.push(status) },
     )
     assert.equal(result.content, "Goal completed with host and verifier-backed evidence.")
+    assert.deepEqual(nativeStatuses, [
+      "Running Goal host checks",
+      "Verifying declared file contracts",
+      "Running independent semantic verification",
+      "Finalizing verified Goal completion",
+    ])
 
     const completed = await store.load(sessionID)
     assert.equal(completed.status, "completed")
@@ -126,6 +133,49 @@ test("V2 completion pauses fail-closed when independent verifier infrastructure 
     const paused = await store.load(sessionID)
     assert.equal(paused.status, "paused")
     assert.match(paused.stopReason ?? "", /Independent semantic verification unavailable/i)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("V2 completion rejects stale verifier result at native prompt admission before context assembly", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-v2-completion-prompt-admission-"))
+  try {
+    const sessionID = "v2-completion-prompt-admission"
+    const store = new GoalStore(root)
+    const goal = createGoal({ sessionID, objective: "ship after admission safety", now: 100 })
+    await store.save(goal)
+
+    let release
+    let started
+    const startedPromise = new Promise((resolve) => { started = resolve })
+    const verifyPromise = new Promise((resolve) => { release = resolve })
+
+    const autonomousRuntime = createOpenCode2AutonomousRuntime()
+    own(autonomousRuntime, sessionID, goal)
+    const work = createOpenCode2GoalWorkTools({
+      autonomousRuntime,
+      resolveDirectory: async () => root,
+      semanticVerifier: {
+        async verify(_sessionID, evaluated) {
+          started()
+          await verifyPromise
+          return evaluated
+        },
+      },
+    })
+
+    const completion = work.definitions.opencode_goal_complete.execute(
+      { summary: "done" },
+      { sessionID },
+    )
+    await startedPromise
+    work.markForegroundAdmission(sessionID)
+    release()
+
+    const result = await completion
+    assert.match(result.content, /user steering arrived/i)
+    assert.equal((await store.load(sessionID)).status, "active")
   } finally {
     await rm(root, { recursive: true, force: true })
   }

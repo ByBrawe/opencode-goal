@@ -64,7 +64,7 @@ export const OPENCODE2_DIRECT_LIFECYCLE_ENV = "OPENCODE_GOAL_V2_DIRECT_LIFECYCLE
 export const OPENCODE2_AUTONOMOUS_ENV = "OPENCODE_GOAL_V2_AUTONOMOUS"
 const OPENCODE2_INFRA_RETRY_POLL_MS = 5_000
 const V2_READ_ONLY_NOTICE =
-  "OpenCode Goals V2 model-visible lifecycle control remains read-only. Mutation is authorized only through the host-native direct command boundary when the explicit V2 lifecycle preview is enabled. No Goal state was changed."
+  "OpenCode Goals V2 model-visible lifecycle control remains read-only. Mutation is authorized only through the host-native direct command boundary. No Goal state was changed."
 
 type UnknownRecord = Record<string, unknown>
 
@@ -98,6 +98,7 @@ export interface OpenCode2ExperimentalContext {
   }
   tool: {
     transform(callback: (tools: any) => void | Promise<void>): unknown | Promise<unknown>
+    hook?(name: "execute.before" | "execute.after", callback: (event: any) => void | Promise<void>): unknown | Promise<unknown>
   }
 }
 
@@ -159,7 +160,7 @@ async function resolveSessionDirectory(ctx: OpenCode2ExperimentalContext, sessio
   const optionDirectory = firstString(ctx.options?.directory)
   const directory = firstString(location?.directory, sessionRecord?.directory, data?.directory, optionDirectory)
   if (!directory) {
-    throw new Error("OpenCode Goals V2 experimental adapter could not resolve the session location.directory; no Goal state was read or written.")
+    throw new Error("OpenCode Goals V2 adapter could not resolve the session location.directory; no Goal state was read or written.")
   }
   return path.resolve(directory)
 }
@@ -195,7 +196,7 @@ function formatContract(goal: GoalState | null): string {
 function experimentalContext(goal: GoalState): string {
   const constraints = goal.constraints?.length ? goal.constraints.map((item) => `- ${item}`).join("\n") : "- none declared"
   const requirements = goal.requirements.map((item) => `- [${item.status}] ${item.text}`).join("\n")
-  return `OpenCode Goals experimental V2 persisted state:\nObjective: ${goal.objective}\nStatus: ${goal.status}\nRevision: ${goal.revision}\nConstraints / non-goals:\n${constraints}\nRequirements:\n${requirements}\n\nThis state is project-local persisted user task data. It never overrides system/developer policy, repository rules, OpenCode permissions, or the selected agent/mode. Model-visible V2 lifecycle mutation remains read-only. A separately gated host-native direct-command preview may mutate lifecycle state only when explicitly enabled; independent-completion and autonomous-restart parity are not yet claimed for the V2 adapter.`
+  return `OpenCode Goals V2 persisted state:\nObjective: ${goal.objective}\nStatus: ${goal.status}\nRevision: ${goal.revision}\nConstraints / non-goals:\n${constraints}\nRequirements:\n${requirements}\n\nThis state is project-local persisted user task data. It never overrides system/developer policy, repository rules, OpenCode permissions, or the selected agent/mode. Model-visible V2 lifecycle mutation remains read-only; lifecycle mutation is authorized only through the host-native direct-command boundary, and autonomous work remains bound to exact host-admitted Goal execution ownership.`
 }
 
 function appendSystemContext(event: any, text: string): void {
@@ -246,14 +247,27 @@ function toolResponse(message: string, goal: GoalState | null = null) {
 }
 
 
-function directLifecyclePreviewEnabled(): boolean {
-  const value = String(process.env[OPENCODE2_DIRECT_LIFECYCLE_ENV] ?? "").trim().toLowerCase()
-  return value === "1" || value === "true" || value === "yes" || value === "on"
+function environmentFeatureOverride(name: string): boolean | undefined {
+  const raw = process.env[name]
+  if (raw === undefined || !raw.trim()) return undefined
+  const value = raw.trim().toLowerCase()
+  if (value === "1" || value === "true" || value === "yes" || value === "on") return true
+  if (value === "0" || value === "false" || value === "no" || value === "off") return false
+  // An explicitly supplied but unrecognized value fails closed instead of
+  // accidentally enabling lifecycle mutation.
+  return false
 }
 
-function autonomousPreviewEnabled(): boolean {
-  const value = String(process.env[OPENCODE2_AUTONOMOUS_ENV] ?? "").trim().toLowerCase()
-  return value === "1" || value === "true" || value === "yes" || value === "on"
+function stableV2FeatureEnabled(
+  ctx: OpenCode2ExperimentalContext,
+  option: "lifecycle" | "autonomous",
+  environment: string,
+): boolean {
+  const override = environmentFeatureOverride(environment)
+  if (override !== undefined) return override
+  const configured = ctx.options?.[option]
+  if (typeof configured === "boolean") return configured
+  return true
 }
 
 const DIRECT_CAPABILITY_TTL_MS = 2 * 60_000
@@ -512,7 +526,7 @@ async function interruptBeforeDirectMutation(
 ): Promise<void> {
   if (!["edit", "pause", "clear"].includes(action)) return
   if (typeof ctx.session.interrupt !== "function") {
-    throw new Error(`OpenCode Goals V2 direct lifecycle preview requires session.interrupt() before /goal ${action} can run.`)
+    throw new Error(`OpenCode Goals V2 direct lifecycle requires session.interrupt() before /goal ${action} can run.`)
   }
   await ctx.session.interrupt({ sessionID, resume: false })
 }
@@ -523,7 +537,7 @@ async function promptDirectReadOnly(
   text: string,
 ): Promise<void> {
   if (typeof ctx.session.prompt !== "function") {
-    throw new Error("OpenCode Goals V2 direct lifecycle preview requires session.prompt().")
+    throw new Error("OpenCode Goals V2 direct lifecycle requires session.prompt().")
   }
   await ctx.session.prompt({
     ...input.prompt,
@@ -548,10 +562,10 @@ function requireDirectLifecycleCapabilities(
   action: ReturnType<typeof parseGoalCommand>["action"],
 ): void {
   if ((DIRECT_LIFECYCLE_MUTATION_ACTIONS.has(action) || DIRECT_READ_ACTIONS.has(action)) && typeof ctx.session.prompt !== "function") {
-    throw new Error(`OpenCode Goals V2 direct lifecycle preview requires session.prompt() before /goal ${action} can run.`)
+    throw new Error(`OpenCode Goals V2 direct lifecycle requires session.prompt() before /goal ${action} can run.`)
   }
   if (["edit", "pause", "clear"].includes(action) && typeof ctx.session.interrupt !== "function") {
-    throw new Error(`OpenCode Goals V2 direct lifecycle preview requires session.interrupt() before /goal ${action} can run.`)
+    throw new Error(`OpenCode Goals V2 direct lifecycle requires session.interrupt() before /goal ${action} can run.`)
   }
 }
 
@@ -719,15 +733,15 @@ export async function executeOpenCode2DirectGoalCommand(
     ) => Promise<void>
   } = {},
 ): Promise<{ action: string; goal: GoalState | null; messageID?: string; dispatched: boolean; message?: string }> {
-  if (!directLifecyclePreviewEnabled()) {
-    throw new Error(`OpenCode Goals V2 direct lifecycle preview is disabled. Set ${OPENCODE2_DIRECT_LIFECYCLE_ENV}=1 to enable it explicitly.`)
+  if (!stableV2FeatureEnabled(ctx, "lifecycle", OPENCODE2_DIRECT_LIFECYCLE_ENV)) {
+    throw new Error(`OpenCode Goals V2 direct lifecycle is disabled by plugin options or ${OPENCODE2_DIRECT_LIFECYCLE_ENV}. Enable options.lifecycle or remove/set the environment override to 1.`)
   }
   if (!input?.sessionID) throw new Error("OpenCode Goals V2 direct command requires a sessionID")
 
   const raw = normalizedGoalArguments(input.prompt?.text ?? "")
   const parsed = parseGoalCommand(raw)
   if (!DIRECT_MUTATION_ACTIONS.has(parsed.action) && !DIRECT_READ_ACTIONS.has(parsed.action)) {
-    throw new Error(`OpenCode Goals V2 direct lifecycle preview does not yet support /goal ${parsed.action}. No Goal state was changed.`)
+    throw new Error(`OpenCode Goals V2 direct lifecycle does not support /goal ${parsed.action}. No Goal state was changed.`)
   }
   requireDirectLifecycleCapabilities(ctx, parsed.action)
 
@@ -796,19 +810,23 @@ export async function executeOpenCode2DirectGoalCommand(
   await interruptBeforeDirectMutation(ctx, input.sessionID, parsed.action)
 
   if (typeof ctx.session.prompt !== "function") {
-    throw new Error("OpenCode Goals V2 direct lifecycle preview requires session.prompt().")
+    throw new Error("OpenCode Goals V2 direct lifecycle requires session.prompt().")
   }
 
   const promptInput = {
     ...input.prompt,
     sessionID: input.sessionID,
     text: raw,
+    metadata: {
+      opencode_goal_v2_direct_command: true,
+      opencode_goal_v2_action: parsed.action,
+    },
     ...(input.delivery !== undefined ? { delivery: input.delivery } : {}),
   }
   const admitted = await ctx.session.prompt({ ...promptInput, resume: false })
   const messageID = firstString(record(admitted)?.id, nestedRecord(admitted, "data")?.id)
   if (!messageID) {
-    throw new Error("OpenCode Goals V2 direct lifecycle preview did not receive a host user-message ID; no Goal state was changed.")
+    throw new Error("OpenCode Goals V2 direct lifecycle did not receive a host user-message ID; no Goal state was changed.")
   }
 
   const capability: OpenCode2DirectCapability = {
@@ -832,7 +850,7 @@ export async function executeOpenCode2DirectGoalCommand(
     const resumedMessageID = firstString(record(resumed)?.id, nestedRecord(resumed, "data")?.id)
     if (resumedMessageID && resumedMessageID !== messageID) {
       revokeCapability(runtime, capability)
-      throw new Error("OpenCode Goals V2 direct lifecycle preview resumed with a different host user-message ID; no Goal state was changed.")
+      throw new Error("OpenCode Goals V2 direct lifecycle resumed with a different host user-message ID; no Goal state was changed.")
     }
   } catch (error) {
     revokeCapability(runtime, capability)
@@ -843,10 +861,10 @@ export async function executeOpenCode2DirectGoalCommand(
 }
 
 /**
- * Read-only compatibility entrypoint retained for experimental consumers.
- * Only status/contract reads are permitted until the real OpenCode 2 host can
- * prove command origin and request-time plugin tool materialization. All
- * lifecycle mutations fail closed without writing Goal state.
+ * Read-only compatibility entrypoint retained for callers that do not enter
+ * through the host-native direct /goal command boundary. Status/contract and
+ * other read surfaces remain available, while lifecycle mutation fails closed
+ * without host-authorized command identity.
  */
 export async function executeOpenCode2GoalControl(
   ctx: OpenCode2ExperimentalContext,
@@ -893,7 +911,7 @@ const authorizedControlInputSchema = {
 function addExperimentalCommand(commands: any, name: string, definition: any): void {
   const add = commands?.add
   if (typeof add !== "function") {
-    throw new Error("OpenCode Goals V2 direct lifecycle preview requires a command draft with add().")
+    throw new Error("OpenCode Goals V2 direct lifecycle requires a command draft with add().")
   }
   if (add.length === 1) {
     add.call(commands, { ...definition, name })
@@ -905,7 +923,7 @@ function addExperimentalCommand(commands: any, name: string, definition: any): v
 function addExperimentalTool(tools: any, name: string, definition: any): void {
   const add = tools?.add
   if (typeof add !== "function") {
-    throw new Error("OpenCode Goals V2 experimental adapter requires a tool draft with add().")
+    throw new Error("OpenCode Goals V2 adapter requires a tool draft with add().")
   }
 
   // beta-17498 exposes add(definition) and validates definition.name after the
@@ -937,8 +955,8 @@ export const OpenCode2GoalsExperimental = {
     const hostLimitRuntime = createOpenCode2HostLimitRuntime()
     const hostLimitRetryTimers = new Map<string, ReturnType<typeof setTimeout>>()
     const autonomousDispatching = new Set<string>()
-    const previewEnabled = directLifecyclePreviewEnabled()
-    const autonomousEnabled = previewEnabled && autonomousPreviewEnabled()
+    const lifecycleEnabled = stableV2FeatureEnabled(ctx, "lifecycle", OPENCODE2_DIRECT_LIFECYCLE_ENV)
+    const autonomousEnabled = lifecycleEnabled && stableV2FeatureEnabled(ctx, "autonomous", OPENCODE2_AUTONOMOUS_ENV)
     const semanticVerifier = createOpenCode2SemanticVerifierRuntime(
       ctx.session,
       async (sessionID) => await resolveSessionDirectory(ctx, sessionID),
@@ -1170,6 +1188,51 @@ export const OpenCode2GoalsExperimental = {
       hostLimitRetryTimers.set(goal.sessionID, timer)
     }
 
+    const nativeToolHooks = typeof ctx.tool.hook === "function"
+    if (nativeToolHooks) {
+      await ctx.tool.hook!("execute.before", async (event: any) => {
+        const sessionID = firstString(event?.sessionID)
+        const callID = firstString(event?.callID, event?.id)
+        const tool = firstString(event?.tool, event?.name)
+        if (!sessionID || !callID || !tool) return
+
+        // OpenCode 2 exposes a native tool-execution boundary. Feed it into the
+        // same telemetry/progress core instead of depending on loosely-shaped
+        // server events when this stronger hook is available.
+        observeOpenCode2TelemetryEvent(telemetryRuntime, sessionID, {
+          type: "session.tool.called",
+          data: {
+            id: callID,
+            name: tool,
+            input: event?.input,
+          },
+        })
+        await rememberShellProgressStart(sessionID, callID)
+      })
+
+      await ctx.tool.hook!("execute.after", async (event: any) => {
+        const sessionID = firstString(event?.sessionID)
+        const callID = firstString(event?.callID, event?.id)
+        const tool = firstString(event?.tool, event?.name)
+        if (!sessionID || !callID) return
+
+        const completed = event?.status === "completed" || event?.status === "success" || event?.status === undefined
+        observeOpenCode2TelemetryEvent(telemetryRuntime, sessionID, {
+          type: completed ? "session.tool.success" : "session.tool.failed",
+          data: {
+            id: callID,
+            ...(tool ? { name: tool } : {}),
+            ...(event?.input !== undefined ? { input: event.input } : {}),
+            ...(event?.result?.metadata !== undefined ? { metadata: event.result.metadata } : {}),
+            executed: completed,
+          },
+        })
+
+        if (completed) await applySuccessfulToolProgress(sessionID, callID)
+        else forgetOpenCode2ToolProgressCall(toolProgressRuntime, sessionID, callID)
+      })
+    }
+
     if (typeof ctx.event?.subscribe === "function") {
       lifecycleTask = (async () => {
         try {
@@ -1193,15 +1256,15 @@ export const OpenCode2GoalsExperimental = {
               observeOpenCode2TelemetryEvent(telemetryRuntime, sessionID, event)
             }
 
-            if (sessionID && type === "session.tool.called") {
+            if (!nativeToolHooks && sessionID && type === "session.tool.called") {
               const callID = firstString(data?.id, data?.callID)
               if (callID) await rememberShellProgressStart(sessionID, callID)
             }
-            if (sessionID && type === "session.tool.success") {
+            if (!nativeToolHooks && sessionID && type === "session.tool.success") {
               const callID = firstString(data?.id, data?.callID)
               if (callID) await applySuccessfulToolProgress(sessionID, callID)
             }
-            if (sessionID && type === "session.tool.failed") {
+            if (!nativeToolHooks && sessionID && type === "session.tool.failed") {
               const callID = firstString(data?.id, data?.callID)
               if (callID) forgetOpenCode2ToolProgressCall(toolProgressRuntime, sessionID, callID)
             }
@@ -1401,13 +1464,13 @@ export const OpenCode2GoalsExperimental = {
       void lifecycleTask.catch(() => undefined)
     }
 
-    if (previewEnabled) {
+    if (lifecycleEnabled) {
       if (typeof ctx.command?.transform !== "function") {
-        throw new Error("OpenCode Goals V2 direct lifecycle preview requires command.transform().")
+        throw new Error("OpenCode Goals V2 direct lifecycle requires command.transform().")
       }
       await ctx.command.transform((commands) => {
         addExperimentalCommand(commands, "goal", {
-          description: "Persistent OpenCode Goal lifecycle preview through a host-authenticated single-use capability.",
+          description: "Persistent OpenCode Goal lifecycle through a host-authenticated single-use capability.",
           execute: async (input: OpenCode2DirectCommandInvocation) =>
             await executeOpenCode2DirectGoalCommand(ctx, input, runtime, {
               onAdminMutation: async (sessionID, parsed, applied) => {
@@ -1428,7 +1491,7 @@ export const OpenCode2GoalsExperimental = {
 
     await ctx.tool.transform((tools) => {
       addExperimentalTool(tools, V2_GET_TOOL, {
-        description: "Read the current persisted OpenCode Goal through the read-only experimental V2 adapter.",
+        description: "Read the current persisted OpenCode Goal through the OpenCode 2 adapter.",
         input: { type: "object", properties: {}, additionalProperties: false },
         output: controlOutputSchema,
         execute: async (_input: unknown, toolContext: OpenCode2ExperimentalToolContext) => {
@@ -1438,7 +1501,7 @@ export const OpenCode2GoalsExperimental = {
         },
       })
 
-      if (previewEnabled) {
+      if (lifecycleEnabled) {
         addExperimentalTool(tools, V2_CONTROL_TOOL, {
           description: "Consume the one-use host-authenticated direct /goal lifecycle capability for the current request. This tool is removed from ordinary, replayed, and Plan/read-only requests.",
           input: authorizedControlInputSchema,
@@ -1479,7 +1542,7 @@ export const OpenCode2GoalsExperimental = {
         return
       }
 
-      if (!previewEnabled || !allowAuthorization) {
+      if (!lifecycleEnabled || !allowAuthorization) {
         removeControlTool(event)
       } else {
         const lastUserMessageID = eventLastUserMessageID(event)
@@ -1537,6 +1600,30 @@ export const OpenCode2GoalsExperimental = {
     }
 
     try {
+      await ctx.session.hook("prompt", async (event: any) => {
+        if (!autonomousEnabled) return
+        const sessionID = sessionIDFromEvent(event)
+        if (!sessionID) return
+
+        const prompt = nestedRecord(event, "prompt")
+        const metadata = record(event?.metadata) ?? record(prompt?.metadata)
+        if (
+          metadata?.opencode_goal_v2_autonomous === true
+          || metadata?.opencode_goal_v2_direct_command === true
+          || metadata?.opencode_goal_v2_verifier === true
+        ) return
+
+        // V2 prompt admission runs before durable inbox admission and before the
+        // model context is built. Mark steering here so an in-flight semantic
+        // completion cannot finish during the gap before the later context hook.
+        workTools.markForegroundAdmission(sessionID)
+      })
+    } catch {
+      // Older hosts may not expose prompt admission. The context hook below
+      // remains the conservative fallback steering boundary.
+    }
+
+    try {
       await ctx.session.hook("context", async (event: any) => {
         if (semanticVerifier.handleContext(event)) return
 
@@ -1566,7 +1653,7 @@ export const OpenCode2GoalsExperimental = {
         if (autonomousEnabled) workTools.handleContext(event)
       })
     } catch {
-      // Exact OpenCode 2.0.11 exposes context. If it is absent, preview
+      // Exact OpenCode 2.0.11 exposes context. If it is absent, lifecycle
       // capability authorization fails closed because no request can arm it.
     }
 

@@ -50,8 +50,9 @@ Installer:
 - OpenCode plugin listesine `@bybrawe/opencode-goal@<exact-version>` ekler ve exact sürüme sabitler;
 - eski, sürümsüz veya `@latest` Goal plugin kayıtlarını yükseltir;
 - bilinen yinelenen eski yerel Goal plugin kopyalarını kaldırır;
-- `/goal` komutunun keşfedilebilir olması için yönetilen global `commands/goal.md` dosyasını kurar;
-- yönetilen plugin dizisi dışındaki ilgisiz OpenCode ayarlarını ve JSONC yorumlarını korur.
+- OpenCode 1.x üzerinde `/goal` komutunun keşfedilebilir olması için yönetilen global `commands/goal.md` köprüsünü kurar;
+- OpenCode 2.x üzerinde native `plugins` config alanını yazar ve eski command bridge yerine plugin-native `/goal` komutunu kullanır;
+- Goal'a ait kayıt dışındaki ilgisiz OpenCode ayarlarını, plugin kayıtlarını ve JSONC yorumlarını korur.
 
 Varsayılan OpenCode konumları:
 
@@ -59,17 +60,19 @@ macOS / Linux:
 
 ```text
 ~/.config/opencode/opencode.json or opencode.jsonc
-~/.config/opencode/commands/goal.md
+~/.config/opencode/commands/goal.md   # yalnız OpenCode 1.x bridge
 ```
 
 Windows:
 
 ```text
 %USERPROFILE%\.config\opencode\opencode.json or opencode.jsonc
-%USERPROFILE%\.config\opencode\commands\goal.md
+%USERPROFILE%\.config\opencode\commands\goal.md   # yalnız OpenCode 1.x bridge
 ```
 
 OpenCode npm paketini özel `./server` entrypoint'i üzerinden yükler. Root export normal JavaScript API'si olarak kalır.
+
+OpenCode 2, V2 lifecycle ve autonomous coordinator yolunu varsayılan olarak etkinleştirir. Native `plugins` kayıtları deployment ihtiyacına göre `options.lifecycle` ve `options.autonomous` değerlerini `false` yapabilir. Eski `OPENCODE_GOAL_V2_DIRECT_LIFECYCLE` ve `OPENCODE_GOAL_V2_AUTONOMOUS` ortam değişkenleri daha yüksek öncelikli acil override olarak korunur: ilgili V2 katmanını kapatmak için `0`, `false`, `no` veya `off` verilebilir. Tanınmayan açık environment değerleri fail-closed davranır. Uygun hostlarda V2-native prompt admission ve tool-execution hook'ları doğrudan kullanılır; uzun süren evidence/completion araçları host-native tool progress API'si üzerinden ilerleme bildirir.
 
 ## Neden OpenCode Goals?
 
@@ -318,13 +321,13 @@ npx -y @bybrawe/opencode-goal@latest
 
 Ardından:
 
-1. installer'ın exact package pin ve yönetilen `/goal` komutunu raporladığını doğrulayın;
-2. global OpenCode config dizininde `commands/goal.md` bulunduğunu doğrulayın;
+1. installer'ın exact package pin raporladığını doğrulayın;
+2. OpenCode 1.x için managed `commands/goal.md` köprüsünü; OpenCode 2.x için native `plugins` kaydını doğrulayın — V2 managed bridge gerektirmez;
 3. tüm OpenCode CLI/TUI/Desktop süreçlerini tamamen kapatıp yeniden açın;
 4. OpenCode'u external plugin'leri kapatan `--pure` ile başlatmayın;
 5. plugin-load hataları için OpenCode config diagnostics'i inceleyin.
 
-Installer kullanıcıya ait bir `commands/goal.md` dosyasının üzerine yazmaz.
+Installer kullanıcıya ait bir `commands/goal.md` dosyasının üzerine yazmaz; OpenCode 2 böyle bir legacy dosyayı olduğu gibi bırakır ve plugin-native komutu kullanır.
 
 ### Completion işi bittiği halde Goal paused
 

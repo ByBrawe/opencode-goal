@@ -9,6 +9,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const npmCLI = process.env.npm_execpath
 const runtimeDependency = "@opencode-ai/plugin"
 const runtimeDependencyRange = ">=1.4.0 <2"
+const v2RuntimeDependency = "@opencode/plugin"
+const v2RuntimeDependencyRange = "^2.0.4"
 const minimumOpenCode = ">=1.4.0"
 const managedCommandMarker = "<!-- managed-by:@bybrawe/opencode-goal -->"
 
@@ -102,6 +104,12 @@ async function main() {
   if (packageJSON.peerDependencies?.[runtimeDependency]) {
     throw new Error(`${runtimeDependency} must not be peer-only; OpenCode installs npm plugins into an isolated production cache`)
   }
+  if (packageJSON.dependencies?.[v2RuntimeDependency] !== v2RuntimeDependencyRange) {
+    throw new Error(`package smoke requires ${v2RuntimeDependency} as a production dependency (${v2RuntimeDependencyRange}) for the stable OpenCode 2 plugin contract`)
+  }
+  if (packageJSON.peerDependencies?.[v2RuntimeDependency]) {
+    throw new Error(`${v2RuntimeDependency} must not be peer-only; published V2 plugins must carry a compatible plugin runtime dependency`)
+  }
   if (!packageJSON.exports?.["./server"]?.import) throw new Error("package.json must expose the OpenCode ./server entrypoint")
   if (!packageJSON.exports?.["./tui"]?.import) throw new Error("package.json must expose the target-exclusive ./tui entrypoint")
   if (packageJSON.bin?.["opencode-goal"] !== "bin/opencode-goal.js") throw new Error("package.json must expose the npm-canonical committed opencode-goal installer bin shim")
@@ -147,7 +155,9 @@ async function main() {
       if (typeof server.default?.setup !== "function") throw new Error("OpenCode 2 setup export is missing");
       if (server.default.server !== mod.default) throw new Error("server entrypoint does not delegate to the public plugin implementation");
       const toolModule = await import("@opencode-ai/plugin/tool");
-      if (typeof toolModule.tool !== "function") throw new Error("runtime OpenCode tool dependency is missing");
+      if (typeof toolModule.tool !== "function") throw new Error("runtime OpenCode V1 tool dependency is missing");
+      const v2Plugin = await import("@opencode/plugin");
+      if (typeof v2Plugin.Plugin?.define !== "function") throw new Error("runtime OpenCode V2 plugin dependency is missing");
       const tui = await import("@bybrawe/opencode-goal/tui");
       if (typeof tui.default?.tui !== "function") throw new Error("TUI plugin export is missing");
       if (tui.default?.id !== "opencode-goal") throw new Error("TUI plugin id is incorrect");
@@ -197,6 +207,35 @@ async function main() {
     }
     if (await exists(commandPath)) throw new Error("published installer uninstall did not remove its managed /goal command")
 
+    const installerV2Config = path.join(temp, "installer-v2-config")
+    const installerV2Env = {
+      ...process.env,
+      OPENCODE_CONFIG_DIR: installerV2Config,
+      OPENCODE_GOAL_HOST_VERSION: "2.0.15",
+    }
+    run(process.execPath, [installerPath], { cwd: consumer, env: installerV2Env })
+    const configV2Path = path.join(installerV2Config, "opencode.json")
+    const installedV2Config = JSON.parse(await readFile(configV2Path, "utf8"))
+    if (!Array.isArray(installedV2Config.plugins) || installedV2Config.plugins.length !== 1 || installedV2Config.plugins[0] !== `${packageJSON.name}@${packageJSON.version}`) {
+      throw new Error("published installer did not create the exact OpenCode 2 plugins pin")
+    }
+    if (installedV2Config.plugin !== undefined) {
+      throw new Error("published OpenCode 2 installer wrote the legacy singular plugin key")
+    }
+    const commandV2Path = path.join(installerV2Config, "commands", "goal.md")
+    if (await exists(commandV2Path)) {
+      throw new Error("published OpenCode 2 installer created the legacy managed /goal command bridge")
+    }
+
+    run(process.execPath, [installerPath, "--uninstall"], { cwd: consumer, env: installerV2Env })
+    const uninstalledV2Config = JSON.parse(await readFile(configV2Path, "utf8"))
+    if (!Array.isArray(uninstalledV2Config.plugins) || uninstalledV2Config.plugins.some((value) => {
+      const spec = typeof value === "string" ? value : value?.package
+      return typeof spec === "string" && spec.startsWith(packageJSON.name)
+    })) {
+      throw new Error("published OpenCode 2 installer uninstall did not remove the Goal registration")
+    }
+
     const report = {
       schemaVersion: 1,
       generatedAt: new Date().toISOString(),
@@ -207,6 +246,7 @@ async function main() {
       version: packageJSON.version,
       minimumOpenCode,
       runtimeDependency: `${runtimeDependency}@${runtimeDependencyRange}`,
+      v2RuntimeDependency: `${v2RuntimeDependency}@${v2RuntimeDependencyRange}`,
       filename: packed.filename,
       packageSize: packed.size,
       unpackedSize: packed.unpackedSize,
@@ -215,8 +255,10 @@ async function main() {
       consumerImport: /consumer import ok/.test(String(consumerResult.stdout ?? "")),
       serverEntrypoint: true,
       installer: true,
+      installerV2: true,
       installerBinLinked: true,
       commandDiscovery: true,
+      nativeV2Command: true,
       uninstaller: true,
       gate: true,
     }
@@ -224,8 +266,9 @@ async function main() {
     console.log(`package ${report.npmPackage}@${report.version}`)
     console.log(`minimum OpenCode ${report.minimumOpenCode}`)
     console.log(`runtime dependency ${report.runtimeDependency}`)
+    console.log(`V2 runtime dependency ${report.v2RuntimeDependency}`)
     console.log(`tarball ${report.filename} files=${report.fileCount} packed=${report.packageSize} unpacked=${report.unpackedSize}`)
-    console.log("clean production-only consumer public API + server + TUI import + npm-linked installer + /goal command + uninstaller PASS")
+    console.log("clean production-only consumer public API + server + TUI import + V1/V2 npm-linked installer + /goal command modes + uninstaller PASS")
 
     if (options.jsonPath) {
       const target = path.resolve(root, options.jsonPath)

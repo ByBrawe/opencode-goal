@@ -231,11 +231,22 @@ async function runHost({ withGoalPlugin }) {
       return { ok: response.ok, status: response.status, body, text }
     }
 
-    const created = await request("/api/session", {
-      method: "POST",
-      body: JSON.stringify({ title: `${label} Todo materialization` }),
-    })
-    assert.ok(created.ok, `${label} session create failed: ${created.status} ${created.text}\n${logs}`)
+    const createDeadline = Date.now() + 30_000
+    let created
+    while (Date.now() < createDeadline) {
+      created = await request("/api/session", {
+        method: "POST",
+        body: JSON.stringify({ title: `${label} Todo materialization` }),
+      }, 5_000).catch(() => null)
+      if (created?.ok) break
+      const starting = created?.status === 503 && (
+        created?.body?.code === "service_starting"
+        || /service_starting/i.test(String(created?.text ?? ""))
+      )
+      if (!starting) break
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+    assert.ok(created?.ok, `${label} session create failed: ${created?.status ?? "no response"} ${created?.text ?? ""}\n${logs}`)
     sessionID = String((created.body?.data ?? created.body)?.id ?? "")
     assert.ok(sessionID)
 
@@ -268,8 +279,8 @@ async function main() {
   const stock = await runHost({ withGoalPlugin: false })
   const goal = await runHost({ withGoalPlugin: true })
 
-  assert.ok(stock.version.includes("2.0.15"), `expected stock 2.0.15, got ${stock.version}`)
-  assert.ok(goal.version.includes("2.0.15"), `expected Goal host 2.0.15, got ${goal.version}`)
+  assert.ok(stock.version.includes("2.0.16"), `expected stock 2.0.16, got ${stock.version}`)
+  assert.ok(goal.version.includes("2.0.16"), `expected Goal host 2.0.16, got ${goal.version}`)
 
   console.log(JSON.stringify({
     ok: true,

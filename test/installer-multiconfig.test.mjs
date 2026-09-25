@@ -11,11 +11,11 @@ const installer = path.join(root, "dist", "install.js")
 const packageVersion = JSON.parse(await readFile(path.join(root, "package.json"), "utf8")).version
 const packageSpec = `@bybrawe/opencode-goal@${packageVersion}`
 
-async function runInstaller(configDir) {
+async function runInstaller(configDir, envPatch = {}) {
   return await new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [installer], {
       cwd: root,
-      env: { ...process.env, OPENCODE_CONFIG_DIR: configDir },
+      env: { ...process.env, OPENCODE_CONFIG_DIR: configDir, ...envPatch },
       windowsHide: true,
     })
     const stdout = []
@@ -82,6 +82,43 @@ test("installer normalizes Goal registration across every existing global config
   }
 })
 
+test("OpenCode 2 multi-config install uses native plugins everywhere and preserves user-owned goal command", async () => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-v2-multi-config-"))
+  const configDir = path.join(temp, "config")
+  const commandPath = path.join(configDir, "commands", "goal.md")
+  try {
+    await mkdir(path.dirname(commandPath), { recursive: true })
+    await writeFile(path.join(configDir, "opencode.json"), JSON.stringify({
+      plugin: ["legacy-v1-plugin", "@bybrawe/opencode-goal@1.0.0"],
+      plugins: [{ package: "native-v2-plugin", options: { enabled: true } }],
+    }, null, 2) + "\n")
+    await writeFile(path.join(configDir, "opencode.jsonc"), `{
+  // Preserve this second native config.
+  "plugins": ["@bybrawe/opencode-goal@1.2.0"],
+}
+`)
+    const custom = "---\ndescription: user-owned goal command\n---\ncustom\n"
+    await writeFile(commandPath, custom)
+
+    const result = await runInstaller(configDir, { OPENCODE_GOAL_HOST_VERSION: "2.0.15" })
+    assert.equal(result.code, 0, result.stderr)
+    assert.match(result.stdout, /across 2 OpenCode config files/)
+
+    const json = JSON.parse(await readFile(path.join(configDir, "opencode.json"), "utf8"))
+    assert.deepEqual(json.plugin, ["legacy-v1-plugin"])
+    assert.deepEqual(json.plugins, [
+      { package: "native-v2-plugin", options: { enabled: true } },
+      packageSpec,
+    ])
+
+    const jsoncSource = await readFile(path.join(configDir, "opencode.jsonc"), "utf8")
+    assert.match(jsoncSource, /Preserve this second native config/)
+    assert.ok(jsoncSource.includes(packageSpec))
+    assert.equal(await readFile(commandPath, "utf8"), custom)
+  } finally {
+    await rm(temp, { recursive: true, force: true })
+  }
+})
 test("multi-config install stages every rewrite before mutating real config", async () => {
   const temp = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-multi-config-fail-"))
   const configDir = path.join(temp, "config")

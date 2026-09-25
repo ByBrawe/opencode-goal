@@ -99,6 +99,7 @@ async function writeAtomic(target: string, content: string): Promise<void> {
 }
 
 async function assertManagedCommandWritable(): Promise<void> {
+  if (nativeGoalCommandMode) return
   if (!(await fileExists(goalCommandPath))) return
   const existing = await readFile(goalCommandPath, "utf8")
   if (existing.includes(managedCommandMarker)) return
@@ -145,7 +146,12 @@ async function installAcrossExistingConfigs(existing: string[]): Promise<void> {
   for (const plan of plans) await writeAtomic(plan.target, plan.content)
 
   if (nativeGoalCommandMode) {
-    await rm(goalCommandPath, { force: true })
+    if (await fileExists(goalCommandPath)) {
+      const existingCommand = await readFile(goalCommandPath, "utf8")
+      if (existingCommand.includes(managedCommandMarker)) {
+        await rm(goalCommandPath, { force: true })
+      }
+    }
   } else {
     const commandContent = plans[0]?.commandContent
     if (!commandContent) throw new Error("staged managed /goal command content is missing")

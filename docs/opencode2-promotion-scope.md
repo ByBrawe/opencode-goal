@@ -1,124 +1,112 @@
-# OpenCode 2 promotion scope
+# OpenCode 2 stable support scope
 
-OpenCode Goals keeps stable OpenCode compatibility at `@opencode-ai/plugin >=1.4.0 <2` while OpenCode 2 support remains evidence-gated.
+OpenCode Goals supports the OpenCode 2 host through the package's dual `./server` entrypoint. The OpenCode 2 lifecycle and autonomous coordinator are enabled by default after the exact-host parity gates described below.
 
-## Lifecycle preview covered by the promotion gate
+The historical implementation module and CI workflow still use `experimental` / `Experimental OpenCode 2 Host` in some internal names so existing imports and required-check names remain stable. Those names no longer mean that users must opt in to the V2 runtime.
 
-On exact OpenCode 2.0.11, the experimental direct lifecycle preview may cover:
+## Default and kill-switch behavior
 
-- host-native direct `/goal` command origin;
-- host user-message identity;
-- bounded, single-use lifecycle capability exposure;
-- create, status, contract, pause, resume, edit, and clear persistence;
-- mismatch, spoof, replay, Plan/read-only, and Location fail-closed behavior;
-- continued read-only Goal inspection after mutating capability consumption.
+OpenCode 2 now enables both layers by default:
 
-These behaviors do not widen the stable compatibility claim by themselves.
+- host-native `/goal` lifecycle and administration;
+- Goal-owned autonomous continuation, semantic verification, accounting, recovery, and compaction coordination.
 
-## Autonomous continuation preview
+OpenCode 2-native plugin options are also supported through object-form `plugins` entries. `options.lifecycle` and `options.autonomous` default to `true`; explicit environment overrides take precedence so operators retain an emergency kill switch.
 
-Autonomous V2 continuation remains a second explicit preview. It requires both:
+The stable V2 runtime uses the domain APIs introduced by OpenCode 2 rather than emulating V1 hooks: `ctx.session.hook("prompt")` marks user steering at prompt admission, `ctx.session.hook("context")` owns model-request authorization/context, `ctx.session.hook("compaction")` keeps compaction read-only, `ctx.tool.hook("execute.before/after")` drives tool telemetry/progress when present, and long-running Goal work tools use the native executor `context.progress()` surface for UI progress without changing persistence semantics.
+
+The historical environment variables remain as emergency fail-closed kill switches:
 
 ```text
-OPENCODE_GOAL_V2_DIRECT_LIFECYCLE=1
-OPENCODE_GOAL_V2_AUTONOMOUS=1
+OPENCODE_GOAL_V2_DIRECT_LIFECYCLE=0
+OPENCODE_GOAL_V2_AUTONOMOUS=0
 ```
 
-The autonomous preview never treats a session-wide terminal event as Goal ownership by itself. A Goal continuation is first durably admitted by OpenCode with `resume:false`; only the exact host user-message ID observed again at `session.context` can arm the corresponding execution generation. Direct create/edit/resume executions are kickoff boundaries, not no-progress Goal work turns. Unowned user/read-only executions are ignored for Goal stall accounting.
+Accepted false values are `0`, `false`, `no`, and `off`. Accepted true values remain `1`, `true`, `yes`, and `on`. An explicitly supplied unrecognized value fails closed instead of enabling mutation accidentally.
 
-Successful owned turns reuse the same Goal no-progress boundary as stable V1. Compaction-owned execution terminals remain separate and can schedule at most one post-compaction Goal continuation. Dispatch is fail-closed for read-only/restricted execution state, exhausted budgets, future infrastructure-recovery cooldowns, and stale Goal revisions.
+Disabling the direct lifecycle layer leaves the persisted-state inspection adapter read-only. Autonomous continuation cannot become active unless the direct lifecycle layer is active.
 
-This preview still does **not** establish stable OpenCode 2 support. The final combined promotion head remains required before compatibility metadata can be widened.
+## Installer/config contract
 
-## V1 model-context headroom preview
+OpenCode 1 and OpenCode 2 use different package-plugin config dialects.
 
-Exact OpenCode 2.0.11 proves that `session.context.model` carries only the selected model identity, while the plugin-level `ctx.model.list()` registry exposes the selected model's authoritative `limit.context`, optional `limit.input`, and `limit.output` values.
+- OpenCode 1 uses the singular `plugin` array and the managed `commands/goal.md` compatibility bridge.
+- OpenCode 2 uses the native plural `plugins` array and the plugin-native `/goal` command. The installer removes only the Goal-owned legacy command bridge when switching to this mode.
 
-The V2 adapter therefore:
+When the installer moves a Goal registration between dialects it removes only Goal-owned package/local entries. Unrelated entries in the other dialect are preserved. OpenCode 2 `plugins` entries may be package strings or `{ package, options }` objects.
 
-- resolves the selected `{ providerID, id }` against `ctx.model.list()` during the identity-bearing `session.context` hook;
-- persists the selected execution model as the same `{ providerID, modelID }` shape used by V1;
-- feeds registry limits into the shared V1 `observeModelContextLimits()` state instead of guessing from provider configuration;
-- preserves the latest request/input usage from exact V2 step telemetry while keeping cumulative Goal token budgets separate from model-window pressure;
-- treats registry lookup failure as advisory/fail-closed: no synthetic limits are invented and Goal work is not blocked;
-- resets stale model-context telemetry when the selected model identity changes, while repeated identical registry observations remain a semantic no-op.
+## Lifecycle authority
 
-The production exact-host telemetry parity canary must prove the configured context/output limits are actually persisted in Goal state before stable promotion can rely on model headroom.
+OpenCode 2 lifecycle mutation remains fail-closed and host-authorized:
 
-## V1 control-plane parity preview
+- the host-native direct `/goal` command is the only mutation origin;
+- admission records the exact host user-message identity;
+- model-visible mutation is exposed only through a bounded, single-use capability tied to that message and execution generation;
+- mismatched arguments, replay, spoofed prompt text, Plan/read-only contexts, workspace/Location changes, stale generations, and expired capabilities cannot mutate Goal state;
+- admin/storage mutations that do not need a model turn run directly inside the host command callback;
+- ordinary request/context/compaction presentation stays read-only unless the exact direct-command capability is armed.
 
-The host-authenticated V2 `/goal` command surface also reuses the stable V1 persistence and formatting layers for Goal administration:
+## Autonomous ownership and turn boundaries
 
-- read-only views: `status`, `contract`, `audit`, `budget` (without a patch), `history`, `doctor`, `list`, and `queue`;
-- lifecycle mutations (`create/edit/pause/resume/clear`) retain the one-use host-authorized control capability;
-- storage/admin mutations (`budget`, `history prune`, `restore`, `add`, `queue move/remove/clear`, and `next`) run directly inside the host-native `/goal` command callback, so persistence does not depend on a model/provider turn;
-- queue state is still stored by `GoalSequenceStore`; only one Goal can be live, queue entries remain inert until promotion, and storage locking/integrity behavior is shared with V1;
-- lifting a `budget_limited` Goal or explicitly activating `next` can re-arm autonomous V2 continuation, while restore remains paused until the user explicitly resumes;
-- after a Goal-owned V2 execution completes the current Goal, the successful execution boundary may promote the next queued Goal exactly through the same sequence store and schedule the promoted Goal as the new continuation owner;
-- ordinary prompt text cannot invoke these mutations: model-visible Goal control remains read-only, while host-native admin commands are admitted only through the real `/goal` command callback after the current session Location is resolved;
-- presentation-only follow-up prompts are best effort and never determine whether an admin mutation committed or cause the mutation to be replayed.
+A session-wide terminal event is never sufficient to claim Goal ownership. A Goal continuation is durably admitted with `resume:false`; only the exact admitted user-message ID observed again at `session.context` can arm the matching execution generation.
 
-Stable promotion requires an exact OpenCode 2.0.11 canary to prove the read-only views remain mutation-free, lifecycle mutation still requires the one-use capability, and representative host-native budget/archive/restore/sequence mutations persist without depending on provider execution.
+Direct create/edit/resume executions are kickoff boundaries, not Goal work turns. Foreground user work, read-only work, verifier children, and compaction-owned executions do not increment Goal no-progress accounting.
 
-## V1 telemetry/runtime parity preview
+Successful owned turns reuse the stable V1 continuation/no-progress policy. Queue promotion transfers ownership only after the completed Goal is durably persisted and the next Goal is promoted through the shared sequence store.
 
-Exact OpenCode 2.0.11 now exposes enough host telemetry to reuse the stable V1 turn-quality policies without counting provider substeps as separate Goal turns:
+## Completion and evidence parity
 
-- all `session.step.ended` samples inside one host execution are folded into one logical Goal-owned turn while preserving token, cost, and execution-runtime accounting;
-- the last exact host token sample updates the shared V1 model-context **usage** fields, including cache tokens for request/input pressure calculations;
-- non-empty assistant text or any tool activity makes an execution meaningful, so a tool-only turn with an empty final text response is not misclassified as empty;
-- a successful execution with no meaningful text/tool activity reuses V1's bounded empty-turn policy: billable usage is preserved, the first empty execution gets one retry/stall exemption, and the second consecutive empty execution pauses the Goal;
-- successful `write/edit/apply_patch` tool events reuse V1 file hashing, while `shell/bash` reuses the V1 Git-worktree/read-only-command progress guard;
-- progress is accepted only for the current host-owned Goal execution/revision, persisted before notification, and ordinary foreground/direct-lifecycle/compaction activity cannot manufacture Goal progress;
-- telemetry and pending shell state are execution/session bounded and terminal/session cleanup is fail-closed.
+OpenCode 2 uses the shared V1 proof core:
 
-The exact-host parity canary must prove one real Goal-owned write/tool loop counts as one logical turn and produces durable host progress, followed by two fully empty executions that preserve billable usage and trigger the same bounded pause as V1.
+- configured host checks and file contracts execute before semantic completion;
+- semantic requirements are independently audited in a parent-bound child session;
+- the verifier receives a restricted read-only tool surface plus its session-bound result tool;
+- audit tokens, exact requirement coverage, current file evidence, and host evidence are corroborated before completion;
+- user steering or Goal revision/lifecycle changes invalidate stale completion attempts;
+- verifier infrastructure failure remains bounded and fail-closed;
+- completion is persisted through the shared Goal completion audit and transition notifier before autonomous continuation stops.
 
+## Telemetry, accounting, and progress parity
 
-## V1 host-limit / provider-recovery parity preview
+Exact-host telemetry is folded into one logical Goal turn per owned host execution:
 
-Exact OpenCode 2.0.11 does not expose provider failures exactly like V1, so V2 recovery follows the proven host semantics rather than copying legacy event names:
+- step usage is accumulated without counting provider substeps as separate Goal turns;
+- token/cost/runtime accounting uses the shared V1 budget policy;
+- write/edit/apply-patch progress uses file hashing;
+- shell/bash progress uses the shared Git-worktree/read-only-command guard;
+- tool-only turns count as meaningful work;
+- empty successful executions reuse V1's bounded empty-turn policy;
+- progress must belong to the current Goal ID/revision and is persisted before notification.
 
-- deterministic context overflow is normally recovered by **native OpenCode auto-compaction**; the exact host emits `session.compaction.started(reason=auto)` / `session.compaction.ended` and a successful execution terminal, so Goal must not independently trigger a second compaction;
-- plugin-side `session.command("compact")` is not a hidden recovery API on exact 2.0.11, so V2 never fabricates a manual compaction path;
-- only a real terminal `session.execution.failed` for the exact Goal-owned kickoff/continuation generation can enter Goal host-limit policy; foreground/unowned failures are ignored;
-- exact V2 provider failures are normalized into the shared V1 `runtime/limits.ts` rules for prompt overflow, transient provider infrastructure, and fatal/auth failures;
-- unrecovered prompt overflow and fatal provider failures pause fail-closed while preserving Goal state;
-- transient owned failures use the shared persisted exponential infrastructure-recovery state and a bounded retry wake; another active execution delays the wake rather than injecting a competing prompt;
-- successful Goal-owned execution clears persisted provider-recovery state;
-- repeated automatic compaction of the same Goal revision without an intervening successful Goal-owned execution pauses fail-closed to prevent a compaction/continuation spin;
-- generic custom-provider HTTP 429 retries observed on exact 2.0.11 remain internal to the host execution and do not create synthetic durable Goal usage-limit state unless the host exposes a structured durable limit signal.
+Model context limits are resolved from the OpenCode 2 model registry and stored in the shared V1 model-context shape. Missing registry data never causes synthetic limits to be invented.
 
-The exact host-limit capability canary and production ownership tests must remain green before stable promotion.
+## Compaction and provider recovery parity
 
-## V1-grade completion preview
+Native OpenCode 2 compaction remains host-owned. Goal observes the compaction boundary, preserves persisted Goal context, and schedules at most one post-compaction continuation. It does not fabricate a second hidden compaction path.
 
-When both lifecycle and autonomous V2 previews are enabled, Goal-owned OpenCode 2 executions expose the same model-facing work controls used by stable V1: checkpoint notes, host file evidence, verified completion, waiting-user sleep, and repeated blocker reporting. These controls are visible only to the exact host-admitted Goal-owned execution identity for the current Goal revision; ordinary foreground turns and verifier children do not inherit them.
+Only a failure belonging to the exact Goal-owned execution can enter Goal recovery policy. Foreground failures are ignored. Prompt overflow, transient infrastructure failure, and fatal/auth failures are normalized into the shared V1 recovery rules. Persistent recovery state is bounded, successful owned execution clears it, and repeated compaction without an intervening successful Goal execution fails closed instead of spinning.
 
-V2 semantic completion reuses the stable V1 proof core rather than defining a weaker completion rule:
+## Todo/materialization boundary
 
-- configured host checks and declared file contracts run before semantic completion;
-- semantic requirements are audited in a parent-bound child session;
-- verifier context is reduced to read/glob/grep plus the session-bound result tool;
-- audit tokens and exact requirement coverage are required;
-- current file quotes and host-evidence references are independently corroborated by the host;
-- user steering or Goal revision/lifecycle changes invalidate stale completion;
-- verifier infrastructure timeout receives the same one bounded retry and then fails closed;
-- final persistence still passes through the shared Goal completion audit and durable transition notifier.
+Todo materialization is not a Goal-created OpenCode 2 regression. The stock-vs-Goal differential gate on OpenCode 2.0.16 shows that stock OpenCode exposes no native `todowrite` tool in that host surface and that Goal removes no stock tools. Goal therefore does not synthesize a weaker compatibility-only Todo API.
 
-Exact-host promotion evidence must prove that a Goal-owned OpenCode 2 turn can invoke this path, produce persisted host + verifier evidence, reach `completed`, and stop further autonomous continuation.
+If OpenCode 2 later exposes a supported native Todo surface, parity can be reconsidered against that host contract without weakening the current Goal evidence model.
 
-## Completion and recovery parity
+## Promotion evidence
 
-The lifecycle/autonomous previews do **not** by themselves claim stable OpenCode 2 support.
+The stable V2 path is guarded by exact-host jobs covering:
 
-Before any stable OpenCode 2 lifecycle-support claim, exact-host evidence must separately prove the stable V1 behaviors that are relevant to autonomous execution, including:
+- package server-entry activation;
+- direct command/capability lifecycle;
+- runtime execution and compaction boundaries;
+- autonomous Goal ownership;
+- V1 control-plane behavior;
+- telemetry/accounting/progress behavior;
+- semantic completion and verifier child-session boundaries;
+- host-limit/provider recovery;
+- restart recovery and Loop coexistence;
+- stock-vs-Goal Todo materialization.
 
-- semantic completion transitions and completion evidence;
-- no-progress / recovery behavior;
-- compaction and restart recovery where those paths affect an active Goal;
-- continued Loop coexistence across those transitions.
+The direct-lifecycle and autonomous canaries intentionally run without V2 opt-in environment variables so the CI gate tests the default production path.
 
-Until that evidence exists, stable V1 remains the supported lifecycle path and the npm compatibility range remains `<2`.
-
-This separation is intentional: lifecycle command authority and persistence can be promoted experimentally without implying completion/recovery parity that has not yet been demonstrated on OpenCode 2.
+The package still carries its V1 `@opencode-ai/plugin` runtime dependency for the V1 server implementation. This document does not widen that dependency range merely to signal host support; OpenCode 2 host support is provided by the dual server entrypoint and is proven by the OpenCode 2 host gates.

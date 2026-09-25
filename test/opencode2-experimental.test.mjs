@@ -289,6 +289,7 @@ test("stable V2 kill switch preserves the read-only fail-closed adapter", async 
       assert.equal(host.tools.has("opencode_goals_v2_control"), false)
       assert.equal(host.tools.get("opencode_goals_v2_get")?.options?.codemode, false)
       assert.equal(typeof host.tools.get("opencode_goals_v2_get")?.definition?.execute, "function")
+      assert.equal(typeof host.hooks.get("prompt"), "function")
       assert.equal(typeof host.hooks.get("context"), "function")
       assert.equal(typeof host.hooks.get("request"), "function")
       assert.equal(typeof host.hooks.get("compaction"), "function")
@@ -358,6 +359,7 @@ test("stable V2 registers lifecycle and autonomous work controls by default", as
       assert.equal(typeof host.tools.get("opencode_goals_v2_control")?.definition?.execute, "function")
       assert.equal(typeof host.tools.get("opencode_goals_v2_get")?.definition?.execute, "function")
       assert.equal(typeof host.tools.get("opencode_goal_complete")?.definition?.execute, "function")
+      assert.equal(typeof host.hooks.get("prompt"), "function")
       await cleanup()
     } finally {
       if (previousDirect === undefined) delete process.env[directKey]

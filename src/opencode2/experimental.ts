@@ -62,6 +62,7 @@ const V2_CONTROL_TOOL = "opencode_goals_v2_control"
 const V2_GET_TOOL = "opencode_goals_v2_get"
 export const OPENCODE2_DIRECT_LIFECYCLE_ENV = "OPENCODE_GOAL_V2_DIRECT_LIFECYCLE"
 export const OPENCODE2_AUTONOMOUS_ENV = "OPENCODE_GOAL_V2_AUTONOMOUS"
+const OPENCODE2_INFRA_RETRY_POLL_MS = 5_000
 const V2_READ_ONLY_NOTICE =
   "OpenCode Goals V2 model-visible lifecycle control remains read-only. Mutation is authorized only through the host-native direct command boundary when the explicit V2 lifecycle preview is enabled. No Goal state was changed."
 
@@ -1128,6 +1129,18 @@ export const OpenCode2GoalsExperimental = {
         const now = Date.now()
         if (goal.infrastructureRecovery.nextRetryAt > now) {
           armHostLimitRetry(goal)
+          return
+        }
+
+        if (
+          runtime.activeExecutionGenerationBySession.has(sessionID)
+          || autonomousDispatching.has(sessionID)
+        ) {
+          const timer = setTimeout(() => {
+            void wakeHostLimitRetry(sessionID)
+          }, OPENCODE2_INFRA_RETRY_POLL_MS)
+          ;(timer as any).unref?.()
+          hostLimitRetryTimers.set(sessionID, timer)
           return
         }
 

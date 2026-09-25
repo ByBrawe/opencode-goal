@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   current-stable-v2:
-    name: OpenCode 2.0.15 stable lifecycle
+    name: OpenCode 2.0.16 stable lifecycle
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -29,8 +29,8 @@ jobs:
           node-version: "24"
       - run: npm install
       - run: npm run build
-      - name: Install OpenCode 2.0.15
-        run: npm install -g @opencode/cli@2.0.15
+      - name: Install OpenCode 2.0.16
+        run: npm install -g @opencode/cli@2.0.16
       - name: Check current stable canary syntax
         run: node --check scripts/opencode2-current-stable-canary.mjs
       - name: Prove default lifecycle and autonomous ownership

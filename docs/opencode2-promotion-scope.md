@@ -88,7 +88,7 @@ Only a failure belonging to the exact Goal-owned execution can enter Goal recove
 
 ## Todo/materialization boundary
 
-Todo materialization is not a Goal-created OpenCode 2 regression. The stock-vs-Goal differential gate on OpenCode 2.0.15 shows that stock OpenCode exposes no native `todowrite` tool in that host surface and that Goal removes no stock tools. Goal therefore does not synthesize a weaker compatibility-only Todo API.
+Todo materialization is not a Goal-created OpenCode 2 regression. The stock-vs-Goal differential gate on OpenCode 2.0.16 shows that stock OpenCode exposes no native `todowrite` tool in that host surface and that Goal removes no stock tools. Goal therefore does not synthesize a weaker compatibility-only Todo API.
 
 If OpenCode 2 later exposes a supported native Todo surface, parity can be reconsidered against that host contract without weakening the current Goal evidence model.
 

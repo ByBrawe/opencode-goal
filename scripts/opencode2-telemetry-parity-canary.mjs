@@ -476,6 +476,21 @@ async function main() {
     assert.equal(afterMeaningful.stalledTurns, 0)
     assert.ok(afterMeaningful.usage.tokens > 0)
     assert.ok((afterMeaningful.execution?.modelContext?.lastRequestTokens ?? 0) > 0)
+    assert.deepEqual(
+      afterMeaningful.execution?.model,
+      { providerID: "canary", modelID: "canary" },
+      "exact host registry identity must be persisted for the Goal-owned execution",
+    )
+    assert.equal(
+      afterMeaningful.execution?.modelContext?.contextLimit,
+      100000,
+      "exact host model registry context limit must be persisted",
+    )
+    assert.equal(
+      afterMeaningful.execution?.modelContext?.outputLimit,
+      4096,
+      "exact host model registry output limit must be persisted",
+    )
 
     const tokensAfterMeaningful = afterMeaningful.usage.tokens
     p.releaseSecondEmpty()
@@ -523,6 +538,9 @@ async function main() {
       tokens: paused.usage.tokens,
       emptyTurnCount: paused.emptyTurnCount,
       stalledTurns: paused.stalledTurns,
+      model: paused.execution?.model,
+      contextLimit: paused.execution?.modelContext?.contextLimit,
+      outputLimit: paused.execution?.modelContext?.outputLimit,
       lastRequestTokens: paused.execution?.modelContext?.lastRequestTokens,
       autonomousProviderCalls: autonomousProviderRequests.length,
       providerRequests: p.stats.requests,

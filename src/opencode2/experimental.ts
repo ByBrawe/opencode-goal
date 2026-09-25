@@ -669,7 +669,14 @@ export async function executeOpenCode2DirectGoalCommand(
   ctx: OpenCode2ExperimentalContext,
   input: OpenCode2DirectCommandInvocation,
   runtime: OpenCode2DirectLifecycleRuntime,
-): Promise<{ action: string; goal: GoalState | null; messageID?: string; dispatched: boolean }> {
+  options: {
+    onAdminMutation?: (
+      sessionID: string,
+      parsed: ReturnType<typeof parseGoalCommand>,
+      result: Awaited<ReturnType<typeof applyOpenCode2ControlPlaneMutation>>,
+    ) => Promise<void>
+  } = {},
+): Promise<{ action: string; goal: GoalState | null; messageID?: string; dispatched: boolean; message?: string }> {
   if (!directLifecyclePreviewEnabled()) {
     throw new Error(`OpenCode Goals V2 direct lifecycle preview is disabled. Set ${OPENCODE2_DIRECT_LIFECYCLE_ENV}=1 to enable it explicitly.`)
   }
@@ -714,6 +721,34 @@ export async function executeOpenCode2DirectGoalCommand(
       readOnlyCommandPrompt("status", `${formatStatus(goal)}\nBudget is still exhausted. Increase or clear the reached limit before resuming.`),
     )
     return { action: parsed.action, goal, dispatched: false }
+  }
+
+  if (OPENCODE2_EXTRA_MUTATION_ACTIONS.has(parsed.action)) {
+    await interruptBeforeDirectMutation(ctx, input.sessionID, parsed.action)
+    const applied = await applyOpenCode2ControlPlaneMutation(directory, input.sessionID, parsed)
+    if (!applied) {
+      throw new Error(`OpenCode Goals V2 direct admin command did not handle /goal ${parsed.action}. No Goal state was changed.`)
+    }
+    await options.onAdminMutation?.(input.sessionID, parsed, applied)
+    if (typeof ctx.session.prompt === "function") {
+      try {
+        await promptDirectReadOnly(
+          ctx,
+          input,
+          `${applied.message}\n\nThis Goal administration mutation was applied directly by the host-native /goal command. Respond with this result only; do not perform project work or mutate Goal state.`,
+        )
+      } catch {
+        // The admin mutation is already durably committed. A presentation-only
+        // follow-up must never convert a successful host mutation into a false
+        // failure or retry the mutation.
+      }
+    }
+    return {
+      action: parsed.action,
+      goal: applied.goal,
+      dispatched: false,
+      message: applied.message,
+    }
   }
 
   await interruptBeforeDirectMutation(ctx, input.sessionID, parsed.action)
@@ -1074,9 +1109,20 @@ export const OpenCode2GoalsExperimental = {
       await ctx.command.transform((commands) => {
         addExperimentalCommand(commands, "goal", {
           description: "Persistent OpenCode Goal lifecycle preview through a host-authenticated single-use capability.",
-          execute: async (input: OpenCode2DirectCommandInvocation) => {
-            await executeOpenCode2DirectGoalCommand(ctx, input, runtime)
-          },
+          execute: async (input: OpenCode2DirectCommandInvocation) =>
+            await executeOpenCode2DirectGoalCommand(ctx, input, runtime, {
+              onAdminMutation: async (sessionID, parsed, applied) => {
+                if (!autonomousEnabled) return
+                clearOpenCode2GoalOwnership(autonomousRuntime, sessionID)
+                if (!applied?.kickoff || !applied.goal || applied.goal.status !== "active") return
+                await scheduleAutonomousContinuation(
+                  sessionID,
+                  applied.goal,
+                  continuationPrompt(applied.goal),
+                  parsed.action === "next" ? "sequence" : "kickoff",
+                )
+              },
+            }),
         })
       })
     }

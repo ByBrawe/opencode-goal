@@ -8,8 +8,9 @@ const plugin = {
   // OpenCode 1.x server-plugin contract.
   server: OpenCodeGoalPlugin,
 
-  // OpenCode 2.x promise-plugin contract. The V2 adapter intentionally
-  // remains read-only until its host safety gates are satisfied.
+  // OpenCode 2.x promise-plugin contract. The implementation module keeps
+  // its historical name, but the V2 lifecycle/autonomous path is stable by
+  // default; its environment flags remain explicit fail-closed kill switches.
   setup: OpenCode2GoalsExperimental.setup,
 } satisfies PluginModule & {
   id: string

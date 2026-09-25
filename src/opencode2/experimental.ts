@@ -159,7 +159,7 @@ async function resolveSessionDirectory(ctx: OpenCode2ExperimentalContext, sessio
   const optionDirectory = firstString(ctx.options?.directory)
   const directory = firstString(location?.directory, sessionRecord?.directory, data?.directory, optionDirectory)
   if (!directory) {
-    throw new Error("OpenCode Goals V2 experimental adapter could not resolve the session location.directory; no Goal state was read or written.")
+    throw new Error("OpenCode Goals V2 adapter could not resolve the session location.directory; no Goal state was read or written.")
   }
   return path.resolve(directory)
 }
@@ -852,10 +852,10 @@ export async function executeOpenCode2DirectGoalCommand(
 }
 
 /**
- * Read-only compatibility entrypoint retained for experimental consumers.
- * Only status/contract reads are permitted until the real OpenCode 2 host can
- * prove command origin and request-time plugin tool materialization. All
- * lifecycle mutations fail closed without writing Goal state.
+ * Read-only compatibility entrypoint retained for callers that do not enter
+ * through the host-native direct /goal command boundary. Status/contract and
+ * other read surfaces remain available, while lifecycle mutation fails closed
+ * without host-authorized command identity.
  */
 export async function executeOpenCode2GoalControl(
   ctx: OpenCode2ExperimentalContext,
@@ -914,7 +914,7 @@ function addExperimentalCommand(commands: any, name: string, definition: any): v
 function addExperimentalTool(tools: any, name: string, definition: any): void {
   const add = tools?.add
   if (typeof add !== "function") {
-    throw new Error("OpenCode Goals V2 experimental adapter requires a tool draft with add().")
+    throw new Error("OpenCode Goals V2 adapter requires a tool draft with add().")
   }
 
   // beta-17498 exposes add(definition) and validates definition.name after the

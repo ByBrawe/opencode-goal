@@ -5,6 +5,8 @@ export type GoalStatus =
   | "blocked"
   | "budget_limited"
   | "usage_limited"
+  | "handoff_pending"
+  | "handed_off"
   | "completed"
 
 export type RequirementStatus = "pending" | "proven" | "failed" | "unknown" | "blocked"
@@ -166,6 +168,31 @@ export interface GoalExecutionContext {
   modelContext?: GoalModelContext
 }
 
+export interface GoalUnitRotation {
+  /** Host command whose stdout identifies the current external work unit. */
+  command: string
+  /** Rotation is always explicit; --unit alone never enables session churn. */
+  freshSessionPerUnit: true
+  /** Latest host-observed unit identity for the active session. */
+  currentUnit?: string
+  observedAt?: number
+  /** Stable chain metadata carried across session handoffs. */
+  rootSessionID: string
+  chainIndex: number
+  previousSessionID?: string
+  nextSessionID?: string
+  /** Two-phase V2 handoff marker. Older snapshots omit the whole structure. */
+  handoff?: {
+    fromSessionID: string
+    toSessionID: string
+    fromUnit?: string
+    toUnit: string
+    phase: "prepared" | "source_terminal" | "dispatch_pending" | "dispatched"
+    createdAt: number
+    dispatchedAt?: number
+  }
+}
+
 export interface GoalRuntimeFingerprint {
   /** Exact OpenCode Goal package version when discoverable from the loaded artifact. */
   goalVersion: string
@@ -193,6 +220,8 @@ export interface GoalState {
   checks: string[]
   /** Optional user-authored fire-and-forget local command for lifecycle notifications. */
   notifyCommand?: string
+  /** Optional host-verified bounded-session rotation contract. */
+  unitRotation?: GoalUnitRotation
   execution?: GoalExecutionContext
   /** Runtime identity that most recently persisted this Goal. Older schema-v1 snapshots may omit it. */
   runtimeFingerprint?: GoalRuntimeFingerprint

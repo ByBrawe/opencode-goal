@@ -321,6 +321,10 @@ async function main() {
     assert.ok(setup)
     assert.ok(context)
     assert.ok(registry)
+    assert.equal(context.selectedModel?.providerID, "canary")
+    assert.equal(context.selectedModel?.id ?? context.selectedModel?.modelID, "canary")
+    assert.equal(context.selectedModel?.limit?.context, MODEL_CONTEXT)
+    assert.equal(context.selectedModel?.limit?.output, MODEL_OUTPUT)
 
     console.log(JSON.stringify({
       ok: true,

@@ -151,3 +151,27 @@ test("unknown flags fail closed on the single-line command surface", () => {
 test("malformed contains contract fails closed", () => {
   assert.throws(() => parseGoalCommand('ship --contains "README.md"'), /path::exact text/)
 })
+
+
+test("per-unit session rotation is explicit, paired, and excluded from queued Goal creation", () => {
+  const parsed = parseGoalCommand('ship plan --unit "node scripts/current-unit.mjs" --fresh-session-per-unit')
+  assert.equal(parsed.unitCommand, "node scripts/current-unit.mjs")
+  assert.equal(parsed.freshSessionPerUnit, true)
+
+  assert.throws(
+    () => parseGoalCommand('ship plan --unit "node scripts/current-unit.mjs"'),
+    /--unit requires --fresh-session-per-unit/,
+  )
+  assert.throws(
+    () => parseGoalCommand("ship plan --fresh-session-per-unit"),
+    /requires --unit <host command>/,
+  )
+  assert.throws(
+    () => parseGoalCommand('add queued --unit "node unit.mjs" --fresh-session-per-unit'),
+    /does not support per-unit session rotation/,
+  )
+  assert.throws(
+    () => parseGoalCommand('budget --unit "node unit.mjs" --fresh-session-per-unit'),
+    /accepts only --max-turns/,
+  )
+})

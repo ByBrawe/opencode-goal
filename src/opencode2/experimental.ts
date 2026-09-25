@@ -35,6 +35,7 @@ import {
   forgetOpenCode2ToolProgressSession,
   rememberOpenCode2ShellBefore,
 } from "./tool-progress.js"
+import { applyOpenCode2TodoUpdate } from "./todo-telemetry.js"
 
 export const OPENCODE2_EXPERIMENTAL_PLUGIN_ID = "bybrawe.open-code-goals.v2-experimental"
 
@@ -1005,6 +1006,25 @@ export const OpenCode2GoalsExperimental = {
       }
     }
 
+    const applyNativeTodoTelemetry = async (sessionID: string, event: unknown) => {
+      const owner = autonomousRuntime.executionOwnerBySession.get(sessionID)
+      if (!owner) return
+      try {
+        const { store, goal } = await coordinatorGoal(sessionID)
+        if (
+          !goal
+          || goal.status !== "active"
+          || goal.id !== owner.goalID
+          || goal.revision !== owner.revision
+        ) return
+        const next = applyOpenCode2TodoUpdate(goal, event)
+        if (next !== goal) await store.save(next)
+      } catch {
+        // Native Todo telemetry is advisory. Storage contention or malformed
+        // host payloads must never turn a successful todowrite into Goal failure.
+      }
+    }
+
     const pauseAutonomousDispatchFailure = async (
       sessionID: string,
       goalID: string,
@@ -1139,6 +1159,11 @@ export const OpenCode2GoalsExperimental = {
               continue
             }
             if (!autonomousEnabled || !sessionID) continue
+
+            if (type === "todo.updated") {
+              await applyNativeTodoTelemetry(sessionID, event)
+              continue
+            }
 
             if (boundary.compaction.compactionFailed) {
               continue

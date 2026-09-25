@@ -1592,6 +1592,11 @@ export const OpenCode2GoalsExperimental = {
       autonomousRuntime.kickoffBySession.clear()
       telemetryRuntime.currentBySession.clear()
       toolProgressRuntime.shellPending.clear()
+      for (const timer of hostLimitRetryTimers.values()) clearTimeout(timer)
+      hostLimitRetryTimers.clear()
+      hostLimitRuntime.successEpochBySession.clear()
+      hostLimitRuntime.compactionReasonBySession.clear()
+      hostLimitRuntime.compactionAttemptBySession.clear()
       autonomousDispatching.clear()
       await lifecycleTask?.catch(() => undefined)
     }

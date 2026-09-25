@@ -24,7 +24,7 @@ Before a stable release reaches `main`, the exact pull-request head should have 
 
 `Current OpenCode 2 Stable Host` separately proves that the default lifecycle/autonomous path still works on the current stable host pin. `OpenCode 2 Todo Materialization Diff` compares stock and Goal tool exposure on the same current host so a Goal regression cannot be confused with an upstream tool-surface change.
 
-`OpenCode 2 Unit Handoff` proves opt-in bounded per-unit rotation on current OpenCode 2.0.15: one durable Goal crosses three native sessions through the two-phase handoff and reaches ordinary host + semantic-verifier completion without resetting budget/evidence/usage.
+`OpenCode 2 Unit Handoff` proves opt-in bounded per-unit rotation on current OpenCode 2.0.16: one durable Goal crosses three native sessions through the two-phase handoff and reaches ordinary host + semantic-verifier completion without resetting budget/evidence/usage.
 
 For installer releases, package smoke must verify all of these from the packed artifact:
 

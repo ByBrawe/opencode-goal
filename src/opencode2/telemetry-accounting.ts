@@ -59,9 +59,11 @@ function key(sessionID: string, assistantMessageID: string): string {
 
 function identity(event: unknown): { sessionID?: string; assistantMessageID?: string } {
   const data = eventData(event)
+  const sessionID = firstString(data.sessionID, record(event)?.sessionID)
+  const assistantMessageID = firstString(data.assistantMessageID)
   return {
-    sessionID: firstString(data.sessionID, record(event)?.sessionID),
-    assistantMessageID: firstString(data.assistantMessageID),
+    ...(sessionID ? { sessionID } : {}),
+    ...(assistantMessageID ? { assistantMessageID } : {}),
   }
 }
 
@@ -109,7 +111,8 @@ export function observeOpenCode2AssistantTelemetry(
 
   if (type === "session.step.started") {
     const item = ensure(runtime, ids.sessionID, ids.assistantMessageID)
-    item.startedAt ??= eventCreatedAt(event)
+    const startedAt = eventCreatedAt(event)
+    if (item.startedAt === undefined && startedAt !== undefined) item.startedAt = startedAt
     return undefined
   }
 
@@ -132,14 +135,16 @@ export function observeOpenCode2AssistantTelemetry(
   const id = key(ids.sessionID, ids.assistantMessageID)
   const tracked = runtime.assistants.get(id)
   runtime.assistants.delete(id)
+  const cost = finite(data.cost)
+  const completedAt = eventCreatedAt(event)
   return {
     sessionID: ids.sessionID,
     assistantMessageID: ids.assistantMessageID,
     meaningful: tracked?.meaningful === true,
     ...(data.tokens && typeof data.tokens === "object" ? { tokens: data.tokens } : {}),
-    ...(finite(data.cost) !== undefined ? { cost: finite(data.cost) } : {}),
+    ...(cost !== undefined ? { cost } : {}),
     ...(tracked?.startedAt !== undefined ? { startedAt: tracked.startedAt } : {}),
-    ...(eventCreatedAt(event) !== undefined ? { completedAt: eventCreatedAt(event) } : {}),
+    ...(completedAt !== undefined ? { completedAt } : {}),
   }
 }
 
@@ -152,11 +157,14 @@ export function applyOpenCode2AssistantStepAccounting(
   if (owner.goalID !== goal.id || goal.usage.seenMessageIDs.includes(step.assistantMessageID)) return goal
 
   const tokens = step.tokens
+  const inputTokens = finite(tokens?.input)
+  const outputTokens = finite(tokens?.output)
+  const reasoningTokens = finite(tokens?.reasoning)
   const sample: AssistantUsageSample = {
     messageID: step.assistantMessageID,
-    ...(finite(tokens?.input) !== undefined ? { inputTokens: finite(tokens?.input) } : {}),
-    ...(finite(tokens?.output) !== undefined ? { outputTokens: finite(tokens?.output) } : {}),
-    ...(finite(tokens?.reasoning) !== undefined ? { reasoningTokens: finite(tokens?.reasoning) } : {}),
+    ...(inputTokens !== undefined ? { inputTokens } : {}),
+    ...(outputTokens !== undefined ? { outputTokens } : {}),
+    ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
     ...(step.cost !== undefined ? { cost: step.cost } : {}),
     ...(step.startedAt !== undefined ? { createdAt: step.startedAt } : {}),
     ...(step.completedAt !== undefined ? { completedAt: step.completedAt } : {}),

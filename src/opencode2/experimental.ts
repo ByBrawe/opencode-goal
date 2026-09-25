@@ -6,6 +6,8 @@ import { applyGoalBudget, budgetLimitHits } from "../runtime/accounting.js"
 import { formatGoalRuntimeFingerprint } from "../runtime/fingerprint.js"
 import {
   clearInfrastructureRecovery,
+  enterInfrastructureRecovery,
+  isTransientInfrastructureError,
   markInfrastructureRecoveryDispatched,
 } from "../runtime/infrastructure-recovery.js"
 import { parseGoalCommand } from "../opencode/command.js"

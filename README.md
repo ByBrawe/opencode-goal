@@ -338,13 +338,13 @@ npx -y @bybrawe/opencode-goal@latest
 
 Then:
 
-1. confirm the installer reports an exact package pin and a managed `/goal` command;
-2. confirm `commands/goal.md` exists in the global OpenCode config directory;
+1. confirm the installer reports an exact package pin;
+2. on OpenCode 1.x, confirm the managed `commands/goal.md` bridge exists; on OpenCode 2.x, confirm the package is registered in native `plugins` and no managed bridge is required;
 3. fully close every OpenCode CLI/TUI/Desktop process and reopen it;
 4. do not start OpenCode with `--pure`, which disables external plugins;
 5. inspect OpenCode config diagnostics for plugin-load errors.
 
-The installer does **not** overwrite a user-owned `commands/goal.md`.
+The installer does **not** overwrite a user-owned `commands/goal.md`; OpenCode 2 leaves such a legacy file untouched and uses the plugin-native command.
 
 ### Goal is paused after completion work finished
 

@@ -357,13 +357,18 @@ test("V2 host-native admin mutations do not depend on lifecycle control capabili
       const historyBefore = await store.history(sessionID, 500)
       assert.ok(historyBefore.length >= 1)
 
+      // Storage/admin mutations must not require a model/provider presentation
+      // surface after host command registration.
+      host.ctx.session.prompt = undefined
+
       const pruneDispatch = await dispatchDirectCommand(host, sessionID, "history prune --keep 1")
       assert.equal(pruneDispatch.messageID, undefined, "history prune must remain host-native without a live Goal")
+      assert.deepEqual(pruneDispatch.emitted, [])
       assert.equal((await store.history(sessionID, 500)).length, 1)
-      assert.ok(pruneDispatch.emitted.every((item) => item.resume !== false))
 
       const queueDispatch = await dispatchDirectCommand(host, sessionID, "add queued without live goal")
       assert.equal(queueDispatch.messageID, undefined)
+      assert.deepEqual(queueDispatch.emitted, [])
       assert.equal((await new GoalSequenceStore(root).load(sessionID)).items.length, 1)
     })
   } finally {

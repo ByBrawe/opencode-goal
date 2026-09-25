@@ -171,20 +171,20 @@ export function editGoal(goal: GoalState, input: {
     progressNotes: goal.progressNotes,
     ...(goal.todoPlan ? { todoPlan: goal.todoPlan } : {}),
     ...(goal.unitRotation ? {
-      unitRotation: {
-        ...(next.unitRotation ?? {
-          command: goal.unitRotation.command,
-          freshSessionPerUnit: true as const,
-          rootSessionID: goal.unitRotation.rootSessionID,
-          chainIndex: goal.unitRotation.chainIndex,
-        }),
-        rootSessionID: goal.unitRotation.rootSessionID,
-        chainIndex: goal.unitRotation.chainIndex,
-        ...(goal.unitRotation.previousSessionID ? { previousSessionID: goal.unitRotation.previousSessionID } : {}),
-        ...(goal.unitRotation.currentUnit ? { currentUnit: goal.unitRotation.currentUnit } : {}),
-        ...(goal.unitRotation.observedAt !== undefined ? { observedAt: goal.unitRotation.observedAt } : {}),
-      },
-    } : {}),
+      unitRotation: requestedUnitRotation
+        ? {
+            command: requestedUnitRotation.command.trim(),
+            freshSessionPerUnit: true as const,
+            rootSessionID: goal.unitRotation.rootSessionID,
+            chainIndex: goal.unitRotation.chainIndex,
+            ...(goal.unitRotation.previousSessionID ? { previousSessionID: goal.unitRotation.previousSessionID } : {}),
+          }
+        : {
+            ...goal.unitRotation,
+            handoff: undefined,
+            nextSessionID: undefined,
+          },
+    } : next.unitRotation ? { unitRotation: next.unitRotation } : {}),
     storageGeneration: goal.storageGeneration ?? 0,
     createdAt: goal.createdAt,
   }

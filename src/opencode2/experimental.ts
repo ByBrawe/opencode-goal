@@ -1167,6 +1167,7 @@ export const OpenCode2GoalsExperimental = {
             const type = firstString(record(event)?.type)
             const data = nestedRecord(event, "data")
             let completedTelemetry: ReturnType<typeof finishOpenCode2TelemetryExecution>
+            if (sessionID) observeOpenCode2CompactionReason(hostLimitRuntime, sessionID, event)
 
             if (sessionID && boundary.kind === "execution-started" && boundary.generation !== undefined) {
               beginOpenCode2TelemetryExecution(
@@ -1210,6 +1211,8 @@ export const OpenCode2GoalsExperimental = {
               clearOpenCode2GoalOwnership(autonomousRuntime, sessionID)
               clearOpenCode2TelemetrySession(telemetryRuntime, sessionID)
               forgetOpenCode2ToolProgressSession(toolProgressRuntime, sessionID)
+              clearOpenCode2HostLimitSession(hostLimitRuntime, sessionID)
+              cancelHostLimitRetry(sessionID)
               workTools.clearSession(sessionID)
               autonomousDispatching.delete(sessionID)
               continue
@@ -1217,12 +1220,45 @@ export const OpenCode2GoalsExperimental = {
             if (!autonomousEnabled || !sessionID) continue
 
             if (boundary.compaction.compactionFailed) {
+              const compactionReason = consumeOpenCode2CompactionReason(hostLimitRuntime, sessionID)
+              if (compactionReason === "auto") {
+                try {
+                  const { store, goal } = await coordinatorGoal(sessionID)
+                  if (goal?.status === "active") {
+                    const failure = classifyOpenCode2ExecutionFailure(goal, data?.error)
+                    const next = failure.kind === "ignore"
+                      ? pauseGoal(
+                          goal,
+                          "OpenCode automatic compaction failed before the active Goal could recover. Goal state is preserved. Run /compact, then /goal resume.",
+                        )
+                      : failure.goal
+                    await store.save(next)
+                    if (failure.kind === "transient") armHostLimitRetry(next)
+                    else cancelHostLimitRetry(sessionID)
+                    clearOpenCode2GoalOwnership(autonomousRuntime, sessionID)
+                  }
+                } catch {
+                  // A failed compaction never authorizes fallback dispatch.
+                }
+              }
               continue
             }
             if (boundary.compaction.compactionCompleted) {
+              const compactionReason = consumeOpenCode2CompactionReason(hostLimitRuntime, sessionID)
               try {
-                const { goal } = await coordinatorGoal(sessionID)
+                const { store, goal } = await coordinatorGoal(sessionID)
                 if (goal) {
+                  if (compactionReason === "auto" && goal.status === "active") {
+                    const attempt = observeOpenCode2NativeCompaction(hostLimitRuntime, goal)
+                    if (attempt.repeatedWithoutOwnedSuccess) {
+                      const paused = pauseGoal(goal, repeatedOpenCode2CompactionReason())
+                      await store.save(paused)
+                      cancelHostLimitRetry(sessionID)
+                      clearOpenCode2GoalOwnership(autonomousRuntime, sessionID)
+                      continue
+                    }
+                  }
+
                   const prepared = prepareOpenCode2PostCompactionContinuation(goal)
                   if (prepared.shouldContinue && prepared.prompt) {
                     await scheduleAutonomousContinuation(sessionID, goal, prepared.prompt, "compaction")
@@ -1239,8 +1275,31 @@ export const OpenCode2GoalsExperimental = {
             const succeeded = type === "session.execution.succeeded"
 
             if (!succeeded) {
-              consumeOpenCode2GoalKickoff(autonomousRuntime, sessionID, generation)
-              consumeOpenCode2GoalExecution(autonomousRuntime, sessionID, generation)
+              const kickoff = consumeOpenCode2GoalKickoff(autonomousRuntime, sessionID, generation)
+              const owner = consumeOpenCode2GoalExecution(autonomousRuntime, sessionID, generation)
+              if (type !== "session.execution.failed") continue
+
+              const expected = kickoff ?? owner
+              if (!expected) continue
+
+              try {
+                const { store, goal } = await coordinatorGoal(sessionID)
+                if (
+                  !goal
+                  || goal.status !== "active"
+                  || goal.id !== expected.goalID
+                  || goal.revision !== expected.revision
+                ) continue
+
+                const failure = classifyOpenCode2ExecutionFailure(goal, data?.error)
+                if (failure.kind === "ignore") continue
+                await store.save(failure.goal)
+                if (failure.kind === "transient") armHostLimitRetry(failure.goal)
+                else cancelHostLimitRetry(sessionID)
+              } catch {
+                // Failure events without fresh matching Goal ownership cannot
+                // mutate persisted state or manufacture a retry.
+              }
               continue
             }
 
@@ -1280,8 +1339,13 @@ export const OpenCode2GoalsExperimental = {
                   completedTelemetry,
                 )
                 observedGoal = accounted.goal
-                if (observedGoal !== goal) await store.save(observedGoal)
               }
+              if (observedGoal.infrastructureRecovery) {
+                observedGoal = clearInfrastructureRecovery(observedGoal)
+              }
+              if (observedGoal !== goal) await store.save(observedGoal)
+              cancelHostLimitRetry(sessionID)
+              markOpenCode2OwnedExecutionSuccess(hostLimitRuntime, sessionID)
 
               if (observedGoal.status === "completed") {
                 const promoted = await applyOpenCode2ControlPlaneMutation(

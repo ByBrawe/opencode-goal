@@ -104,6 +104,30 @@ function toolNames(body) {
   return []
 }
 
+function toolDefinition(body, name) {
+  if (Array.isArray(body?.tools)) {
+    return body.tools.find((item) => (item?.function?.name ?? item?.name) === name)
+  }
+  return body?.tools?.[name]
+}
+
+function writeArgs(body, absolutePath) {
+  const definition = toolDefinition(body, WRITE_TOOL)
+  if (!definition) throw new Error("exact OpenCode 2 request did not expose the write tool definition")
+  const parameters = definition.function?.parameters ?? definition.input ?? definition.inputSchema ?? {}
+  const properties = parameters?.properties ?? {}
+  if (Object.prototype.hasOwnProperty.call(properties, "path")) {
+    return { path: absolutePath, content: "host-observed-v2-progress\n" }
+  }
+  if (Object.prototype.hasOwnProperty.call(properties, "filePath")) {
+    return { filePath: absolutePath, content: "host-observed-v2-progress\n" }
+  }
+  if (Object.prototype.hasOwnProperty.call(properties, "file_path")) {
+    return { file_path: absolutePath, content: "host-observed-v2-progress\n" }
+  }
+  throw new Error(`unsupported exact OpenCode 2 write schema: ${JSON.stringify(parameters)}`)
+}
+
 function headers(res) {
   res.writeHead(200, {
     "content-type": "text/event-stream; charset=utf-8",
@@ -230,10 +254,7 @@ function provider(progressFilePath) {
     if (autonomousStep === 0) {
       autonomousStep = 1
       assert.ok(tools.includes(WRITE_TOOL), `built-in write tool missing from first Goal execution: ${JSON.stringify(tools)}`)
-      streamTool(res, sequence, WRITE_TOOL, {
-        filePath: progressFilePath,
-        content: "host-observed-v2-progress\n",
-      }, "write")
+      streamTool(res, sequence, WRITE_TOOL, writeArgs(body, progressFilePath), "write")
       return
     }
 
@@ -428,11 +449,14 @@ async function main() {
 
     await waitFor(() => p.firstFinalHeld, "first Goal tool loop follow-up", diagnostics)
 
-    assert.equal(
-      await readFile(progressFilePath, "utf8"),
-      "host-observed-v2-progress\n",
-      "built-in write tool did not create deterministic progress proof",
-    )
+    await waitFor(async () => {
+      try {
+        return await readFile(progressFilePath, "utf8") === "host-observed-v2-progress\n"
+      } catch (error) {
+        if (error?.code === "ENOENT") return false
+        throw error
+      }
+    }, "built-in write tool durable progress proof", diagnostics)
     const duringToolLoop = await waitFor(async () => {
       const goal = await store.load(sessionID)
       return goal?.progressRevision === 1 ? goal : null

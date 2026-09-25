@@ -268,8 +268,8 @@ async function main() {
   const stock = await runHost({ withGoalPlugin: false })
   const goal = await runHost({ withGoalPlugin: true })
 
-  assert.ok(stock.version.includes("2.0.15"), `expected stock 2.0.15, got ${stock.version}`)
-  assert.ok(goal.version.includes("2.0.15"), `expected Goal host 2.0.15, got ${goal.version}`)
+  assert.ok(stock.version.includes("2.0.16"), `expected stock 2.0.16, got ${stock.version}`)
+  assert.ok(goal.version.includes("2.0.16"), `expected Goal host 2.0.16, got ${goal.version}`)
 
   console.log(JSON.stringify({
     ok: true,

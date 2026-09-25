@@ -153,7 +153,7 @@ function latestUserText(body) {
   return ""
 }
 
-function streamSuccess(res) {
+function streamSuccess(res, text = "RETRY_RECOVERED") {
   const id = "chatcmpl-host-limit-retry-success"
   const created = Math.floor(Date.now() / 1000)
   res.writeHead(200, {
@@ -167,7 +167,7 @@ function streamSuccess(res) {
     object: "chat.completion.chunk",
     created,
     model: "canary",
-    choices: [{ index: 0, delta: { role: "assistant", content: "RETRY_RECOVERED" }, finish_reason: null }],
+    choices: [{ index: 0, delta: { role: "assistant", content: text }, finish_reason: null }],
   })
   send({
     id,
@@ -199,6 +199,24 @@ function startProvider() {
     for await (const chunk of req) raw += String(chunk)
     const body = raw ? JSON.parse(raw) : {}
     const text = latestUserText(body)
+    const isCompaction = raw.includes("You MUST summarize the conversation above")
+      || raw.includes("Update the existing checkpoint in the conversation above")
+    if (isCompaction) {
+      streamSuccess(res, [
+        "## Objective",
+        "- Prove exact-host plugin initiated compaction.",
+        "",
+        "## Work State",
+        "### Completed",
+        "- Host-limit capability probe reached compaction.",
+        "### Active",
+        "- (none)",
+        "",
+        "## Next Move",
+        "1. Continue the exact host-limit proof.",
+      ].join("\n"))
+      return
+    }
 
     if (text.includes("OVERFLOW_PROBE")) {
       stats.overflow += 1

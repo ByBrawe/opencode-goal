@@ -352,15 +352,15 @@ async function main() {
       const trace = await readTrace(traceFile)
       return trace.find((item) =>
         item.phase === "event"
-        && item.type === "session.error"
-        && item.properties?.sessionID === overflowSession
+        && item.type === "session.execution.failed"
+        && item.data?.sessionID === overflowSession
       )
-    }, "exact session.error overflow event", diagnostics)
-    assert.equal(errorEvent.properties.sessionID, overflowSession)
-    assert.ok(errorEvent.properties.error && typeof errorEvent.properties.error === "object")
-    assert.ok(typeof errorEvent.properties.error.name === "string")
-    assert.ok(errorEvent.properties.error.data && typeof errorEvent.properties.error.data === "object")
-    assert.match(String(errorEvent.properties.error.data.message ?? ""), /prompt exceeds max length/i)
+    }, "exact session.execution.failed overflow event", diagnostics)
+    assert.equal(errorEvent.data.sessionID, overflowSession)
+    assert.ok(errorEvent.data.error && typeof errorEvent.data.error === "object")
+    assert.equal(errorEvent.data.error.type, "provider.invalid-request")
+    assert.equal(errorEvent.data.error.status, 400)
+    assert.match(String(errorEvent.data.error.message ?? ""), /prompt exceeds max length/i)
 
     const retrySession = await createSession("V2 host limit retry")
     const retryPromise = sendPrompt(retrySession, "RETRY_PROBE")

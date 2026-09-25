@@ -1,0 +1,35 @@
+name: OpenCode 2 Host Limit Capabilities
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "scripts/opencode2-host-limit-capability-canary.mjs"
+      - ".github/workflows/opencode2-host-limit-canary.yml"
+  push:
+    branches: [main]
+    paths:
+      - "scripts/opencode2-host-limit-capability-canary.mjs"
+      - ".github/workflows/opencode2-host-limit-canary.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  exact-host-limit-events:
+    name: OpenCode 2.0.11 host-limit event payloads
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+      - name: Install exact OpenCode 2.0.11
+        run: npm install -g @opencode/cli@2.0.11
+      - name: Check host-limit canary syntax
+        run: node --check scripts/opencode2-host-limit-capability-canary.mjs
+      - name: Prove provider error and retry event shapes
+        run: node scripts/opencode2-host-limit-capability-canary.mjs

@@ -238,7 +238,6 @@ function streamToolCall(res, sequence, name, args, prefix) {
 function startProvider(unitFile) {
   const stats = { requests: [], unitWrites: [] }
   let unitWrites = 0
-  let settleAfterWrite = false
 
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1")
@@ -301,18 +300,17 @@ function startProvider(unitFile) {
     }
 
     if (autonomous) {
-      if (settleAfterWrite) {
-        settleAfterWrite = false
-        streamText(res, sequence, `UNIT_${unitWrites}_SETTLED`)
-        return
-      }
       if (unitWrites < 2) {
         assert.ok(tools.includes(WRITE_TOOL), `built-in write tool missing from unit execution: ${JSON.stringify(tools)}`)
         unitWrites += 1
         const nextUnit = `unit-00${unitWrites + 1}\n`
+        // The unit pointer is workflow-owned host state. Advance it directly
+        // outside OpenCode's model tool loop so this canary measures the #228
+        // contract itself (host-observed identity change at a clean execution
+        // boundary), not a particular built-in write-tool schema/version.
+        await writeFile(unitFile, nextUnit, "utf8")
         stats.unitWrites.push(nextUnit.trim())
-        settleAfterWrite = true
-        streamToolCall(res, sequence, WRITE_TOOL, writeArgs(body, unitFile, nextUnit), `unit-${unitWrites}`)
+        streamText(res, sequence, `UNIT_${unitWrites}_ADVANCED`)
         return
       }
       if (tools.includes(COMPLETE_TOOL) && !sawCompletionResult) {
@@ -509,7 +507,7 @@ async function main() {
     const chain = (await goalStore.list())
       .filter((goal) => goal.id === goalID)
       .sort((a, b) => (a.unitRotation?.chainIndex ?? -1) - (b.unitRotation?.chainIndex ?? -1))
-    assert.equal(chain.length, 3, `expected exactly three persisted session owners: ${JSON.stringify(chain.map((goal) => ({ sessionID: goal.sessionID, status: goal.status, unit: goal.unitRotation?.currentUnit, index: goal.unitRotation?.chainIndex })))}`)
+    assert.equal(chain.length, 3, `expected exactly three persisted session owners: ${JSON.stringify(chain.map((goal) => ({ sessionID: goal.sessionID, status: goal.status, unit: goal.unitRotation?.currentUnit, index: goal.unitRotation?.chainIndex })))}\n${await diagnostics()}`)
     assert.deepEqual(chain.map((goal) => goal.status), ["handed_off", "handed_off", "completed"])
     assert.deepEqual(chain.map((goal) => goal.unitRotation?.currentUnit), ["unit-001", "unit-002", "unit-003"])
     assert.deepEqual(chain.map((goal) => goal.unitRotation?.chainIndex), [0, 1, 2])
@@ -537,7 +535,7 @@ async function main() {
     )
 
     const autonomousRequests = provider.stats.requests.filter((item) => item.autonomous)
-    assert.ok(autonomousRequests.length >= 5, `three Goal-owned unit executions were not observed\n${await diagnostics()}`)
+    assert.ok(autonomousRequests.length >= 3, `three Goal-owned unit executions were not observed\n${await diagnostics()}`)
     const firstAutonomous = autonomousRequests[0]
     assert.equal(firstAutonomous.tools.includes(CONTROL_TOOL), false, "direct lifecycle mutation tool leaked into Goal-owned work")
     assert.equal(firstAutonomous.tools.includes(READ_ONLY_TOOL), true)

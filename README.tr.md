@@ -72,7 +72,7 @@ Windows:
 
 OpenCode npm paketini özel `./server` entrypoint'i üzerinden yükler. Root export normal JavaScript API'si olarak kalır.
 
-OpenCode 2, V2 lifecycle ve autonomous coordinator yolunu varsayılan olarak etkinleştirir. Eski `OPENCODE_GOAL_V2_DIRECT_LIFECYCLE` ve `OPENCODE_GOAL_V2_AUTONOMOUS` ortam değişkenleri acil kapatma anahtarı olarak korunur: ilgili V2 katmanını kapatmak için `0`, `false`, `no` veya `off` verilebilir. Tanınmayan açık değerler fail-closed davranır.
+OpenCode 2, V2 lifecycle ve autonomous coordinator yolunu varsayılan olarak etkinleştirir. Native `plugins` kayıtları deployment ihtiyacına göre `options.lifecycle` ve `options.autonomous` değerlerini `false` yapabilir. Eski `OPENCODE_GOAL_V2_DIRECT_LIFECYCLE` ve `OPENCODE_GOAL_V2_AUTONOMOUS` ortam değişkenleri daha yüksek öncelikli acil override olarak korunur: ilgili V2 katmanını kapatmak için `0`, `false`, `no` veya `off` verilebilir. Tanınmayan açık environment değerleri fail-closed davranır.
 
 ## Neden OpenCode Goals?
 
@@ -321,13 +321,13 @@ npx -y @bybrawe/opencode-goal@latest
 
 Ardından:
 
-1. installer'ın exact package pin ve yönetilen `/goal` komutunu raporladığını doğrulayın;
-2. global OpenCode config dizininde `commands/goal.md` bulunduğunu doğrulayın;
+1. installer'ın exact package pin raporladığını doğrulayın;
+2. OpenCode 1.x için managed `commands/goal.md` köprüsünü; OpenCode 2.x için native `plugins` kaydını doğrulayın — V2 managed bridge gerektirmez;
 3. tüm OpenCode CLI/TUI/Desktop süreçlerini tamamen kapatıp yeniden açın;
 4. OpenCode'u external plugin'leri kapatan `--pure` ile başlatmayın;
 5. plugin-load hataları için OpenCode config diagnostics'i inceleyin.
 
-Installer kullanıcıya ait bir `commands/goal.md` dosyasının üzerine yazmaz.
+Installer kullanıcıya ait bir `commands/goal.md` dosyasının üzerine yazmaz; OpenCode 2 böyle bir legacy dosyayı olduğu gibi bırakır ve plugin-native komutu kullanır.
 
 ### Completion işi bittiği halde Goal paused
 

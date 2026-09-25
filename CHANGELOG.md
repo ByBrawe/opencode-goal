@@ -2,6 +2,18 @@
 
 All notable changes to **OpenCode Goals** are documented here.
 
+## 1.3.38 — 2026-09-25
+
+OpenCode 2 bounded per-unit session handoff release.
+
+- Add explicit `--unit "<host command>" --fresh-session-per-unit` Goal contracts for host-verified external unit identity without treating the unit command as completion evidence.
+- Rotate only after a successful Goal-owned execution boundary and preserve the same Goal ID, revision, contract, evidence, cumulative usage, and budgets across native OpenCode 2 sessions.
+- Use a durable two-phase handoff with a preselected host inbox ID: prepare/admit the target while the source still owns continuation, persist the predecessor as terminal `handed_off`, then activate and dispatch the target exactly once.
+- Serialize handoffs with a Goal-scoped cross-process lease, clean up orphan native sessions when target persistence fails, and recover incomplete handoffs after restart without reactivating predecessors.
+- Keep paused, waiting-user, blocked/limited, and completed Goals out of rotation; verified final completion ends the chain instead of opening another session.
+- Use OpenCode 2 native prompt admission, tool execution hooks/progress, plugin options, `session.create/delete`, and native admit/resume session prompts where those stronger host boundaries are available.
+- Add a current OpenCode 2.0.15 real-host gate that proves a three-unit Goal crosses exactly three native sessions and completes with host + independent semantic verifier evidence.
+
 ## 1.3.37 — 2026-09-25
 
 OpenCode 2 stable-support release.

@@ -179,11 +179,14 @@ export function editGoal(goal: GoalState, input: {
             chainIndex: goal.unitRotation.chainIndex,
             ...(goal.unitRotation.previousSessionID ? { previousSessionID: goal.unitRotation.previousSessionID } : {}),
           }
-        : {
-            ...goal.unitRotation,
-            handoff: undefined,
-            nextSessionID: undefined,
-          },
+        : (() => {
+            const {
+              handoff: _handoff,
+              nextSessionID: _nextSessionID,
+              ...rotation
+            } = goal.unitRotation!
+            return rotation
+          })(),
     } : next.unitRotation ? { unitRotation: next.unitRotation } : {}),
     storageGeneration: goal.storageGeneration ?? 0,
     createdAt: goal.createdAt,

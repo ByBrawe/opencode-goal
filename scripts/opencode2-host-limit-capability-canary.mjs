@@ -98,8 +98,8 @@ export default {
             await trace({ phase: "compact.command.requested", sessionID: input?.sessionID })
             const result = await ctx.session.command({
               sessionID: input.sessionID,
-              command: "compact",
-              arguments: "",
+              name: "compact",
+              text: "",
               delivery: "steer",
             })
             await trace({ phase: "compact.command.returned", sessionID: input?.sessionID, result: safe(result) })

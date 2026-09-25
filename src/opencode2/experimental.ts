@@ -979,6 +979,7 @@ export const OpenCode2GoalsExperimental = {
     const hostLimitRuntime = createOpenCode2HostLimitRuntime()
     const hostLimitRetryTimers = new Map<string, ReturnType<typeof setTimeout>>()
     const autonomousDispatching = new Set<string>()
+    const handoffDispatching = new Set<string>()
     const lifecycleEnabled = directLifecycleEnabled()
     const autonomousEnabled = lifecycleEnabled && autonomousEnabledByConfig()
     const semanticVerifier = createOpenCode2SemanticVerifierRuntime(
@@ -1153,6 +1154,214 @@ export const OpenCode2GoalsExperimental = {
         if (messageID) forgetOpenCode2GoalPrompt(autonomousRuntime, sessionID, messageID)
         autonomousDispatching.delete(sessionID)
         await pauseAutonomousDispatchFailure(sessionID, goal.id, goal.revision, error)
+      }
+    }
+
+    const findPreparedUnitHandoff = async (
+      directory: string,
+      source: GoalState,
+      nextUnit: string,
+    ): Promise<GoalState | undefined> => {
+      const goals = await new GoalStore(directory).list()
+      return goals.find((candidate) =>
+        candidate.id === source.id
+        && candidate.sessionID !== source.sessionID
+        && candidate.unitRotation?.handoff?.fromSessionID === source.sessionID
+        && candidate.unitRotation?.handoff?.toUnit === nextUnit
+        && candidate.status !== "completed"
+        && candidate.status !== "handed_off"
+      )
+    }
+
+    const admitUnitHandoffPrompt = async (
+      directory: string,
+      target: GoalState,
+    ): Promise<GoalState> => {
+      const handoff = target.unitRotation?.handoff
+      const messageID = unitHandoffMessageID(target)
+      if (!handoff || !messageID || typeof ctx.session.prompt !== "function") {
+        throw new Error("OpenCode 2 unit handoff requires a durable prompt ID and session.prompt().")
+      }
+      if (handoff.phase !== "prepared") return target
+
+      const activePreview = activateUnitHandoffTarget(target)
+      const admitted = await ctx.session.prompt({
+        sessionID: target.sessionID,
+        id: messageID,
+        text: continuationPrompt(activePreview),
+        delivery: "steer",
+        resume: false,
+        metadata: {
+          opencode_goal_v2_autonomous: true,
+          opencode_goal_v2_source: "handoff",
+          opencode_goal_id: target.id,
+          opencode_goal_revision: target.revision,
+          opencode_goal_unit_handoff: true,
+        },
+      })
+      const admittedID = firstString(record(admitted)?.id, nestedRecord(admitted, "data")?.id)
+      if (admittedID && admittedID !== messageID) {
+        throw new Error("OpenCode 2 unit handoff admission returned a different host message ID")
+      }
+
+      const admittedTarget = markUnitHandoffAdmitted(target)
+      await new GoalStore(directory, { onTransition: createGoalTransitionNotifier(directory) }).save(admittedTarget)
+      return admittedTarget
+    }
+
+    const dispatchUnitHandoffTarget = async (
+      directory: string,
+      target: GoalState,
+    ): Promise<boolean> => {
+      if (handoffDispatching.has(target.sessionID)) return true
+      const handoff = target.unitRotation?.handoff
+      const messageID = unitHandoffMessageID(target)
+      if (!handoff || !messageID || typeof ctx.session.prompt !== "function") return false
+      if (handoff.phase === "dispatched") return true
+      if (target.status !== "active" || handoff.phase !== "dispatch_pending") return false
+
+      handoffDispatching.add(target.sessionID)
+      try {
+        rememberOpenCode2GoalPrompt(
+          autonomousRuntime,
+          target.sessionID,
+          messageID,
+          target,
+          "handoff",
+        )
+        const resumed = await ctx.session.prompt({
+          sessionID: target.sessionID,
+          id: messageID,
+          text: continuationPrompt(target),
+          delivery: "steer",
+          resume: true,
+          metadata: {
+            opencode_goal_v2_autonomous: true,
+            opencode_goal_v2_source: "handoff",
+            opencode_goal_id: target.id,
+            opencode_goal_revision: target.revision,
+            opencode_goal_unit_handoff: true,
+          },
+        })
+        const resumedID = firstString(record(resumed)?.id, nestedRecord(resumed, "data")?.id)
+        if (resumedID && resumedID !== messageID) {
+          throw new Error("OpenCode 2 unit handoff resume returned a different host message ID")
+        }
+        const dispatched = markUnitHandoffDispatched(target)
+        await new GoalStore(directory, { onTransition: createGoalTransitionNotifier(directory) }).save(dispatched)
+        return true
+      } catch {
+        forgetOpenCode2GoalPrompt(autonomousRuntime, target.sessionID, messageID)
+        return false
+      } finally {
+        handoffDispatching.delete(target.sessionID)
+      }
+    }
+
+    const completeUnitHandoff = async (
+      directory: string,
+      sourceSnapshot: GoalState,
+      targetSnapshot: GoalState,
+    ): Promise<boolean> => {
+      const store = new GoalStore(directory, { onTransition: createGoalTransitionNotifier(directory) })
+      let source = await store.load(sourceSnapshot.sessionID)
+      let target = await store.load(targetSnapshot.sessionID)
+      if (!source || !target || source.id !== target.id) return false
+      const handoff = target.unitRotation?.handoff
+      if (!handoff || handoff.fromSessionID !== source.sessionID) return false
+
+      if (target.status === "handoff_pending" && handoff.phase === "prepared") {
+        try {
+          target = await admitUnitHandoffPrompt(directory, target)
+        } catch {
+          // Admission happens before source ownership is retired. Failure means
+          // no rotation: the source session remains active and can continue.
+          return false
+        }
+      }
+
+      source = await store.load(source.sessionID)
+      target = await store.load(target.sessionID)
+      if (!source || !target) return false
+
+      if (source.status === "active" && target.status === "handoff_pending" && target.unitRotation?.handoff?.phase === "admitted") {
+        const terminal = markUnitHandoffSourceTerminal(source, target)
+        try {
+          await store.save(terminal)
+          source = terminal
+        } catch {
+          return false
+        }
+      }
+
+      if (source.status !== "handed_off" || source.unitRotation?.nextSessionID !== target.sessionID) {
+        return false
+      }
+
+      target = await store.load(target.sessionID)
+      if (!target) return false
+      if (target.status === "handoff_pending") {
+        const active = activateUnitHandoffTarget(target)
+        await store.save(active)
+        target = active
+      }
+
+      // Once source is terminal, failure cannot return ownership to it.
+      // Retry uses the same persisted inbox ID, so a crash or transport retry
+      // cannot admit a second continuation.
+      await dispatchUnitHandoffTarget(directory, target)
+      return true
+    }
+
+    const attemptUnitRotation = async (
+      directory: string,
+      source: GoalState,
+      nextUnit: string,
+    ): Promise<boolean> => {
+      if (!source.unitRotation || !unitRotationNeeded(source, nextUnit)) return false
+      if (typeof ctx.session.create !== "function" || typeof ctx.session.prompt !== "function") return false
+
+      let target = await findPreparedUnitHandoff(directory, source, nextUnit)
+      if (!target) {
+        let created: unknown
+        try {
+          created = await ctx.session.create({
+            parentID: source.sessionID,
+            title: `Goal unit ${source.unitRotation.chainIndex + 1}: ${source.objective.slice(0, 80)}`,
+          })
+        } catch {
+          return false
+        }
+        const targetSessionID = firstString(record(created)?.id, nestedRecord(created, "data")?.id)
+        if (!targetSessionID || targetSessionID === source.sessionID) return false
+
+        target = createUnitHandoffTarget(source, targetSessionID, nextUnit)
+        try {
+          await new GoalStore(directory, { onTransition: createGoalTransitionNotifier(directory) }).save(target)
+        } catch {
+          return false
+        }
+      }
+
+      return await completeUnitHandoff(directory, source, target)
+    }
+
+    const recoverUnitHandoffs = async (directory: string): Promise<void> => {
+      const store = new GoalStore(directory, { onTransition: createGoalTransitionNotifier(directory) })
+      let goals: GoalState[]
+      try {
+        goals = await store.list()
+      } catch {
+        return
+      }
+      for (const target of goals) {
+        const handoff = target.unitRotation?.handoff
+        if (!handoff || handoff.phase === "dispatched") continue
+        if (target.status !== "handoff_pending" && target.status !== "active") continue
+        const source = goals.find((goal) => goal.sessionID === handoff.fromSessionID && goal.id === target.id)
+          ?? await store.load(handoff.fromSessionID).catch(() => null)
+        if (!source) continue
+        await completeUnitHandoff(directory, source, target).catch(() => undefined)
       }
     }
 

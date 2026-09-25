@@ -72,7 +72,7 @@ Windows:
 
 OpenCode loads the npm package through its dedicated `./server` entrypoint. The root export remains the public JavaScript API.
 
-OpenCode 2 uses the V2 lifecycle and autonomous coordinator by default. Native `plugins` entries may set `options.lifecycle` and `options.autonomous` to `false` when a deployment wants either layer disabled. The legacy `OPENCODE_GOAL_V2_DIRECT_LIFECYCLE` and `OPENCODE_GOAL_V2_AUTONOMOUS` environment variables remain higher-priority emergency overrides: set either to `0`, `false`, `no`, or `off` to disable that V2 layer. Unknown explicit environment values fail closed.
+OpenCode 2 uses the V2 lifecycle and autonomous coordinator by default. Native `plugins` entries may set `options.lifecycle` and `options.autonomous` to `false` when a deployment wants either layer disabled. The legacy `OPENCODE_GOAL_V2_DIRECT_LIFECYCLE` and `OPENCODE_GOAL_V2_AUTONOMOUS` environment variables remain higher-priority emergency overrides: set either to `0`, `false`, `no`, or `off` to disable that V2 layer. Unknown explicit environment values fail closed. OpenCode 2-native prompt admission and tool-execution hooks are used directly where available, and long-running evidence/completion tools report progress through the host-native tool progress API.
 
 ## Why use OpenCode Goals?
 

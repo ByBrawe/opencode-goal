@@ -266,9 +266,9 @@ function toolResponse(message: string, goal: GoalState | null = null) {
 }
 
 
-function stableV2FeatureEnabled(name: string): boolean {
+function environmentFeatureOverride(name: string): boolean | undefined {
   const raw = process.env[name]
-  if (raw === undefined || !raw.trim()) return true
+  if (raw === undefined || !raw.trim()) return undefined
   const value = raw.trim().toLowerCase()
   if (value === "1" || value === "true" || value === "yes" || value === "on") return true
   if (value === "0" || value === "false" || value === "no" || value === "off") return false
@@ -277,12 +277,24 @@ function stableV2FeatureEnabled(name: string): boolean {
   return false
 }
 
+function stableV2FeatureEnabled(
+  ctx: OpenCode2ExperimentalContext,
+  option: "lifecycle" | "autonomous",
+  environment: string,
+): boolean {
+  const override = environmentFeatureOverride(environment)
+  if (override !== undefined) return override
+  const configured = ctx.options?.[option]
+  if (typeof configured === "boolean") return configured
+  return true
+}
+
 function directLifecycleEnabled(): boolean {
-  return stableV2FeatureEnabled(OPENCODE2_DIRECT_LIFECYCLE_ENV)
+  return stableV2FeatureEnabled(ctx, "lifecycle", OPENCODE2_DIRECT_LIFECYCLE_ENV)
 }
 
 function autonomousEnabledByConfig(): boolean {
-  return stableV2FeatureEnabled(OPENCODE2_AUTONOMOUS_ENV)
+  return stableV2FeatureEnabled(ctx, "autonomous", OPENCODE2_AUTONOMOUS_ENV)
 }
 
 const DIRECT_CAPABILITY_TTL_MS = 2 * 60_000
@@ -769,7 +781,7 @@ export async function executeOpenCode2DirectGoalCommand(
   } = {},
 ): Promise<{ action: string; goal: GoalState | null; messageID?: string; dispatched: boolean; message?: string }> {
   if (!directLifecycleEnabled()) {
-    throw new Error(`OpenCode Goals V2 direct lifecycle is disabled by ${OPENCODE2_DIRECT_LIFECYCLE_ENV}. Remove the override or set it to 1 to enable the stable V2 lifecycle.`)
+    throw new Error(`OpenCode Goals V2 direct lifecycle is disabled by plugin options or ${OPENCODE2_DIRECT_LIFECYCLE_ENV}. Enable options.lifecycle or remove/set the environment override to 1.`)
   }
   if (!input?.sessionID) throw new Error("OpenCode Goals V2 direct command requires a sessionID")
 

@@ -50,8 +50,9 @@ Installer:
 - OpenCode plugin listesine `@bybrawe/opencode-goal@<exact-version>` ekler ve exact sürüme sabitler;
 - eski, sürümsüz veya `@latest` Goal plugin kayıtlarını yükseltir;
 - bilinen yinelenen eski yerel Goal plugin kopyalarını kaldırır;
-- `/goal` komutunun keşfedilebilir olması için yönetilen global `commands/goal.md` dosyasını kurar;
-- yönetilen plugin dizisi dışındaki ilgisiz OpenCode ayarlarını ve JSONC yorumlarını korur.
+- OpenCode 1.x üzerinde `/goal` komutunun keşfedilebilir olması için yönetilen global `commands/goal.md` köprüsünü kurar;
+- OpenCode 2.x üzerinde native `plugins` config alanını yazar ve eski command bridge yerine plugin-native `/goal` komutunu kullanır;
+- Goal'a ait kayıt dışındaki ilgisiz OpenCode ayarlarını, plugin kayıtlarını ve JSONC yorumlarını korur.
 
 Varsayılan OpenCode konumları:
 
@@ -59,17 +60,19 @@ macOS / Linux:
 
 ```text
 ~/.config/opencode/opencode.json or opencode.jsonc
-~/.config/opencode/commands/goal.md
+~/.config/opencode/commands/goal.md   # yalnız OpenCode 1.x bridge
 ```
 
 Windows:
 
 ```text
 %USERPROFILE%\.config\opencode\opencode.json or opencode.jsonc
-%USERPROFILE%\.config\opencode\commands\goal.md
+%USERPROFILE%\.config\opencode\commands\goal.md   # yalnız OpenCode 1.x bridge
 ```
 
 OpenCode npm paketini özel `./server` entrypoint'i üzerinden yükler. Root export normal JavaScript API'si olarak kalır.
+
+OpenCode 2, V2 lifecycle ve autonomous coordinator yolunu varsayılan olarak etkinleştirir. Eski `OPENCODE_GOAL_V2_DIRECT_LIFECYCLE` ve `OPENCODE_GOAL_V2_AUTONOMOUS` ortam değişkenleri acil kapatma anahtarı olarak korunur: ilgili V2 katmanını kapatmak için `0`, `false`, `no` veya `off` verilebilir. Tanınmayan açık değerler fail-closed davranır.
 
 ## Neden OpenCode Goals?
 

@@ -135,7 +135,7 @@ export function createUnitHandoffTarget(
         phase: "prepared",
         createdAt: now,
         messageID,
-      } as GoalUnitRotation["handoff"] & { messageID: string },
+      },
     },
     updatedAt: now,
   }
@@ -147,11 +147,11 @@ export function markUnitHandoffSourceTerminal(
   now = Date.now(),
 ): GoalState {
   if (!source.unitRotation || !target.unitRotation?.handoff) throw new Error("unit handoff state is incomplete")
+  const { pendingContinuation: _pendingContinuation, ...rest } = source
   return {
-    ...source,
+    ...rest,
     status: "handed_off",
     stopReason: `Goal ownership handed off to session ${target.sessionID} for unit ${JSON.stringify(target.unitRotation.currentUnit)}.`,
-    pendingContinuation: undefined,
     unitRotation: {
       ...source.unitRotation,
       nextSessionID: target.sessionID,
@@ -185,7 +185,7 @@ export function activateUnitHandoffTarget(target: GoalState, now = Date.now()): 
 }
 
 export function unitHandoffMessageID(goal: GoalState): string | undefined {
-  const value = (goal.unitRotation?.handoff as (GoalUnitRotation["handoff"] & { messageID?: string }) | undefined)?.messageID
+  const value = goal.unitRotation?.handoff?.messageID
   return typeof value === "string" && value.trim() ? value : undefined
 }
 

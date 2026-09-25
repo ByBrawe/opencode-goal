@@ -30,6 +30,21 @@ Successful owned turns reuse the same Goal no-progress boundary as stable V1. Co
 
 This preview still does **not** establish stable OpenCode 2 support. The final combined promotion head remains required before compatibility metadata can be widened.
 
+## V1 model-context headroom preview
+
+Exact OpenCode 2.0.11 proves that `session.context.model` carries only the selected model identity, while the plugin-level `ctx.model.list()` registry exposes the selected model's authoritative `limit.context`, optional `limit.input`, and `limit.output` values.
+
+The V2 adapter therefore:
+
+- resolves the selected `{ providerID, id }` against `ctx.model.list()` during the identity-bearing `session.context` hook;
+- persists the selected execution model as the same `{ providerID, modelID }` shape used by V1;
+- feeds registry limits into the shared V1 `observeModelContextLimits()` state instead of guessing from provider configuration;
+- preserves the latest request/input usage from exact V2 step telemetry while keeping cumulative Goal token budgets separate from model-window pressure;
+- treats registry lookup failure as advisory/fail-closed: no synthetic limits are invented and Goal work is not blocked;
+- resets stale model-context telemetry when the selected model identity changes, while repeated identical registry observations remain a semantic no-op.
+
+The production exact-host telemetry parity canary must prove the configured context/output limits are actually persisted in Goal state before stable promotion can rely on model headroom.
+
 ## V1 control-plane parity preview
 
 The host-authenticated V2 `/goal` command surface also reuses the stable V1 persistence and formatting layers for Goal administration:

@@ -231,11 +231,22 @@ async function runHost({ withGoalPlugin }) {
       return { ok: response.ok, status: response.status, body, text }
     }
 
-    const created = await request("/api/session", {
-      method: "POST",
-      body: JSON.stringify({ title: `${label} Todo materialization` }),
-    })
-    assert.ok(created.ok, `${label} session create failed: ${created.status} ${created.text}\n${logs}`)
+    const createDeadline = Date.now() + 30_000
+    let created
+    while (Date.now() < createDeadline) {
+      created = await request("/api/session", {
+        method: "POST",
+        body: JSON.stringify({ title: `${label} Todo materialization` }),
+      }, 5_000).catch(() => null)
+      if (created?.ok) break
+      const starting = created?.status === 503 && (
+        created?.body?.code === "service_starting"
+        || /service_starting/i.test(String(created?.text ?? ""))
+      )
+      if (!starting) break
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+    assert.ok(created?.ok, `${label} session create failed: ${created?.status ?? "no response"} ${created?.text ?? ""}\n${logs}`)
     sessionID = String((created.body?.data ?? created.body)?.id ?? "")
     assert.ok(sessionID)
 

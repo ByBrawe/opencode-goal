@@ -1089,9 +1089,51 @@ export const OpenCode2GoalsExperimental = {
             const boundary = inspectOpenCode2AuthorityBoundary(runtime, compactionRuntime, event)
             const sessionID = boundary.sessionID
             const type = firstString(record(event)?.type)
+            const data = nestedRecord(event, "data")
+            let completedTelemetry: ReturnType<typeof finishOpenCode2TelemetryExecution>
+
+            if (sessionID && boundary.kind === "execution-started" && boundary.generation !== undefined) {
+              beginOpenCode2TelemetryExecution(
+                telemetryRuntime,
+                sessionID,
+                boundary.generation,
+                event,
+              )
+            } else if (sessionID) {
+              observeOpenCode2TelemetryEvent(telemetryRuntime, sessionID, event)
+            }
+
+            if (sessionID && type === "session.tool.called") {
+              const callID = firstString(data?.id, data?.callID)
+              if (callID) await rememberShellProgressStart(sessionID, callID)
+            }
+            if (sessionID && type === "session.tool.success") {
+              const callID = firstString(data?.id, data?.callID)
+              if (callID) await applySuccessfulToolProgress(sessionID, callID)
+            }
+            if (sessionID && type === "session.tool.failed") {
+              const callID = firstString(data?.id, data?.callID)
+              if (callID) forgetOpenCode2ToolProgressCall(toolProgressRuntime, sessionID, callID)
+            }
+
+            if (
+              sessionID
+              && boundary.generation !== undefined
+              && (boundary.kind === "execution-terminal" || boundary.kind === "compaction-execution")
+            ) {
+              completedTelemetry = finishOpenCode2TelemetryExecution(
+                telemetryRuntime,
+                sessionID,
+                boundary.generation,
+                event,
+              )
+              forgetOpenCode2ToolProgressSession(toolProgressRuntime, sessionID)
+            }
 
             if (boundary.kind === "session-deleted" && sessionID) {
               clearOpenCode2GoalOwnership(autonomousRuntime, sessionID)
+              clearOpenCode2TelemetrySession(telemetryRuntime, sessionID)
+              forgetOpenCode2ToolProgressSession(toolProgressRuntime, sessionID)
               workTools.clearSession(sessionID)
               autonomousDispatching.delete(sessionID)
               continue
@@ -1154,7 +1196,18 @@ export const OpenCode2GoalsExperimental = {
                 || owner.revision !== goal.revision
               ) continue
 
-              if (goal.status === "completed") {
+              let observedGoal = goal
+              if (completedTelemetry) {
+                const accounted = applyOpenCode2GoalTelemetry(
+                  observedGoal,
+                  owner.messageID,
+                  completedTelemetry,
+                )
+                observedGoal = accounted.goal
+                if (observedGoal !== goal) await store.save(observedGoal)
+              }
+
+              if (observedGoal.status === "completed") {
                 const promoted = await applyOpenCode2ControlPlaneMutation(
                   directory,
                   sessionID,
@@ -1171,7 +1224,7 @@ export const OpenCode2GoalsExperimental = {
                 continue
               }
 
-              const prepared = prepareOpenCode2Continuation(goal, event)
+              const prepared = prepareOpenCode2Continuation(observedGoal, event)
               if (!prepared.closed) continue
               await store.save(prepared.goal)
               if (prepared.shouldContinue && prepared.prompt) {
@@ -1379,6 +1432,8 @@ export const OpenCode2GoalsExperimental = {
       autonomousRuntime.pendingPromptBySession.clear()
       autonomousRuntime.executionOwnerBySession.clear()
       autonomousRuntime.kickoffBySession.clear()
+      telemetryRuntime.currentBySession.clear()
+      toolProgressRuntime.shellPending.clear()
       autonomousDispatching.clear()
       await lifecycleTask?.catch(() => undefined)
     }

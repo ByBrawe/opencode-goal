@@ -130,6 +130,10 @@ export function createOpenCode2GoalWorkTools(input: {
     steeringEpochs.set(id, currentSteeringEpoch(id) + 1)
   }
 
+  function markForegroundAdmission(id: string): void {
+    steeringEpochs.set(id, currentSteeringEpoch(id) + 1)
+  }
+
   function clearSession(id: string): void {
     steeringEpochs.delete(id)
     lastForegroundMessage.delete(id)
@@ -406,6 +410,7 @@ export function createOpenCode2GoalWorkTools(input: {
     hideFrom,
     handleContext,
     markForegroundSteering,
+    markForegroundAdmission,
     clearSession,
     currentSteeringEpoch,
     toolNames: OPENCODE2_GOAL_WORK_TOOLS,

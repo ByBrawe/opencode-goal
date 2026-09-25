@@ -141,6 +141,22 @@ export function createUnitHandoffTarget(
   }
 }
 
+export function markUnitHandoffAdmitted(target: GoalState, now = Date.now()): GoalState {
+  const handoff = target.unitRotation?.handoff
+  if (!handoff || handoff.phase !== "prepared") return target
+  return {
+    ...target,
+    unitRotation: {
+      ...target.unitRotation!,
+      handoff: {
+        ...handoff,
+        phase: "admitted",
+      },
+    },
+    updatedAt: now,
+  }
+}
+
 export function markUnitHandoffSourceTerminal(
   source: GoalState,
   target: GoalState,

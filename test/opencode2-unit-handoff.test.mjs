@@ -1,5 +1,8 @@
 import test from "node:test"
 import assert from "node:assert/strict"
+import { mkdtemp, rm } from "node:fs/promises"
+import os from "node:os"
+import path from "node:path"
 import { createGoal, pauseGoal, resumeGoal } from "../dist/domain/goal.js"
 import {
   activateUnitHandoffTarget,
@@ -10,6 +13,7 @@ import {
   observeInitialGoalUnit,
   unitHandoffMessageID,
   unitRotationNeeded,
+  withUnitHandoffLease,
 } from "../dist/opencode2/unit-handoff.js"
 
 function seededGoal() {
@@ -112,4 +116,52 @@ test("completed or paused Goals never become unit-rotation candidates", () => {
   const paused = { ...goal, status: "paused" }
   assert.equal(unitRotationNeeded(completed, "unit-002"), false)
   assert.equal(unitRotationNeeded(paused, "unit-002"), false)
+})
+
+
+test("Goal-scoped unit handoff lease serializes concurrent rotation attempts", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-unit-handoff-lock-"))
+  try {
+    let active = 0
+    let peak = 0
+    const order = []
+    const run = (name, delay) => withUnitHandoffLease(root, "shared-goal-id", async () => {
+      active += 1
+      peak = Math.max(peak, active)
+      order.push(`${name}:start`)
+      await new Promise((resolve) => setTimeout(resolve, delay))
+      order.push(`${name}:end`)
+      active -= 1
+    }, 2_000)
+
+    await Promise.all([run("a", 40), run("b", 1)])
+    assert.equal(peak, 1)
+    assert.deepEqual(order, ["a:start", "a:end", "b:start", "b:end"])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("handoff retry keeps one durable inbox identity across crash phases", () => {
+  const source = seededGoal()
+  let target = createUnitHandoffTarget(source, "target-session", "unit-002", 200)
+  const messageID = unitHandoffMessageID(target)
+  assert.ok(messageID)
+
+  target = markUnitHandoffAdmitted(target, 210)
+  const terminal = markUnitHandoffSourceTerminal(source, target, 220)
+  target = activateUnitHandoffTarget(target, 230)
+
+  assert.equal(unitHandoffMessageID(target), messageID)
+  assert.equal(terminal.status, "handed_off")
+  assert.equal(target.status, "active")
+  assert.equal(target.unitRotation.handoff.phase, "dispatch_pending")
+
+  const retryView = { ...target, unitRotation: { ...target.unitRotation, handoff: { ...target.unitRotation.handoff } } }
+  assert.equal(unitHandoffMessageID(retryView), messageID, "restart/reload must reuse the persisted inbox ID")
+
+  const dispatched = markUnitHandoffDispatched(retryView, 240)
+  assert.equal(unitHandoffMessageID(dispatched), messageID)
+  assert.equal(dispatched.unitRotation.handoff.phase, "dispatched")
+  assert.equal(markUnitHandoffDispatched(dispatched, 250).unitRotation.handoff.phase, "dispatched")
 })

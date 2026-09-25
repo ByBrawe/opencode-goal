@@ -638,6 +638,65 @@ test("V2 autonomous coordinator counts only exact owned continuation executions"
   }
 })
 
+test("V2 native Todo telemetry is accepted only inside the exact Goal-owned execution", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-todo-owned-"))
+  try {
+    await withAutonomousPreview(async () => {
+      const host = fakeV2EventContext(root)
+      const sessionID = "v2-todo-owned"
+      const store = new GoalStore(root)
+      const cleanup = await OpenCode2GoalsExperimental.setup(host.ctx)
+      const todos = [
+        { content: "Inspect V2 Todo state", status: "in_progress", priority: "high" },
+        { content: "Keep advisory only", status: "pending", priority: "medium" },
+      ]
+
+      const dispatched = await dispatchDirectCommand(host, sessionID, "ship V2 Todo parity")
+      await armCapability(host, sessionID, dispatched.messageID)
+      await host.emitEvent({ type: "session.execution.started", data: { sessionID } })
+      await consumeCapability(host, sessionID, "ship V2 Todo parity")
+      await host.emitEvent({ type: "session.execution.succeeded", data: { sessionID } })
+
+      const kickoff = await waitForValue(
+        () => host.prompts.find((item) =>
+          item.resume === false
+          && item.metadata?.opencode_goal_v2_source === "kickoff"
+        ),
+        "Todo parity kickoff",
+      )
+
+      await host.emitEvent({ type: "todo.updated", data: { sessionID, todos } })
+      assert.equal((await store.load(sessionID))?.todoPlan, undefined, "unarmed foreground Todo event must not bind to Goal")
+
+      await runHook(host, "context", {
+        sessionID,
+        agent: "build",
+        messageID: kickoff.returnedID,
+        text: "host-admitted Todo Goal continuation",
+      })
+      await host.emitEvent({ type: "session.execution.started", data: { sessionID } })
+      await host.emitEvent({ type: "todo.updated", data: { sessionID, todos } })
+
+      const observed = await waitForValue(async () => {
+        const goal = await store.load(sessionID)
+        return goal?.todoPlan?.total === 2 ? goal : null
+      }, "owned V2 Todo telemetry")
+
+      assert.equal(observed.todoPlan.goalRevision, observed.revision)
+      assert.equal(observed.todoPlan.inProgress, 1)
+      assert.equal(observed.todoPlan.pending, 1)
+      assert.equal(observed.progressRevision, 0)
+      assert.equal(observed.observedProgressRevision, 0)
+      assert.deepEqual(observed.evidence, [])
+      assert.ok(observed.requirements.every((item) => item.status === "pending"))
+
+      await cleanup()
+    })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test("V2 completed Goal terminal auto-promotes exactly one queued Goal and transfers continuation ownership", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-sequence-auto-"))
   try {

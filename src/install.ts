@@ -146,7 +146,12 @@ async function installAcrossExistingConfigs(existing: string[]): Promise<void> {
   for (const plan of plans) await writeAtomic(plan.target, plan.content)
 
   if (nativeGoalCommandMode) {
-    await rm(goalCommandPath, { force: true })
+    if (await fileExists(goalCommandPath)) {
+      const existingCommand = await readFile(goalCommandPath, "utf8")
+      if (existingCommand.includes(managedCommandMarker)) {
+        await rm(goalCommandPath, { force: true })
+      }
+    }
   } else {
     const commandContent = plans[0]?.commandContent
     if (!commandContent) throw new Error("staged managed /goal command content is missing")

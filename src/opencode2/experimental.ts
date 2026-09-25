@@ -521,7 +521,7 @@ async function interruptBeforeDirectMutation(
 ): Promise<void> {
   if (!["edit", "pause", "clear"].includes(action)) return
   if (typeof ctx.session.interrupt !== "function") {
-    throw new Error(`OpenCode Goals V2 direct lifecycle preview requires session.interrupt() before /goal ${action} can run.`)
+    throw new Error(`OpenCode Goals V2 direct lifecycle requires session.interrupt() before /goal ${action} can run.`)
   }
   await ctx.session.interrupt({ sessionID, resume: false })
 }
@@ -557,10 +557,10 @@ function requireDirectLifecycleCapabilities(
   action: ReturnType<typeof parseGoalCommand>["action"],
 ): void {
   if ((DIRECT_LIFECYCLE_MUTATION_ACTIONS.has(action) || DIRECT_READ_ACTIONS.has(action)) && typeof ctx.session.prompt !== "function") {
-    throw new Error(`OpenCode Goals V2 direct lifecycle preview requires session.prompt() before /goal ${action} can run.`)
+    throw new Error(`OpenCode Goals V2 direct lifecycle requires session.prompt() before /goal ${action} can run.`)
   }
   if (["edit", "pause", "clear"].includes(action) && typeof ctx.session.interrupt !== "function") {
-    throw new Error(`OpenCode Goals V2 direct lifecycle preview requires session.interrupt() before /goal ${action} can run.`)
+    throw new Error(`OpenCode Goals V2 direct lifecycle requires session.interrupt() before /goal ${action} can run.`)
   }
 }
 
@@ -902,7 +902,7 @@ const authorizedControlInputSchema = {
 function addExperimentalCommand(commands: any, name: string, definition: any): void {
   const add = commands?.add
   if (typeof add !== "function") {
-    throw new Error("OpenCode Goals V2 direct lifecycle preview requires a command draft with add().")
+    throw new Error("OpenCode Goals V2 direct lifecycle requires a command draft with add().")
   }
   if (add.length === 1) {
     add.call(commands, { ...definition, name })
@@ -946,8 +946,8 @@ export const OpenCode2GoalsExperimental = {
     const hostLimitRuntime = createOpenCode2HostLimitRuntime()
     const hostLimitRetryTimers = new Map<string, ReturnType<typeof setTimeout>>()
     const autonomousDispatching = new Set<string>()
-    const previewEnabled = directLifecycleEnabled()
-    const autonomousEnabled = previewEnabled && autonomousEnabledByConfig()
+    const lifecycleEnabled = directLifecycleEnabled()
+    const autonomousEnabled = lifecycleEnabled && autonomousEnabledByConfig()
     const semanticVerifier = createOpenCode2SemanticVerifierRuntime(
       ctx.session,
       async (sessionID) => await resolveSessionDirectory(ctx, sessionID),
@@ -1410,7 +1410,7 @@ export const OpenCode2GoalsExperimental = {
       void lifecycleTask.catch(() => undefined)
     }
 
-    if (previewEnabled) {
+    if (lifecycleEnabled) {
       if (typeof ctx.command?.transform !== "function") {
         throw new Error("OpenCode Goals V2 direct lifecycle requires command.transform().")
       }
@@ -1447,7 +1447,7 @@ export const OpenCode2GoalsExperimental = {
         },
       })
 
-      if (previewEnabled) {
+      if (lifecycleEnabled) {
         addExperimentalTool(tools, V2_CONTROL_TOOL, {
           description: "Consume the one-use host-authenticated direct /goal lifecycle capability for the current request. This tool is removed from ordinary, replayed, and Plan/read-only requests.",
           input: authorizedControlInputSchema,
@@ -1488,7 +1488,7 @@ export const OpenCode2GoalsExperimental = {
         return
       }
 
-      if (!previewEnabled || !allowAuthorization) {
+      if (!lifecycleEnabled || !allowAuthorization) {
         removeControlTool(event)
       } else {
         const lastUserMessageID = eventLastUserMessageID(event)
@@ -1575,7 +1575,7 @@ export const OpenCode2GoalsExperimental = {
         if (autonomousEnabled) workTools.handleContext(event)
       })
     } catch {
-      // Exact OpenCode 2.0.11 exposes context. If it is absent, preview
+      // Exact OpenCode 2.0.11 exposes context. If it is absent, lifecycle
       // capability authorization fails closed because no request can arm it.
     }
 

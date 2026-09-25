@@ -50,6 +50,11 @@ export function selectOpenCode2RegistryModel(
  * registry is the exact-host source for context/output limits. Failure to read
  * that registry is advisory and must never block Goal work or invent limits.
  */
+function nonNegative(value: unknown): number | undefined {
+  const number = Number(value)
+  return Number.isFinite(number) && number >= 0 ? number : undefined
+}
+
 export async function observeOpenCode2ModelRegistryLimits(
   goal: GoalState,
   registry: OpenCode2ModelRegistry | undefined,
@@ -67,6 +72,19 @@ export async function observeOpenCode2ModelRegistryLimits(
 
   const model = selectOpenCode2RegistryModel(models, selected)
   if (!model) return goal
+
+  const limit = record(model.limit)
+  const contextLimit = nonNegative(limit?.context)
+  const inputLimit = nonNegative(limit?.input)
+  const outputLimit = nonNegative(limit?.output)
+  if (contextLimit === undefined && inputLimit === undefined && outputLimit === undefined) return goal
+
+  const current = goal.execution?.modelContext
+  if (
+    current?.contextLimit === contextLimit
+    && current?.inputLimit === inputLimit
+    && current?.outputLimit === outputLimit
+  ) return goal
 
   return observeModelContextLimits(goal, { model, now })
 }

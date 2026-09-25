@@ -13,6 +13,11 @@ import { createOpenCode2AutonomousRuntime, armOpenCode2GoalExecution, clearOpenC
 import { createOpenCode2SemanticVerifierRuntime, OPENCODE2_VERIFIER_RESULT_TOOL } from "./semantic-verifier.js"
 import { createOpenCode2GoalWorkTools } from "./work-tools.js"
 import {
+  applyOpenCode2AssistantStepAccounting,
+  createOpenCode2TelemetryAccountingRuntime,
+  observeOpenCode2AssistantTelemetry,
+} from "./telemetry-accounting.js"
+import {
   applyOpenCode2ControlPlaneMutation,
   OPENCODE2_EXTRA_MUTATION_ACTIONS,
   OPENCODE2_READ_CONTROL_ACTIONS,
@@ -893,6 +898,7 @@ export const OpenCode2GoalsExperimental = {
     const runtime = createOpenCode2DirectLifecycleRuntime()
     const compactionRuntime = createOpenCode2CompactionBoundaryRuntime()
     const autonomousRuntime = createOpenCode2AutonomousRuntime()
+    const telemetryRuntime = createOpenCode2TelemetryAccountingRuntime()
     const autonomousDispatching = new Set<string>()
     const previewEnabled = directLifecyclePreviewEnabled()
     const autonomousEnabled = previewEnabled && autonomousPreviewEnabled()
@@ -996,9 +1002,26 @@ export const OpenCode2GoalsExperimental = {
         try {
           const events = ctx.event!.subscribe({ signal: lifecycleAbort.signal })
           for await (const event of events) {
+            const assistantStep = observeOpenCode2AssistantTelemetry(telemetryRuntime, event)
             const boundary = inspectOpenCode2AuthorityBoundary(runtime, compactionRuntime, event)
-            const sessionID = boundary.sessionID
+            const sessionID = boundary.sessionID ?? assistantStep?.sessionID
             const type = firstString(record(event)?.type)
+
+            if (autonomousEnabled && assistantStep) {
+              const owner = autonomousRuntime.executionOwnerBySession.get(assistantStep.sessionID)
+              if (owner) {
+                try {
+                  const { store, goal } = await coordinatorGoal(assistantStep.sessionID)
+                  if (goal && owner.goalID === goal.id) {
+                    const next = applyOpenCode2AssistantStepAccounting(goal, owner, assistantStep)
+                    if (next !== goal) await store.save(next)
+                  }
+                } catch {
+                  // Telemetry is fail-closed: missing/stale Goal state must not
+                  // authorize a fallback write or synthetic usage estimate.
+                }
+              }
+            }
 
             if (boundary.kind === "session-deleted" && sessionID) {
               clearOpenCode2GoalOwnership(autonomousRuntime, sessionID)
@@ -1289,6 +1312,7 @@ export const OpenCode2GoalsExperimental = {
       autonomousRuntime.pendingPromptBySession.clear()
       autonomousRuntime.executionOwnerBySession.clear()
       autonomousRuntime.kickoffBySession.clear()
+      telemetryRuntime.assistants.clear()
       autonomousDispatching.clear()
       await lifecycleTask?.catch(() => undefined)
     }

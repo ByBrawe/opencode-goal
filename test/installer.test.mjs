@@ -159,6 +159,27 @@ test("OpenCode 2 installer migrates only Goal-owned registrations to native plug
   }
 })
 
+test("OpenCode 2 installer preserves a user-owned legacy goal command while using plugin-native command mode", async () => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-installer-v2-user-command-"))
+  const configDir = path.join(temp, "config")
+  const commandPath = path.join(configDir, "commands", "goal.md")
+  try {
+    await mkdir(path.dirname(commandPath), { recursive: true })
+    const custom = "---\ndescription: user-owned legacy goal command\n---\ncustom\n"
+    await writeFile(commandPath, custom, "utf8")
+
+    const result = await runInstaller(configDir, [], { OPENCODE_GOAL_HOST_VERSION: "2.0.15" })
+    assert.equal(result.code, 0, result.stderr)
+    assert.equal(await readFile(commandPath, "utf8"), custom)
+
+    const config = JSON.parse(await readFile(path.join(configDir, "opencode.json"), "utf8"))
+    assert.deepEqual(config.plugins, [packageSpec])
+    assert.equal(config.plugin, undefined)
+  } finally {
+    await rm(temp, { recursive: true, force: true })
+  }
+})
+
 test("installer upgrades old package pins, preserves other plugins, and removes duplicate Goal entries", async () => {
   const temp = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-installer-update-"))
   const configDir = path.join(temp, "config")

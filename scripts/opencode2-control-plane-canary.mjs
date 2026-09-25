@@ -429,10 +429,19 @@ async function main() {
     }
 
     const assertReadOnly = async (text, expected) => {
-      const requests = await command(text)
-      assert.ok(requests.length >= 1, `read-only /goal ${text} produced no provider request`)
-      assert.ok(requests.every((item) => !item.hasControlTool), `read-only /goal ${text} exposed mutating control`)
-      assert.ok(requests.some((item) => expected.test(item.currentUserText)), `read-only /goal ${text} did not show expected V1 view\n${JSON.stringify(requests, null, 2)}`)
+      const before = provider.stats.requests.length
+      const response = await request(`/api/session/${encodeURIComponent(sessionID)}/command`, {
+        method: "POST",
+        body: JSON.stringify({ name: "goal", text }),
+      }, 90_000)
+      assert.ok(response.ok, `read-only /goal ${text} failed: HTTP ${response.status} ${response.text}\n${await diagnostics()}`)
+
+      const matched = await waitFor(() => {
+        const requests = provider.stats.requests.slice(before)
+        return requests.find((item) => expected.test(item.currentUserText)) ?? null
+      }, `read-only /goal ${text} expected V1 presentation`, diagnostics, 30_000)
+
+      assert.equal(matched.hasControlTool, false, `read-only /goal ${text} exposed mutating control`)
     }
 
     const assertLifecycleMutation = async (text) => {

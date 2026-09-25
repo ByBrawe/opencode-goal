@@ -45,6 +45,22 @@ The host-authenticated V2 `/goal` command surface also reuses the stable V1 pers
 
 Stable promotion requires an exact OpenCode 2.0.11 canary to prove the read-only views remain mutation-free, lifecycle mutation still requires the one-use capability, and representative host-native budget/archive/restore/sequence mutations persist without depending on provider execution.
 
+## V1 telemetry/runtime parity preview
+
+Exact OpenCode 2.0.11 now exposes enough host telemetry to reuse the stable V1 turn-quality policies without counting provider substeps as separate Goal turns:
+
+- all `session.step.ended` samples inside one host execution are folded into one logical Goal-owned turn while preserving token, cost, and execution-runtime accounting;
+- the last exact host token sample updates the shared V1 model-context **usage** fields, including cache tokens for request/input pressure calculations;
+- non-empty assistant text or any tool activity makes an execution meaningful, so a tool-only turn with an empty final text response is not misclassified as empty;
+- a successful execution with no meaningful text/tool activity reuses V1's bounded empty-turn policy: billable usage is preserved, the first empty execution gets one retry/stall exemption, and the second consecutive empty execution pauses the Goal;
+- successful `write/edit/apply_patch` tool events reuse V1 file hashing, while `shell/bash` reuses the V1 Git-worktree/read-only-command progress guard;
+- progress is accepted only for the current host-owned Goal execution/revision, persisted before notification, and ordinary foreground/direct-lifecycle/compaction activity cannot manufacture Goal progress;
+- telemetry and pending shell state are execution/session bounded and terminal/session cleanup is fail-closed.
+
+The exact-host parity canary must prove one real Goal-owned write/tool loop counts as one logical turn and produces durable host progress, followed by two fully empty executions that preserve billable usage and trigger the same bounded pause as V1.
+
+One V1 model-context capability remains intentionally unclaimed here: exact OpenCode 2.0.11 `session.context.model` exposes model identity but not context/input/output limits in the proven hook payload, so context-limit/headroom enforcement is not inferred from undocumented data.
+
 ## V1-grade completion preview
 
 When both lifecycle and autonomous V2 previews are enabled, Goal-owned OpenCode 2 executions expose the same model-facing work controls used by stable V1: checkpoint notes, host file evidence, verified completion, waiting-user sleep, and repeated blocker reporting. These controls are visible only to the exact host-admitted Goal-owned execution identity for the current Goal revision; ordinary foreground turns and verifier children do not inherit them.

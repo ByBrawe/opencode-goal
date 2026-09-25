@@ -122,8 +122,12 @@ export interface GoalTodoPlanAnomaly {
  * gating/status, while `items` keeps a revision-bound durable snapshot for
  * restart/compaction reconciliation. Older schema-v1 snapshots may omit items.
  */
+export type GoalTodoPlanSource = "native" | "goal_fallback"
+
 export interface GoalTodoPlan {
   goalRevision: number
+  /** Missing on older snapshots; legacy values are interpreted as native. */
+  source?: GoalTodoPlanSource
   digest: string
   total: number
   pending: number

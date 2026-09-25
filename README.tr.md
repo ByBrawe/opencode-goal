@@ -72,7 +72,7 @@ Windows:
 
 OpenCode npm paketini özel `./server` entrypoint'i üzerinden yükler. Root export normal JavaScript API'si olarak kalır.
 
-OpenCode 2, V2 lifecycle ve autonomous coordinator yolunu varsayılan olarak etkinleştirir. Eski `OPENCODE_GOAL_V2_DIRECT_LIFECYCLE` ve `OPENCODE_GOAL_V2_AUTONOMOUS` ortam değişkenleri acil kapatma anahtarı olarak korunur: ilgili V2 katmanını kapatmak için `0`, `false`, `no` veya `off` verilebilir. Tanınmayan açık değerler fail-closed davranır.
+OpenCode 2, V2 lifecycle ve autonomous coordinator yolunu varsayılan olarak etkinleştirir. Native plugin options üzerinden `{ "package": "@bybrawe/opencode-goal@<version>", "options": { "lifecycle": false, "autonomous": false } }` ile iki katman ayrı ayrı kapatılabilir. Eski `OPENCODE_GOAL_V2_DIRECT_LIFECYCLE` ve `OPENCODE_GOAL_V2_AUTONOMOUS` ortam değişkenleri daha yüksek öncelikli acil kapatma anahtarı olarak korunur: ilgili V2 katmanını kapatmak için `0`, `false`, `no` veya `off` verilebilir. Tanınmayan açık environment değerleri fail-closed davranır.
 
 ## Neden OpenCode Goals?
 
@@ -215,6 +215,8 @@ Tekrarlanabilir contract flag'leri success ve hard boundary'leri tanımlar:
 --check "..."
 --notify "command {reason} {goal}"
 --contains "file::required text"
+--unit "host komutu"
+--fresh-session-per-unit
 --max-turns <n>
 --max-tokens <n>
 --max-minutes <n>
@@ -232,6 +234,21 @@ Yeni Goal'larda cumulative token limiti varsayılan olarak yoktur (`maxTokens: 0
 ```
 
 Tam objective her zaman gerekli bir semantic requirement olarak kalır. Dar kapsamlı kontroller ek proof obligations oluşturur; geniş sonucu asla değiştirmez veya yerine geçmez.
+
+### OpenCode 2 bounded per-unit session'lar
+
+İş host tarafından gözlemlenebilen doğal unit'lere bölünüyorsa (ör. migration shard, paket, tenant veya numaralı batch), OpenCode 2 unit kimliği değiştiğinde aynı Goal'ı yeni bir native session'a devredebilir:
+
+```text
+/goal tüm shard'ları migrate et \
+  --unit "node scripts/current-shard.mjs" \
+  --fresh-session-per-unit \
+  --check "npm test"
+```
+
+İki flag birlikte zorunludur. `--unit` komutunun stdout'u yalnızca **kimliktir**; hangi harici unit'in aktif olduğunu söyler, completion kanıtı oluşturmaz ve requirement sağlamaz. Rotation yalnız temiz bir Goal-owned execution boundary sonrasında yapılır. Handoff OpenCode 2 native `session.create` ve kalıcı iki fazlı inbox transferini kullanır; eski session terminal `handed_off` olmadan target autonomous owner olamaz.
+
+Goal ID, revision, contract, evidence, kümülatif usage ve budget session zinciri boyunca korunur. `/goal status` current unit ile root/previous/next session bağlantılarını gösterir. Paused, waiting-user, blocked/limited veya completed Goal rotate edilmez; final doğrulanmış completion yeni bir session açmak yerine zinciri bitirir.
 
 `/goal edit` yeni bir revision oluşturur. Eski revision'a ait kanıtlar düzenlenmiş Goal'ı sessizce kanıtlayamaz.
 

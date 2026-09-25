@@ -302,6 +302,9 @@ export default async function OpenCodeGoalPlugin(input: any, options: OpenCodeGo
           return
         }
         if (!parsed.objective) throw new Error("Usage: /goal <objective> [--accept \"criterion\"] [--check \"command\"]")
+        if (parsed.unitCommand || parsed.freshSessionPerUnit) {
+          throw new Error("Per-unit fresh-session rotation requires OpenCode 2; the V1 lifecycle does not create a second ownership path.")
+        }
         const execution = sessionContexts.get(event.sessionID)
         resetCadenceTurn(event.sessionID)
         if (parsed.action === "edit") {

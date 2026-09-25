@@ -8,6 +8,8 @@ export interface ParsedGoalCommand {
   checks: string[]
   files: FileRequirementInput[]
   notifyCommand?: string
+  unitCommand?: string
+  freshSessionPerUnit?: boolean
   goalIDPrefix?: string
   historyKeep?: number
   queuePosition?: number
@@ -194,6 +196,8 @@ export function parseGoalCommand(input: string): ParsedGoalCommand {
   let maxRuntimeMs: number | undefined
   let maxCost: number | undefined
   let notifyCommand: string | undefined
+  let unitCommand: string | undefined
+  let freshSessionPerUnit = false
 
   for (let i = 0; i < list.length; i += 1) {
     const current = list[i]!
@@ -202,6 +206,8 @@ export function parseGoalCommand(input: string): ParsedGoalCommand {
     if (["--constraint", "--constraints", "--non-goal", "--non-goals"].includes(current) && next) { constraints.push(next); i += 1; continue }
     if (current === "--check" && next) { checks.push(next); i += 1; continue }
     if (current === "--notify" && next) { notifyCommand = next; i += 1; continue }
+    if (current === "--unit" && next) { unitCommand = next; i += 1; continue }
+    if (current === "--fresh-session-per-unit") { freshSessionPerUnit = true; continue }
     if (current === "--file" && next) { files.push({ file: next }); i += 1; continue }
     if (current === "--contains" && next) { files.push(parseContainsContract(next)); i += 1; continue }
     if (current === "--max-turns") { maxTurns = parseLimit(current, next, true); i += 1; continue }
@@ -212,8 +218,17 @@ export function parseGoalCommand(input: string): ParsedGoalCommand {
     objective.push(current)
   }
 
-  if (action === "budget" && (objective.length || acceptance.length || constraints.length || checks.length || files.length || notifyCommand !== undefined)) {
+  if (action === "budget" && (objective.length || acceptance.length || constraints.length || checks.length || files.length || notifyCommand !== undefined || unitCommand !== undefined || freshSessionPerUnit)) {
     throw new Error("/goal budget accepts only --max-turns, --max-tokens, --max-minutes, and --max-cost")
+  }
+  if ((action === "add") && (unitCommand !== undefined || freshSessionPerUnit)) {
+    throw new Error("/goal add does not support per-unit session rotation; configure it on the live Goal")
+  }
+  if (unitCommand !== undefined && !freshSessionPerUnit) {
+    throw new Error("--unit requires --fresh-session-per-unit")
+  }
+  if (freshSessionPerUnit && unitCommand === undefined) {
+    throw new Error("--fresh-session-per-unit requires --unit <host command>")
   }
 
   const parsed: ParsedGoalCommand = { action, objective: objective.join(" ").trim(), acceptance, constraints, checks, files }
@@ -222,5 +237,7 @@ export function parseGoalCommand(input: string): ParsedGoalCommand {
   if (maxRuntimeMs !== undefined) parsed.maxRuntimeMs = maxRuntimeMs
   if (maxCost !== undefined) parsed.maxCost = maxCost
   if (notifyCommand !== undefined) parsed.notifyCommand = notifyCommand
+  if (unitCommand !== undefined) parsed.unitCommand = unitCommand
+  if (freshSessionPerUnit) parsed.freshSessionPerUnit = true
   return parsed
 }

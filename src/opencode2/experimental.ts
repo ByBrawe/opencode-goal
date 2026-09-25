@@ -1193,6 +1193,15 @@ export const OpenCode2GoalsExperimental = {
               observeOpenCode2TelemetryEvent(telemetryRuntime, sessionID, event)
             }
 
+            if (autonomousEnabled && sessionID && type === "todo.updated") {
+              try {
+                await workTools.observeNativeTodoEvent(event)
+              } catch {
+                // Todo telemetry is advisory. Native Todo events from an
+                // unowned/stale execution or a storage race cannot mutate Goal.
+              }
+            }
+
             if (sessionID && type === "session.tool.called") {
               const callID = firstString(data?.id, data?.callID)
               if (callID) await rememberShellProgressStart(sessionID, callID)

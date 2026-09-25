@@ -441,7 +441,7 @@ test("V2 presentation hooks remove stale control and never mutate persisted stat
     assert.equal(contextEvent.tools.opencode_goals_v2_control, undefined)
     assert.ok(contextEvent.tools.opencode_goals_v2_get)
     assert.equal(contextEvent.system[0], "base system")
-    assert.match(contextEvent.system[1], /OpenCode Goals experimental V2 persisted state/)
+    assert.match(contextEvent.system[1], /OpenCode Goals V2 persisted state/)
     assert.match(contextEvent.system[1], /Objective: ship context/)
     assert.match(contextEvent.system[1], /Model-visible V2 lifecycle mutation remains read-only/i)
     assert.deepEqual(await new GoalStore(root).load(sessionID), before, "Plan/context presentation must not pause or otherwise mutate Goal state")
@@ -453,7 +453,7 @@ test("V2 presentation hooks remove stale control and never mutate persisted stat
     })
     assert.deepEqual(currentContextEvent.system[0], { type: "text", text: "base system" })
     assert.equal(currentContextEvent.system[1]?.type, "text")
-    assert.match(currentContextEvent.system[1]?.text ?? "", /OpenCode Goals experimental V2 persisted state/)
+    assert.match(currentContextEvent.system[1]?.text ?? "", /OpenCode Goals V2 persisted state/)
     assert.match(currentContextEvent.system[1]?.text ?? "", /Objective: ship context/)
 
     const requestEvent = await runHook(host, "request", {
@@ -472,7 +472,7 @@ test("V2 presentation hooks remove stale control and never mutate persisted stat
     })
     assert.equal(compactionEvent.tools.opencode_goals_v2_control, undefined, "compaction must never inherit direct mutation authority")
     assert.equal(compactionEvent.system[0]?.type, "text")
-    assert.match(compactionEvent.system[0]?.text ?? "", /OpenCode Goals experimental V2 persisted state/)
+    assert.match(compactionEvent.system[0]?.text ?? "", /OpenCode Goals V2 persisted state/)
     assert.match(compactionEvent.system[0]?.text ?? "", /Objective: ship context/)
     assert.deepEqual(await new GoalStore(root).load(sessionID), before, "compaction context injection must stay read-only")
   } finally {

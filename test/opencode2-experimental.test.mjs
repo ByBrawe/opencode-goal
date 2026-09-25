@@ -14,6 +14,7 @@ import OpenCode2GoalsExperimental, {
 import { createOpenCode2CompactionBoundaryRuntime } from "../dist/opencode2/compaction-boundary.js"
 import { createGoal } from "../dist/domain/goal.js"
 import { GoalStore } from "../dist/persistence/store.js"
+import { GoalSequenceStore } from "../dist/persistence/sequence-store.js"
 
 function fakeV2Context(directory) {
   const commands = new Map()
@@ -282,7 +283,7 @@ test("V2 status and contract stay readable while every lifecycle mutation fails 
     assert.match(status.content, /Status: active/)
 
     const contract = await executeOpenCode2GoalControl(host.ctx, "contract", { sessionID, agent: "build" })
-    assert.match(contract.content, /OpenCode Goals contract/)
+    assert.match(contract.content, /Goal Contract/)
     assert.match(contract.content, /docs match shipped behavior/)
     assert.match(contract.content, /no unrelated mutation/)
 
@@ -292,24 +293,84 @@ test("V2 status and contract stay readable while every lifecycle mutation fails 
     )
     assert.match(get.content, /Goal: ship docs/)
 
+    for (const [command, expected] of [
+      ["budget", /Budget:/],
+      ["history", /No archived goals|Archived goals/],
+      ["audit", /Goal Audit/],
+      ["doctor", /Goal storage doctor:/],
+      ["list", /Project Goal snapshots/],
+      ["queue", /Goal Sequence/],
+    ]) {
+      const result = await executeOpenCode2GoalControl(host.ctx, command, { sessionID, agent: "build" })
+      assert.match(result.content, expected, `${command} should expose the shared V1 read-only view`)
+      assert.deepEqual(await new GoalStore(root).load(sessionID), before, `${command} read must not mutate Goal state`)
+    }
+
     for (const command of [
       "pause",
       "resume",
       "clear",
       "edit changed objective",
       "ship replacement",
-      "budget",
-      "history",
+      "budget --max-turns 9",
+      "history prune --keep 1",
       "restore abc123",
       "add queued docs",
-      "queue",
+      "queue clear",
+      "queue remove abc123",
+      "queue move abc123 1",
       "next",
     ]) {
       const result = await executeOpenCode2GoalControl(host.ctx, command, { sessionID, agent: "build" })
-      assert.match(result.content, /model-visible lifecycle control remains read-only/i, `${command} must fail closed in V2`)
+      assert.match(result.content, /model-visible lifecycle control remains read-only/i, `${command} must fail closed without host command authority`)
       assert.match(result.content, /No Goal state was changed/i)
       assert.deepEqual(await new GoalStore(root).load(sessionID), before, `${command} must not mutate Goal state`)
     }
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("V2 host-native admin mutations do not depend on lifecycle control capability", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-host-admin-"))
+  try {
+    await withDirectLifecyclePreview(async () => {
+      const host = fakeV2Context(root)
+      const sessionID = "v2-host-admin-session"
+      const store = new GoalStore(root)
+      await seedGoal(root, sessionID, "host-native admin parity")
+      await OpenCode2GoalsExperimental.setup(host.ctx)
+
+      const budgetDispatch = await dispatchDirectCommand(host, sessionID, "budget --max-turns 9")
+      assert.equal(budgetDispatch.messageID, undefined, "admin mutation must not admit a lifecycle capability message")
+      assert.equal((await store.load(sessionID))?.budget.maxTurns, 9)
+      assert.ok(budgetDispatch.emitted.every((item) => item.resume !== false), "admin presentation must stay read-only")
+
+      const presentationMessageID = budgetDispatch.emitted.at(-1)?.returnedID
+      if (presentationMessageID) {
+        const event = await armCapability(host, sessionID, presentationMessageID)
+        assert.equal(event.tools.opencode_goals_v2_control, undefined, "admin presentation cannot mint lifecycle authority")
+      }
+
+      await store.clear(sessionID)
+      assert.equal(await store.load(sessionID), null)
+      const historyBefore = await store.history(sessionID, 500)
+      assert.ok(historyBefore.length >= 1)
+
+      // Storage/admin mutations must not require a model/provider presentation
+      // surface after host command registration.
+      host.ctx.session.prompt = undefined
+
+      const pruneDispatch = await dispatchDirectCommand(host, sessionID, "history prune --keep 1")
+      assert.equal(pruneDispatch.messageID, undefined, "history prune must remain host-native without a live Goal")
+      assert.deepEqual(pruneDispatch.emitted, [])
+      assert.equal((await store.history(sessionID, 500)).length, 1)
+
+      const queueDispatch = await dispatchDirectCommand(host, sessionID, "add queued without live goal")
+      assert.equal(queueDispatch.messageID, undefined)
+      assert.deepEqual(queueDispatch.emitted, [])
+      assert.equal((await new GoalSequenceStore(root).load(sessionID)).items.length, 1)
+    })
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -566,6 +627,91 @@ test("V2 autonomous coordinator counts only exact owned continuation executions"
     })
   } finally {
     await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("V2 completed Goal terminal auto-promotes exactly one queued Goal and transfers continuation ownership", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-sequence-auto-"))
+  try {
+    await withAutonomousPreview(async () => {
+      const host = fakeV2EventContext(root)
+      const sessionID = "v2-sequence-auto"
+      const store = new GoalStore(root)
+      const sequence = new GoalSequenceStore(root)
+      const cleanup = await OpenCode2GoalsExperimental.setup(host.ctx)
+
+      const dispatched = await dispatchDirectCommand(host, sessionID, "ship first queued stage")
+      await armCapability(host, sessionID, dispatched.messageID)
+      await host.emitEvent({ type: "session.execution.started", data: { sessionID } })
+      await consumeCapability(host, sessionID, "ship first queued stage")
+
+      await host.emitEvent({ type: "session.execution.succeeded", data: { sessionID } })
+      const kickoff = await waitForValue(
+        () => host.prompts.find((item) =>
+          item.resume === false
+          && item.metadata?.opencode_goal_v2_source === "kickoff"
+        ),
+        "initial Goal kickoff",
+      )
+
+      const queued = await sequence.enqueue(sessionID, { objective: "ship second queued stage" })
+      const queuedID = queued.item.id
+
+      await runHook(host, "context", {
+        sessionID,
+        agent: "build",
+        messageID: kickoff.returnedID,
+        text: "host-admitted first Goal work turn",
+      })
+      await host.emitEvent({ type: "session.execution.started", data: { sessionID } })
+
+      const current = await store.load(sessionID)
+      assert.ok(current)
+      await store.save({
+        ...current,
+        status: "completed",
+        completionSummary: "first queued stage completed",
+        updatedAt: Date.now(),
+      })
+
+      await host.emitEvent({ type: "session.execution.succeeded", data: { sessionID } })
+
+      const promoted = await waitForValue(async () => {
+        const goal = await store.load(sessionID)
+        const queuedState = await sequence.load(sessionID)
+        return goal?.id === queuedID && goal.status === "active" && queuedState.items.length === 0 ? goal : null
+      }, "automatic queued Goal promotion and queue settlement")
+      assert.equal(promoted.objective, "ship second queued stage")
+      assert.equal((await sequence.load(sessionID)).items.length, 0)
+
+      const sequencePrompt = await waitForValue(
+        () => host.prompts.find((item) =>
+          item.resume === false
+          && item.metadata?.opencode_goal_v2_source === "sequence"
+        ),
+        "sequence-owned V2 continuation",
+      )
+      assert.equal(sequencePrompt.metadata?.opencode_goal_id, queuedID)
+
+      const countBeforeDuplicate = host.prompts.filter((item) =>
+        item.resume === false
+        && item.metadata?.opencode_goal_v2_source === "sequence"
+      ).length
+      await host.emitEvent({ type: "session.execution.succeeded", data: { sessionID } })
+      await new Promise((resolve) => setTimeout(resolve, 25))
+      assert.equal(
+        host.prompts.filter((item) =>
+          item.resume === false
+          && item.metadata?.opencode_goal_v2_source === "sequence"
+        ).length,
+        countBeforeDuplicate,
+        "duplicate terminal without the consumed owner must not promote or dispatch again",
+      )
+
+      await cleanup()
+    })
+  } finally {
+    await rm(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 50 })
   }
 })
 

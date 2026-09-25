@@ -25,7 +25,11 @@ test("V2 sequence and lifecycle controls stay read-only and never create or adva
     const sessionID = "v2-sequence-boundary-session"
     const store = new GoalStore(root)
 
-    for (const command of ["add queued docs", "ship docs", "next", "queue", "clear"]) {
+    const emptyQueue = await executeOpenCode2GoalControl(ctx, "queue", { sessionID, agent: "build" })
+    assert.match(emptyQueue.content, /Goal Sequence/)
+    assert.equal(await store.load(sessionID), null, "read-only queue inspection must not create Goal state")
+
+    for (const command of ["add queued docs", "ship docs", "next", "clear"]) {
       const result = await executeOpenCode2GoalControl(ctx, command, { sessionID, agent: "build" })
       assert.match(result.content, /model-visible lifecycle control remains read-only/i, `${command} should refuse V2 mutation`)
       assert.equal(await store.load(sessionID), null, `${command} must not create Goal state`)
@@ -36,12 +40,15 @@ test("V2 sequence and lifecycle controls stay read-only and never create or adva
     const before = await store.load(sessionID)
     assert.ok(before)
 
+    const currentQueue = await executeOpenCode2GoalControl(ctx, "queue", { sessionID, agent: "build" })
+    assert.match(currentQueue.content, /Goal Sequence/)
+    assert.deepEqual(await store.load(sessionID), before, "queue inspection must not mutate the live Goal")
+
     for (const command of [
       "pause",
       "resume",
       "edit changed",
       "add queued docs",
-      "queue",
       "next",
       "queue clear",
       "queue remove abc123",

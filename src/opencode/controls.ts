@@ -80,7 +80,7 @@ export function formatGoalHistory(records: GoalArchiveRecord[], selector?: strin
   return `Archived goal: ${record.goalID}\nArchive reason: ${record.reason}\nArchived at: ${new Date(record.archivedAt).toISOString()}\n${formatDetailedGoalStatus(record.goal)}`
 }
 
-function formatHistoryPrune(result: GoalHistoryPruneResult): string {
+export function formatHistoryPrune(result: GoalHistoryPruneResult): string {
   if (!result.removed.length) {
     return `Goal history already fits the requested retention. Kept ${result.kept.length} archived Goal(s); removed 0.`
   }
@@ -113,7 +113,7 @@ export function formatGoalDoctor(report: GoalStorageDiagnosticReport): string {
   return `Goal storage doctor: ${report.issues.length ? "ISSUES FOUND" : "OK"}\nLive snapshot: ${live}\nArchive storage: ${archives}\nQueue storage: ${queue}${issues}\nNo files were modified.`
 }
 
-function formatRestoreResult(result: GoalRestoreResult, selector: string): string {
+export function formatRestoreResult(result: GoalRestoreResult, selector: string): string {
   if (result.ok) {
     return `Restored archived goal ${result.goal.id} as paused.\n${formatDetailedGoalStatus(result.goal)}\nUse /goal resume to continue this Goal.`
   }

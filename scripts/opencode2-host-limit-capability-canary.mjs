@@ -89,12 +89,38 @@ function safe(value) {
 export default {
   id: "bybrawe.opencode-goal.v2.host-limit-capability",
   async setup(ctx) {
+    if (typeof ctx.command?.transform === "function" && typeof ctx.session?.command === "function") {
+      await ctx.command.transform((commands) => {
+        const definition = {
+          name: "host_limit_compact_probe",
+          description: "Exact-host proof that a plugin can invoke the built-in compact command.",
+          execute: async (input) => {
+            await trace({ phase: "compact.command.requested", sessionID: input?.sessionID })
+            const result = await ctx.session.command({
+              sessionID: input.sessionID,
+              command: "compact",
+              arguments: "",
+              delivery: "steer",
+            })
+            await trace({ phase: "compact.command.returned", sessionID: input?.sessionID, result: safe(result) })
+          },
+        }
+        if (commands.add.length === 1) commands.add(definition)
+        else commands.add("host_limit_compact_probe", definition)
+      })
+    }
+
     const controller = new AbortController()
     const task = (async () => {
       const events = ctx.event.subscribe({ signal: controller.signal })
       await trace({ phase: "event.subscribe.registered" })
       for await (const event of events) {
-        if (event?.type !== "session.error" && event?.type !== "session.status" && !String(event?.type ?? "").startsWith("session.execution.")) continue
+        if (
+          event?.type !== "session.error"
+          && event?.type !== "session.status"
+          && !String(event?.type ?? "").startsWith("session.execution.")
+          && !String(event?.type ?? "").startsWith("session.compaction.")
+        ) continue
         await trace({
           phase: "event",
           type: event?.type,
@@ -386,6 +412,26 @@ async function main() {
       "generic custom-provider 429 retry is internal to the V2 execution and must not be treated as a durable usage-limit signal",
     )
 
+    const compactSession = await createSession("V2 host limit compact command")
+    const seed = await sendPrompt(compactSession, "seed context for compact probe")
+    assert.ok(seed.ok, `compact seed prompt failed: ${seed.status} ${seed.text}`)
+    const compactCommand = await request(`/api/session/${encodeURIComponent(compactSession)}/command`, {
+      method: "POST",
+      body: JSON.stringify({ name: "host_limit_compact_probe", text: "" }),
+    }, 90_000)
+    assert.ok(compactCommand.ok, `plugin compact command probe failed: ${compactCommand.status} ${compactCommand.text}\n${await diagnostics()}`)
+    const compactTrace = await waitFor(async () => {
+      const trace = await readTrace(traceFile)
+      const ended = trace.find((item) =>
+        item.phase === "event"
+        && item.type === "session.compaction.ended"
+        && (item.data?.sessionID === compactSession || item.properties?.sessionID === compactSession)
+      )
+      return ended ? trace : null
+    }, "plugin-initiated exact-host compaction", diagnostics, 60_000)
+    assert.ok(compactTrace.some((item) => item.phase === "compact.command.requested" && item.sessionID === compactSession))
+    assert.ok(compactTrace.some((item) => item.phase === "compact.command.returned" && item.sessionID === compactSession))
+
     console.log(JSON.stringify({
       ok: true,
       version,
@@ -397,6 +443,10 @@ async function main() {
         providerRequests: p.stats.retry,
         statusEvents: retryStatusEvents,
         executionSucceeded: true,
+      },
+      pluginCompactionCommand: {
+        supported: true,
+        sessionID: compactSession,
       },
     }, null, 2))
   } finally {

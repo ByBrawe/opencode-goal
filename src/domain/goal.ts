@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto"
 import { currentGoalRuntimeFingerprint } from "../runtime/fingerprint.js"
-import type { FileRequirementInput, GoalBudget, GoalExecutionContext, GoalRequirement, GoalRequirementSource, GoalState, VerificationKind } from "./types.js"
+import type { FileRequirementInput, GoalBudget, GoalExecutionContext, GoalRequirement, GoalRequirementSource, GoalState, GoalUnitRotation, VerificationKind } from "./types.js"
 
 const DEFAULT_BUDGET: GoalBudget = {
   maxTurns: 0,
@@ -56,6 +56,7 @@ export function createGoal(input: {
   checks?: string[]
   files?: FileRequirementInput[]
   notifyCommand?: string
+  unitRotation?: Pick<GoalUnitRotation, "command" | "freshSessionPerUnit">
   execution?: GoalExecutionContext
   budget?: Partial<GoalBudget>
   now?: number
@@ -99,6 +100,14 @@ export function createGoal(input: {
     evidence: [],
     checks,
     ...(notifyCommand ? { notifyCommand } : {}),
+    ...(input.unitRotation ? {
+      unitRotation: {
+        command: input.unitRotation.command.trim(),
+        freshSessionPerUnit: true as const,
+        rootSessionID: input.sessionID,
+        chainIndex: 0,
+      },
+    } : {}),
     ...(input.execution ? { execution: input.execution } : {}),
     runtimeFingerprint: currentGoalRuntimeFingerprint(),
     usage: { turns: 0, tokens: 0, cost: 0, runtimeMs: 0, seenMessageIDs: [] },
@@ -122,6 +131,7 @@ export function editGoal(goal: GoalState, input: {
   checks?: string[]
   files?: FileRequirementInput[]
   notifyCommand?: string
+  unitRotation?: Pick<GoalUnitRotation, "command" | "freshSessionPerUnit">
   execution?: GoalExecutionContext
   now?: number
 }): GoalState {
@@ -129,6 +139,7 @@ export function editGoal(goal: GoalState, input: {
     .filter((item) => item.verification === "file" && item.file)
     .map((item) => ({ file: item.file!, ...(item.contains ? { contains: item.contains } : {}) }))
   const notifyCommand = input.notifyCommand ?? goal.notifyCommand
+  const requestedUnitRotation = input.unitRotation
   const next = createGoal({
     sessionID: goal.sessionID,
     objective: input.objective,
@@ -137,6 +148,12 @@ export function editGoal(goal: GoalState, input: {
     checks: input.checks ?? goal.checks,
     files: input.files ?? existingFiles,
     ...(notifyCommand ? { notifyCommand } : {}),
+    ...(requestedUnitRotation ? { unitRotation: requestedUnitRotation } : goal.unitRotation ? {
+      unitRotation: {
+        command: goal.unitRotation.command,
+        freshSessionPerUnit: true,
+      },
+    } : {}),
     ...((input.execution ?? goal.execution) ? { execution: input.execution ?? goal.execution } : {}),
     budget: goal.budget,
     ...(input.now === undefined ? {} : { now: input.now }),
@@ -153,6 +170,21 @@ export function editGoal(goal: GoalState, input: {
     progressFingerprints: [],
     progressNotes: goal.progressNotes,
     ...(goal.todoPlan ? { todoPlan: goal.todoPlan } : {}),
+    ...(goal.unitRotation ? {
+      unitRotation: {
+        ...(next.unitRotation ?? {
+          command: goal.unitRotation.command,
+          freshSessionPerUnit: true as const,
+          rootSessionID: goal.unitRotation.rootSessionID,
+          chainIndex: goal.unitRotation.chainIndex,
+        }),
+        rootSessionID: goal.unitRotation.rootSessionID,
+        chainIndex: goal.unitRotation.chainIndex,
+        ...(goal.unitRotation.previousSessionID ? { previousSessionID: goal.unitRotation.previousSessionID } : {}),
+        ...(goal.unitRotation.currentUnit ? { currentUnit: goal.unitRotation.currentUnit } : {}),
+        ...(goal.unitRotation.observedAt !== undefined ? { observedAt: goal.unitRotation.observedAt } : {}),
+      },
+    } : {}),
     storageGeneration: goal.storageGeneration ?? 0,
     createdAt: goal.createdAt,
   }
@@ -176,12 +208,12 @@ export function replaceGoalConstraints(goal: GoalState, constraints: string[], n
 }
 
 export function pauseGoal(goal: GoalState, reason = "paused by user", now = Date.now()): GoalState {
-  if (goal.status === "completed") return goal
+  if (goal.status === "completed" || goal.status === "handed_off" || goal.status === "handoff_pending") return goal
   return { ...goal, status: "paused", stopReason: reason, updatedAt: now }
 }
 
 export function waitForUserGoal(goal: GoalState, input: { reason: string; needed?: string; now?: number }): GoalState {
-  if (goal.status === "completed") return goal
+  if (goal.status === "completed" || goal.status === "handed_off" || goal.status === "handoff_pending") return goal
   const reason = input.reason.replace(/\\s+/g, " ").trim()
   const needed = (input.needed ?? "").replace(/\\s+/g, " ").trim()
   if (!reason) throw new Error("waiting-user reason must not be empty")
@@ -197,7 +229,7 @@ export function waitForUserGoal(goal: GoalState, input: { reason: string; needed
 }
 
 export function resumeGoal(goal: GoalState, now = Date.now()): GoalState {
-  if (goal.status === "completed") return goal
+  if (goal.status === "completed" || goal.status === "handed_off" || goal.status === "handoff_pending") return goal
   const {
     blockerAudit: _blocker,
     stopReason: _reason,

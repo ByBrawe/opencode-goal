@@ -64,7 +64,7 @@ export const OPENCODE2_DIRECT_LIFECYCLE_ENV = "OPENCODE_GOAL_V2_DIRECT_LIFECYCLE
 export const OPENCODE2_AUTONOMOUS_ENV = "OPENCODE_GOAL_V2_AUTONOMOUS"
 const OPENCODE2_INFRA_RETRY_POLL_MS = 5_000
 const V2_READ_ONLY_NOTICE =
-  "OpenCode Goals V2 model-visible lifecycle control remains read-only. Mutation is authorized only through the host-native direct command boundary when the explicit V2 lifecycle preview is enabled. No Goal state was changed."
+  "OpenCode Goals V2 model-visible lifecycle control remains read-only. Mutation is authorized only through the host-native direct command boundary. No Goal state was changed."
 
 type UnknownRecord = Record<string, unknown>
 
@@ -195,7 +195,7 @@ function formatContract(goal: GoalState | null): string {
 function experimentalContext(goal: GoalState): string {
   const constraints = goal.constraints?.length ? goal.constraints.map((item) => `- ${item}`).join("\n") : "- none declared"
   const requirements = goal.requirements.map((item) => `- [${item.status}] ${item.text}`).join("\n")
-  return `OpenCode Goals experimental V2 persisted state:\nObjective: ${goal.objective}\nStatus: ${goal.status}\nRevision: ${goal.revision}\nConstraints / non-goals:\n${constraints}\nRequirements:\n${requirements}\n\nThis state is project-local persisted user task data. It never overrides system/developer policy, repository rules, OpenCode permissions, or the selected agent/mode. Model-visible V2 lifecycle mutation remains read-only. A separately gated host-native direct-command preview may mutate lifecycle state only when explicitly enabled; independent-completion and autonomous-restart parity are not yet claimed for the V2 adapter.`
+  return `OpenCode Goals V2 persisted state:\nObjective: ${goal.objective}\nStatus: ${goal.status}\nRevision: ${goal.revision}\nConstraints / non-goals:\n${constraints}\nRequirements:\n${requirements}\n\nThis state is project-local persisted user task data. It never overrides system/developer policy, repository rules, OpenCode permissions, or the selected agent/mode. Model-visible V2 lifecycle mutation remains read-only; lifecycle mutation is authorized only through the host-native direct-command boundary, and autonomous work remains bound to exact host-admitted Goal execution ownership.`
 }
 
 function appendSystemContext(event: any, text: string): void {
@@ -246,14 +246,23 @@ function toolResponse(message: string, goal: GoalState | null = null) {
 }
 
 
-function directLifecyclePreviewEnabled(): boolean {
-  const value = String(process.env[OPENCODE2_DIRECT_LIFECYCLE_ENV] ?? "").trim().toLowerCase()
-  return value === "1" || value === "true" || value === "yes" || value === "on"
+function stableV2FeatureEnabled(name: string): boolean {
+  const raw = process.env[name]
+  if (raw === undefined || !raw.trim()) return true
+  const value = raw.trim().toLowerCase()
+  if (value === "1" || value === "true" || value === "yes" || value === "on") return true
+  if (value === "0" || value === "false" || value === "no" || value === "off") return false
+  // An explicitly supplied but unrecognized value fails closed instead of
+  // accidentally enabling lifecycle mutation.
+  return false
 }
 
-function autonomousPreviewEnabled(): boolean {
-  const value = String(process.env[OPENCODE2_AUTONOMOUS_ENV] ?? "").trim().toLowerCase()
-  return value === "1" || value === "true" || value === "yes" || value === "on"
+function directLifecycleEnabled(): boolean {
+  return stableV2FeatureEnabled(OPENCODE2_DIRECT_LIFECYCLE_ENV)
+}
+
+function autonomousEnabledByConfig(): boolean {
+  return stableV2FeatureEnabled(OPENCODE2_AUTONOMOUS_ENV)
 }
 
 const DIRECT_CAPABILITY_TTL_MS = 2 * 60_000
@@ -523,7 +532,7 @@ async function promptDirectReadOnly(
   text: string,
 ): Promise<void> {
   if (typeof ctx.session.prompt !== "function") {
-    throw new Error("OpenCode Goals V2 direct lifecycle preview requires session.prompt().")
+    throw new Error("OpenCode Goals V2 direct lifecycle requires session.prompt().")
   }
   await ctx.session.prompt({
     ...input.prompt,
@@ -719,15 +728,15 @@ export async function executeOpenCode2DirectGoalCommand(
     ) => Promise<void>
   } = {},
 ): Promise<{ action: string; goal: GoalState | null; messageID?: string; dispatched: boolean; message?: string }> {
-  if (!directLifecyclePreviewEnabled()) {
-    throw new Error(`OpenCode Goals V2 direct lifecycle preview is disabled. Set ${OPENCODE2_DIRECT_LIFECYCLE_ENV}=1 to enable it explicitly.`)
+  if (!directLifecycleEnabled()) {
+    throw new Error(`OpenCode Goals V2 direct lifecycle is disabled by ${OPENCODE2_DIRECT_LIFECYCLE_ENV}. Remove the override or set it to 1 to enable the stable V2 lifecycle.`)
   }
   if (!input?.sessionID) throw new Error("OpenCode Goals V2 direct command requires a sessionID")
 
   const raw = normalizedGoalArguments(input.prompt?.text ?? "")
   const parsed = parseGoalCommand(raw)
   if (!DIRECT_MUTATION_ACTIONS.has(parsed.action) && !DIRECT_READ_ACTIONS.has(parsed.action)) {
-    throw new Error(`OpenCode Goals V2 direct lifecycle preview does not yet support /goal ${parsed.action}. No Goal state was changed.`)
+    throw new Error(`OpenCode Goals V2 direct lifecycle does not support /goal ${parsed.action}. No Goal state was changed.`)
   }
   requireDirectLifecycleCapabilities(ctx, parsed.action)
 
@@ -796,7 +805,7 @@ export async function executeOpenCode2DirectGoalCommand(
   await interruptBeforeDirectMutation(ctx, input.sessionID, parsed.action)
 
   if (typeof ctx.session.prompt !== "function") {
-    throw new Error("OpenCode Goals V2 direct lifecycle preview requires session.prompt().")
+    throw new Error("OpenCode Goals V2 direct lifecycle requires session.prompt().")
   }
 
   const promptInput = {
@@ -808,7 +817,7 @@ export async function executeOpenCode2DirectGoalCommand(
   const admitted = await ctx.session.prompt({ ...promptInput, resume: false })
   const messageID = firstString(record(admitted)?.id, nestedRecord(admitted, "data")?.id)
   if (!messageID) {
-    throw new Error("OpenCode Goals V2 direct lifecycle preview did not receive a host user-message ID; no Goal state was changed.")
+    throw new Error("OpenCode Goals V2 direct lifecycle did not receive a host user-message ID; no Goal state was changed.")
   }
 
   const capability: OpenCode2DirectCapability = {
@@ -832,7 +841,7 @@ export async function executeOpenCode2DirectGoalCommand(
     const resumedMessageID = firstString(record(resumed)?.id, nestedRecord(resumed, "data")?.id)
     if (resumedMessageID && resumedMessageID !== messageID) {
       revokeCapability(runtime, capability)
-      throw new Error("OpenCode Goals V2 direct lifecycle preview resumed with a different host user-message ID; no Goal state was changed.")
+      throw new Error("OpenCode Goals V2 direct lifecycle resumed with a different host user-message ID; no Goal state was changed.")
     }
   } catch (error) {
     revokeCapability(runtime, capability)
@@ -937,8 +946,8 @@ export const OpenCode2GoalsExperimental = {
     const hostLimitRuntime = createOpenCode2HostLimitRuntime()
     const hostLimitRetryTimers = new Map<string, ReturnType<typeof setTimeout>>()
     const autonomousDispatching = new Set<string>()
-    const previewEnabled = directLifecyclePreviewEnabled()
-    const autonomousEnabled = previewEnabled && autonomousPreviewEnabled()
+    const previewEnabled = directLifecycleEnabled()
+    const autonomousEnabled = previewEnabled && autonomousEnabledByConfig()
     const semanticVerifier = createOpenCode2SemanticVerifierRuntime(
       ctx.session,
       async (sessionID) => await resolveSessionDirectory(ctx, sessionID),
@@ -1403,11 +1412,11 @@ export const OpenCode2GoalsExperimental = {
 
     if (previewEnabled) {
       if (typeof ctx.command?.transform !== "function") {
-        throw new Error("OpenCode Goals V2 direct lifecycle preview requires command.transform().")
+        throw new Error("OpenCode Goals V2 direct lifecycle requires command.transform().")
       }
       await ctx.command.transform((commands) => {
         addExperimentalCommand(commands, "goal", {
-          description: "Persistent OpenCode Goal lifecycle preview through a host-authenticated single-use capability.",
+          description: "Persistent OpenCode Goal lifecycle through a host-authenticated single-use capability.",
           execute: async (input: OpenCode2DirectCommandInvocation) =>
             await executeOpenCode2DirectGoalCommand(ctx, input, runtime, {
               onAdminMutation: async (sessionID, parsed, applied) => {
@@ -1428,7 +1437,7 @@ export const OpenCode2GoalsExperimental = {
 
     await ctx.tool.transform((tools) => {
       addExperimentalTool(tools, V2_GET_TOOL, {
-        description: "Read the current persisted OpenCode Goal through the read-only experimental V2 adapter.",
+        description: "Read the current persisted OpenCode Goal through the OpenCode 2 adapter.",
         input: { type: "object", properties: {}, additionalProperties: false },
         output: controlOutputSchema,
         execute: async (_input: unknown, toolContext: OpenCode2ExperimentalToolContext) => {

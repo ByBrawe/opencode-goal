@@ -218,12 +218,15 @@ function autonomousPreviewEnabled(): boolean {
 }
 
 const DIRECT_CAPABILITY_TTL_MS = 2 * 60_000
-const DIRECT_MUTATION_ACTIONS = new Set<ReturnType<typeof parseGoalCommand>["action"]>([
+const DIRECT_LIFECYCLE_MUTATION_ACTIONS = new Set<ReturnType<typeof parseGoalCommand>["action"]>([
   "create",
   "edit",
   "pause",
   "resume",
   "clear",
+])
+const DIRECT_MUTATION_ACTIONS = new Set<ReturnType<typeof parseGoalCommand>["action"]>([
+  ...DIRECT_LIFECYCLE_MUTATION_ACTIONS,
   ...OPENCODE2_EXTRA_MUTATION_ACTIONS,
 ])
 const DIRECT_READ_ACTIONS = OPENCODE2_READ_CONTROL_ACTIONS
@@ -505,7 +508,7 @@ function requireDirectLifecycleCapabilities(
   ctx: OpenCode2ExperimentalContext,
   action: ReturnType<typeof parseGoalCommand>["action"],
 ): void {
-  if ((DIRECT_MUTATION_ACTIONS.has(action) || DIRECT_READ_ACTIONS.has(action)) && typeof ctx.session.prompt !== "function") {
+  if ((DIRECT_LIFECYCLE_MUTATION_ACTIONS.has(action) || DIRECT_READ_ACTIONS.has(action)) && typeof ctx.session.prompt !== "function") {
     throw new Error(`OpenCode Goals V2 direct lifecycle preview requires session.prompt() before /goal ${action} can run.`)
   }
   if (["edit", "pause", "clear"].includes(action) && typeof ctx.session.interrupt !== "function") {

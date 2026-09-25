@@ -844,6 +844,16 @@ test("V2 unit change hands one active Goal to a fresh native session with the sa
       assert.equal(handoffPrompts.filter((item) => item.resume === true).length, 1)
       assert.equal(handoffPrompts[0].returnedID, handoffPrompts[1].returnedID, "admit/resume must reuse one durable host inbox ID")
 
+      await assert.rejects(
+        () => host.commands.get("goal").execute({
+          sessionID: sourceSessionID,
+          prompt: { text: "edit stale predecessor" },
+          delivery: "steer",
+        }),
+        /inert after unit handoff/i,
+      )
+      assert.equal((await sourceStore.load(sourceSessionID))?.status, "handed_off")
+
       await cleanup()
     })
   } finally {
@@ -863,7 +873,6 @@ test("V2 unit session creation failure leaves the original Goal active and conti
       host.ctx.session.create = async () => { throw new Error("session create unavailable") }
 
       const store = new GoalStore(root)
-      await store.save(createGoal({ sessionID: targetSessionID, objective: "foreign live goal", now: 50 }))
       const cleanup = await OpenCode2GoalsExperimental.setup(host.ctx)
       const command = 'ship units --unit "node -e \\"process.stdout.write(require(\'fs\').readFileSync(\'unit.txt\',\'utf8\'))\\"" --fresh-session-per-unit'
       const dispatched = await dispatchDirectCommand(host, sessionID, command)
@@ -928,6 +937,7 @@ test("V2 unit handoff deletes an orphan native session when target persistence f
       host.ctx.session.delete = async (input) => { deleted.push(input); return {} }
 
       const store = new GoalStore(root)
+      await store.save(createGoal({ sessionID: targetSessionID, objective: "foreign live goal", now: 50 }))
       const cleanup = await OpenCode2GoalsExperimental.setup(host.ctx)
       const command = 'ship units --unit "node -e \\"process.stdout.write(require(\'fs\').readFileSync(\'unit.txt\',\'utf8\'))\\"" --fresh-session-per-unit'
       const dispatched = await dispatchDirectCommand(host, sessionID, command)

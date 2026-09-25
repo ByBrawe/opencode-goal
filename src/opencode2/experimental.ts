@@ -14,6 +14,10 @@ import { createOpenCode2AutonomousRuntime, armOpenCode2GoalExecution, clearOpenC
 import { createOpenCode2SemanticVerifierRuntime, OPENCODE2_VERIFIER_RESULT_TOOL } from "./semantic-verifier.js"
 import { createOpenCode2GoalWorkTools } from "./work-tools.js"
 import {
+  observeOpenCode2ModelRegistryLimits,
+  type OpenCode2ModelRegistry,
+} from "./model-context.js"
+import {
   applyOpenCode2ControlPlaneMutation,
   OPENCODE2_EXTRA_MUTATION_ACTIONS,
   OPENCODE2_READ_CONTROL_ACTIONS,
@@ -52,6 +56,7 @@ export interface OpenCode2ExperimentalContext {
   event?: {
     subscribe(input?: { signal?: AbortSignal }): AsyncIterable<unknown>
   }
+  model?: OpenCode2ModelRegistry
   command?: {
     transform(callback: (commands: any) => void | Promise<void>): unknown | Promise<unknown>
   }
@@ -1303,6 +1308,22 @@ export const OpenCode2GoalsExperimental = {
       }
     })
 
+    const observeContextModelLimits = async (event: any) => {
+      const sessionID = sessionIDFromEvent(event)
+      if (!sessionID || !event?.model) return
+      try {
+        const directory = await resolveSessionDirectory(ctx, sessionID)
+        const store = new GoalStore(directory, { onTransition: createGoalTransitionNotifier(directory) })
+        const goal = await store.load(sessionID)
+        if (!goal || goal.status === "completed") return
+        const next = await observeOpenCode2ModelRegistryLimits(goal, ctx.model, event.model)
+        if (next !== goal) await store.save(next)
+      } catch {
+        // Model-limit telemetry is advisory. Missing registry data or a
+        // concurrent Goal mutation must never block the host context hook.
+      }
+    }
+
     const injectPersistedContext = async (event: any, allowAuthorization: boolean) => {
       const sessionID = sessionIDFromEvent(event)
       if (!sessionID) {
@@ -1370,6 +1391,8 @@ export const OpenCode2GoalsExperimental = {
     try {
       await ctx.session.hook("context", async (event: any) => {
         if (semanticVerifier.handleContext(event)) return
+
+        await observeContextModelLimits(event)
 
         if (autonomousEnabled) {
           const sessionID = sessionIDFromEvent(event)

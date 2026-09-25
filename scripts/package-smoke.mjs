@@ -9,6 +9,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const npmCLI = process.env.npm_execpath
 const runtimeDependency = "@opencode-ai/plugin"
 const runtimeDependencyRange = ">=1.4.0 <2"
+const v2RuntimeDependency = "@opencode/plugin"
+const v2RuntimeDependencyRange = "^2.0.4"
 const minimumOpenCode = ">=1.4.0"
 const managedCommandMarker = "<!-- managed-by:@bybrawe/opencode-goal -->"
 
@@ -102,6 +104,12 @@ async function main() {
   if (packageJSON.peerDependencies?.[runtimeDependency]) {
     throw new Error(`${runtimeDependency} must not be peer-only; OpenCode installs npm plugins into an isolated production cache`)
   }
+  if (packageJSON.dependencies?.[v2RuntimeDependency] !== v2RuntimeDependencyRange) {
+    throw new Error(`package smoke requires ${v2RuntimeDependency} as a production dependency (${v2RuntimeDependencyRange}) for the stable OpenCode 2 plugin contract`)
+  }
+  if (packageJSON.peerDependencies?.[v2RuntimeDependency]) {
+    throw new Error(`${v2RuntimeDependency} must not be peer-only; published V2 plugins must carry a compatible plugin runtime dependency`)
+  }
   if (!packageJSON.exports?.["./server"]?.import) throw new Error("package.json must expose the OpenCode ./server entrypoint")
   if (!packageJSON.exports?.["./tui"]?.import) throw new Error("package.json must expose the target-exclusive ./tui entrypoint")
   if (packageJSON.bin?.["opencode-goal"] !== "bin/opencode-goal.js") throw new Error("package.json must expose the npm-canonical committed opencode-goal installer bin shim")
@@ -147,7 +155,9 @@ async function main() {
       if (typeof server.default?.setup !== "function") throw new Error("OpenCode 2 setup export is missing");
       if (server.default.server !== mod.default) throw new Error("server entrypoint does not delegate to the public plugin implementation");
       const toolModule = await import("@opencode-ai/plugin/tool");
-      if (typeof toolModule.tool !== "function") throw new Error("runtime OpenCode tool dependency is missing");
+      if (typeof toolModule.tool !== "function") throw new Error("runtime OpenCode V1 tool dependency is missing");
+      const v2Plugin = await import("@opencode/plugin");
+      if (typeof v2Plugin.Plugin?.define !== "function") throw new Error("runtime OpenCode V2 plugin dependency is missing");
       const tui = await import("@bybrawe/opencode-goal/tui");
       if (typeof tui.default?.tui !== "function") throw new Error("TUI plugin export is missing");
       if (tui.default?.id !== "opencode-goal") throw new Error("TUI plugin id is incorrect");
@@ -236,6 +246,7 @@ async function main() {
       version: packageJSON.version,
       minimumOpenCode,
       runtimeDependency: `${runtimeDependency}@${runtimeDependencyRange}`,
+      v2RuntimeDependency: `${v2RuntimeDependency}@${v2RuntimeDependencyRange}`,
       filename: packed.filename,
       packageSize: packed.size,
       unpackedSize: packed.unpackedSize,
@@ -255,6 +266,7 @@ async function main() {
     console.log(`package ${report.npmPackage}@${report.version}`)
     console.log(`minimum OpenCode ${report.minimumOpenCode}`)
     console.log(`runtime dependency ${report.runtimeDependency}`)
+    console.log(`V2 runtime dependency ${report.v2RuntimeDependency}`)
     console.log(`tarball ${report.filename} files=${report.fileCount} packed=${report.packageSize} unpacked=${report.unpackedSize}`)
     console.log("clean production-only consumer public API + server + TUI import + V1/V2 npm-linked installer + /goal command modes + uninstaller PASS")
 

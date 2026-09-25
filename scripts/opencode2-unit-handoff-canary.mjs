@@ -442,7 +442,7 @@ async function main() {
       encoding: "utf8",
       windowsHide: true,
     })).trim()
-    assert.ok(version.includes("2.0.15"), `expected current OpenCode 2.0.15, got: ${version}`)
+    assert.ok(version.includes("2.0.16"), `expected current OpenCode 2.0.16, got: ${version}`)
 
     const port = await reservePort()
     server = spawn(OPENCODE_BINARY, ["serve", "--hostname", "127.0.0.1", "--port", String(port)], {

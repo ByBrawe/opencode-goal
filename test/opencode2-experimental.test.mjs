@@ -331,6 +331,46 @@ test("V2 status and contract stay readable while every lifecycle mutation fails 
   }
 })
 
+test("V2 host-native admin mutations do not depend on lifecycle control capability", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-host-admin-"))
+  try {
+    await withDirectLifecyclePreview(async () => {
+      const host = fakeV2Context(root)
+      const sessionID = "v2-host-admin-session"
+      const store = new GoalStore(root)
+      await seedGoal(root, sessionID, "host-native admin parity")
+      await OpenCode2GoalsExperimental.setup(host.ctx)
+
+      const budgetDispatch = await dispatchDirectCommand(host, sessionID, "budget --max-turns 9")
+      assert.equal(budgetDispatch.messageID, undefined, "admin mutation must not admit a lifecycle capability message")
+      assert.equal((await store.load(sessionID))?.budget.maxTurns, 9)
+      assert.ok(budgetDispatch.emitted.every((item) => item.resume !== false), "admin presentation must stay read-only")
+
+      const presentationMessageID = budgetDispatch.emitted.at(-1)?.returnedID
+      if (presentationMessageID) {
+        const event = await armCapability(host, sessionID, presentationMessageID)
+        assert.equal(event.tools.opencode_goals_v2_control, undefined, "admin presentation cannot mint lifecycle authority")
+      }
+
+      await store.clear(sessionID)
+      assert.equal(await store.load(sessionID), null)
+      const historyBefore = await store.history(sessionID, 500)
+      assert.ok(historyBefore.length >= 1)
+
+      const pruneDispatch = await dispatchDirectCommand(host, sessionID, "history prune --keep 1")
+      assert.equal(pruneDispatch.messageID, undefined, "history prune must remain host-native without a live Goal")
+      assert.equal((await store.history(sessionID, 500)).length, 1)
+      assert.ok(pruneDispatch.emitted.every((item) => item.resume !== false))
+
+      const queueDispatch = await dispatchDirectCommand(host, sessionID, "add queued without live goal")
+      assert.equal(queueDispatch.messageID, undefined)
+      assert.equal((await new GoalSequenceStore(root).load(sessionID)).items.length, 1)
+    })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test("V2 presentation hooks remove stale control and never mutate persisted state, including Plan", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-context-readonly-"))
   try {

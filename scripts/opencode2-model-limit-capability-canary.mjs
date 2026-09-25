@@ -138,12 +138,33 @@ export default {
     }
 
     const contextRegistration = await ctx.session.hook("context", async (event) => {
+      let liveModels
+      let selectedModel
+      let liveProvider
+      try {
+        liveModels = await ctx.model?.list?.()
+        const values = Array.isArray(liveModels?.data) ? liveModels.data : Array.isArray(liveModels) ? liveModels : []
+        selectedModel = values.find((item) =>
+          item?.providerID === event?.model?.providerID
+          && (item?.id === event?.model?.id || item?.modelID === event?.model?.id)
+        )
+      } catch (error) {
+        liveModels = { error: String(error) }
+      }
+      try {
+        liveProvider = await ctx.provider?.get?.({ providerID: event?.model?.providerID })
+      } catch (error) {
+        liveProvider = { error: String(error) }
+      }
       await trace({
         phase: "context",
         keys: keys(event),
         sessionID: event?.sessionID,
         model: safe(event?.model),
         options: safe(event?.options),
+        selectedModel: safe(selectedModel),
+        liveProvider: safe(liveProvider),
+        liveModelCount: Array.isArray(liveModels?.data) ? liveModels.data.length : Array.isArray(liveModels) ? liveModels.length : undefined,
       })
     })
 

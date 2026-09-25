@@ -4,6 +4,10 @@ import type { GoalState } from "../domain/types.js"
 import { GoalStore } from "../persistence/store.js"
 import { applyGoalBudget, budgetLimitHits } from "../runtime/accounting.js"
 import { formatGoalRuntimeFingerprint } from "../runtime/fingerprint.js"
+import {
+  clearInfrastructureRecovery,
+  markInfrastructureRecoveryDispatched,
+} from "../runtime/infrastructure-recovery.js"
 import { parseGoalCommand } from "../opencode/command.js"
 import { createGoalTransitionNotifier, notifyGoal } from "../opencode/notify.js"
 import { markHostProgress } from "../runtime/progress.js"
@@ -32,6 +36,16 @@ import {
   observeOpenCode2TelemetryEvent,
   openCode2ToolTelemetry,
 } from "./telemetry-runtime.js"
+import {
+  classifyOpenCode2ExecutionFailure,
+  clearOpenCode2HostLimitSession,
+  consumeOpenCode2CompactionReason,
+  createOpenCode2HostLimitRuntime,
+  markOpenCode2OwnedExecutionSuccess,
+  observeOpenCode2CompactionReason,
+  observeOpenCode2NativeCompaction,
+  repeatedOpenCode2CompactionReason,
+} from "./host-limits.js"
 import {
   collectOpenCode2SuccessfulToolProgress,
   createOpenCode2ToolProgressRuntime,
@@ -917,6 +931,8 @@ export const OpenCode2GoalsExperimental = {
     const autonomousRuntime = createOpenCode2AutonomousRuntime()
     const telemetryRuntime = createOpenCode2TelemetryRuntime()
     const toolProgressRuntime = createOpenCode2ToolProgressRuntime()
+    const hostLimitRuntime = createOpenCode2HostLimitRuntime()
+    const hostLimitRetryTimers = new Map<string, ReturnType<typeof setTimeout>>()
     const autonomousDispatching = new Set<string>()
     const previewEnabled = directLifecyclePreviewEnabled()
     const autonomousEnabled = previewEnabled && autonomousPreviewEnabled()

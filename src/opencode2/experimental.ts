@@ -58,6 +58,7 @@ import {
 import {
   activateUnitHandoffTarget,
   createUnitHandoffTarget,
+  markUnitHandoffAdmitted,
   markUnitHandoffDispatched,
   markUnitHandoffSourceTerminal,
   observeInitialGoalUnit,
@@ -79,6 +80,7 @@ const V2_READ_ONLY_NOTICE =
 type UnknownRecord = Record<string, unknown>
 
 export interface OpenCode2ExperimentalContext {
+  location?: { directory?: string }
   options?: Readonly<UnknownRecord>
   event?: {
     subscribe(input?: { signal?: AbortSignal }): AsyncIterable<unknown>

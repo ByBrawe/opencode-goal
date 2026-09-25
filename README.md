@@ -72,7 +72,7 @@ Windows:
 
 OpenCode loads the npm package through its dedicated `./server` entrypoint. The root export remains the public JavaScript API.
 
-OpenCode 2 uses the V2 lifecycle and autonomous coordinator by default. The legacy `OPENCODE_GOAL_V2_DIRECT_LIFECYCLE` and `OPENCODE_GOAL_V2_AUTONOMOUS` environment variables remain available as emergency kill switches: set either to `0`, `false`, `no`, or `off` to disable that V2 layer. Unknown explicit values fail closed.
+OpenCode 2 uses the V2 lifecycle and autonomous coordinator by default. Native plugin options may disable either layer with `{ "package": "@bybrawe/opencode-goal@<version>", "options": { "lifecycle": false, "autonomous": false } }`. The legacy `OPENCODE_GOAL_V2_DIRECT_LIFECYCLE` and `OPENCODE_GOAL_V2_AUTONOMOUS` environment variables remain higher-priority emergency kill switches: set either to `0`, `false`, `no`, or `off` to disable that V2 layer. Unknown explicit environment values fail closed.
 
 ## Why use OpenCode Goals?
 
@@ -215,6 +215,8 @@ Repeatable contract flags define success and hard boundaries:
 --check "..."
 --notify "command {reason} {goal}"
 --contains "file::required text"
+--unit "host command"
+--fresh-session-per-unit
 --max-turns <n>
 --max-tokens <n>
 --max-minutes <n>
@@ -232,6 +234,21 @@ Example:
 ```
 
 The full objective always remains a required semantic requirement. Narrow checks add proof obligations; they never replace the broader outcome.
+
+### OpenCode 2 bounded per-unit sessions
+
+For work naturally partitioned by a host-observable unit (for example a migration shard, package, tenant, or numbered batch), OpenCode 2 can rotate the same Goal into a fresh native session whenever that unit identity changes:
+
+```text
+/goal migrate all shards \
+  --unit "node scripts/current-shard.mjs" \
+  --fresh-session-per-unit \
+  --check "npm test"
+```
+
+Both flags are required together. The `--unit` command's stdout is **identity only**: it tells Goal which external unit is current, but it never proves completion or satisfies a requirement. Rotation happens only after a clean Goal-owned execution boundary. The handoff uses OpenCode 2 native `session.create` and a durable two-phase inbox transfer; the old session becomes terminal `handed_off` before the target becomes the autonomous owner.
+
+The Goal ID, revision, contract, evidence, cumulative usage, and budgets continue across the session chain. `/goal status` shows the current unit plus root/previous/next session links. Paused, waiting-user, blocked/limited, or completed Goals do not rotate, and final verified completion stops the chain instead of opening another session.
 
 `/goal edit` creates a new revision. Evidence from an older revision cannot silently prove the edited Goal.
 

@@ -21,11 +21,14 @@ function own(runtime, sessionID, goal, messageID, generation = 1) {
   })
 }
 
-function contextEvent(sessionID, messageID) {
+function contextEvent(sessionID, messageID, { nativeTodo = false } = {}) {
   return {
     sessionID,
     messages: [{ id: messageID, role: "user", content: "goal turn" }],
-    tools: Object.fromEntries(OPENCODE2_GOAL_WORK_TOOLS.map((name) => [name, {}])),
+    tools: {
+      ...Object.fromEntries(OPENCODE2_GOAL_WORK_TOOLS.map((name) => [name, {}])),
+      ...(nativeTodo ? { todowrite: {} } : {}),
+    },
   }
 }
 
@@ -59,12 +62,48 @@ test("V2 Goal work tools are visible only to exact Goal-owned execution and pres
     assert.equal(tools.handleContext(owned), true)
     assert.deepEqual(Object.keys(owned.tools).sort(), [...OPENCODE2_GOAL_WORK_TOOLS].sort())
 
+    const nativeOwned = contextEvent(sessionID, "goal-turn-1", { nativeTodo: true })
+    assert.equal(tools.handleContext(nativeOwned), true)
+    assert.equal(nativeOwned.tools.todowrite !== undefined, true)
+    assert.equal(
+      nativeOwned.tools.opencode_goal_todo_plan,
+      undefined,
+      "native todowrite must suppress the Goal fallback to avoid two planning authorities",
+    )
+
+    const fallbackPlan = [
+      { content: "Inspect current state", status: "completed", priority: "high" },
+      { content: "Ship required fix", status: "in_progress", priority: "high" },
+      { content: "Verify acceptance", status: "pending", priority: "medium" },
+    ]
+    const fallback = await tools.definitions.opencode_goal_todo_plan.execute(
+      { todos: fallbackPlan },
+      { sessionID },
+    )
+    assert.match(fallback.content, /advisory Goal Todo plan/i)
+    let latest = await store.load(sessionID)
+    assert.equal(latest.todoPlan?.source, "goal_fallback")
+    assert.equal(latest.todoPlan?.goalRevision, latest.revision)
+    assert.equal(latest.todoPlan?.total, 3)
+    assert.equal(latest.progressRevision, 0, "Todo fallback must not manufacture verified progress")
+    assert.deepEqual(latest.evidence, [], "Todo fallback must not create completion evidence")
+
+    assert.equal(
+      await tools.observeNativeTodoEvent({
+        type: "todo.updated",
+        properties: { sessionID, todos: fallbackPlan },
+      }),
+      true,
+    )
+    latest = await store.load(sessionID)
+    assert.equal(latest.todoPlan?.source, "native", "native host Todo state must upgrade a fallback snapshot")
+
     const progress = await tools.definitions.opencode_goal_progress.execute(
       { summary: "checkpoint", next: "verify proof" },
       { sessionID },
     )
     assert.match(progress.content, /not completion evidence/i)
-    let latest = await store.load(sessionID)
+    latest = await store.load(sessionID)
     assert.equal(latest.progressNotes.length, 1)
     assert.equal(latest.progressRevision, 0, "model-authored checkpoint must not manufacture verified progress")
 
@@ -80,6 +119,24 @@ test("V2 Goal work tools are visible only to exact Goal-owned execution and pres
     assert.equal(latest.evidence.some((item) => item.trust === "host" && item.kind === "file" && item.passed === true), true)
 
     autonomousRuntime.executionOwnerBySession.delete(sessionID)
+    const beforeRejectedTodo = await store.load(sessionID)
+    const rejectedTodo = await tools.definitions.opencode_goal_todo_plan.execute(
+      { todos: [{ content: "Spoof foreground plan", status: "pending" }] },
+      { sessionID },
+    )
+    assert.match(rejectedTodo.content, /not owned by the current Goal execution/i)
+    assert.equal(
+      await tools.observeNativeTodoEvent({
+        type: "todo.updated",
+        properties: {
+          sessionID,
+          todos: [{ content: "Unowned native plan", status: "pending" }],
+        },
+      }),
+      false,
+    )
+    assert.deepEqual(await store.load(sessionID), beforeRejectedTodo)
+
     const rejected = await tools.definitions.opencode_goal_wait_for_user.execute(
       { reason: "need approval" },
       { sessionID },

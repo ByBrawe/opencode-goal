@@ -17,7 +17,7 @@ Before a stable release reaches `main`, the exact pull-request head should have 
 
 `Release Readiness` runs on Ubuntu and Windows with Node 20 and Node 24. It runs checks/tests/evals, builds the npm tarball, installs it into a clean production-only consumer without manually injecting runtime dependencies, imports the public API plus dedicated server/TUI entrypoints, and executes the packed installer artifact.
 
-`Experimental OpenCode 2 Host` is a non-promotion safety gate for the isolated V2 adapter. A green result proves only that the experimental adapter can activate safely on the pinned exact beta used by the workflow; it does not widen the stable `<2` OpenCode plugin compatibility claim or imply lifecycle parity/support.
+`Experimental OpenCode 2 Host` is the historical workflow name for the required OpenCode 2 stable-host gate. It exercises the exact-host server entry, lifecycle authority, autonomous ownership, control plane, telemetry/accounting, semantic completion, verifier boundaries, provider recovery, and related V2 canaries. The workflow name is retained so existing required-check configuration stays stable.
 
 For installer releases, package smoke must verify all of these from the packed artifact:
 
@@ -28,7 +28,8 @@ For installer releases, package smoke must verify all of these from the packed a
 @opencode-ai/plugin runtime dependency
 opencode-goal --version
 installer exact package pin
-managed commands/goal.md creation
+OpenCode 1 managed commands/goal.md creation
+OpenCode 2 native plugins config / plugin-native command mode
 --uninstall package registration removal
 --uninstall managed command removal
 ```
@@ -54,7 +55,7 @@ npm run package:smoke -- --json package-smoke-report.json
 2. Align `package.json`, `CHANGELOG.md`, README/release documentation, benchmark pins when applicable, and `.github/workflows/publish-npm.yml`.
 3. Confirm every module imported by the compiled npm plugin at runtime is declared in production `dependencies`; do not rely on a peer/dev-only package being present in OpenCode's isolated plugin cache.
 4. Confirm `engines.opencode` declares the supported host range.
-5. Confirm `@bybrawe/opencode-goal/server` default-exports exactly one dual OpenCode plugin module with callable `server` and `setup` functions; stable V1 uses `server`, while V2 `setup` remains safety-gated.
+5. Confirm `@bybrawe/opencode-goal/server` default-exports exactly one dual OpenCode plugin module with callable `server` and `setup` functions; V1 uses `server`, while stable V2 uses `setup` by default with explicit fail-closed environment kill switches.
 6. Confirm npm Trusted Publishing is authorized for this repository/workflow and package.
 7. Inspect package-smoke evidence and `npm pack --dry-run` output.
 8. For installer releases, verify install/update and `--uninstall` against an isolated config directory.
@@ -96,9 +97,9 @@ Then, from a clean config directory, run the public installer and verify:
 - the plugin entry is pinned to the published exact version in every supported global config file that already exists;
 - the published package exposes a valid dedicated `./server` entrypoint;
 - the package carries its required `@opencode-ai/plugin` runtime dependency;
-- `commands/goal.md` is created and recognized by OpenCode command discovery;
+- on OpenCode 1, `commands/goal.md` is created and recognized by OpenCode command discovery; on OpenCode 2, the installer writes the native `plugins` entry and removes only the Goal-owned legacy command bridge;
 - `/goal` is visible after a full OpenCode restart;
-- `/goal status` and `/goal <objective>` are intercepted by the plugin rather than reaching the managed command bridge fallback;
+- `/goal status` and `/goal <objective>` are handled by the correct host surface: V1 plugin interception ahead of the managed bridge, or the plugin-native V2 `/goal` command;
 - `--uninstall` removes Goal-owned registration/command artifacts without deleting unrelated config or project Goal state.
 
 Do not claim a release is published merely because the merge or publish workflow started; the npm registry plus the clean-consumer installer check are the final publication source of truth.

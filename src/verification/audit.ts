@@ -21,7 +21,7 @@ export function auditCompletion(goal: GoalState): CompletionAudit {
   }
 
   if (todoPlanIsCurrent(goal) && goal.todoPlan && (goal.todoPlan.pending > 0 || goal.todoPlan.inProgress > 0)) {
-    reasons.push(`current native Todo plan still has unfinished work: ${goal.todoPlan.pending} pending, ${goal.todoPlan.inProgress} in progress`)
+    reasons.push(`current Todo plan still has unfinished work: ${goal.todoPlan.pending} pending, ${goal.todoPlan.inProgress} in progress`)
   }
 
   for (const requirement of goal.requirements.filter((item) => item.required)) {

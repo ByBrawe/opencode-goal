@@ -12,6 +12,7 @@ import {
 
 export interface OpenCode2HostLimitRuntime {
   successEpochBySession: Map<string, number>
+  compactionReasonBySession: Map<string, string>
   compactionAttemptBySession: Map<string, {
     goalID: string
     revision: number
@@ -44,6 +45,7 @@ function numeric(value: unknown): number | undefined {
 export function createOpenCode2HostLimitRuntime(): OpenCode2HostLimitRuntime {
   return {
     successEpochBySession: new Map(),
+    compactionReasonBySession: new Map(),
     compactionAttemptBySession: new Map(),
   }
 }
@@ -53,6 +55,7 @@ export function clearOpenCode2HostLimitSession(
   sessionID: string,
 ): void {
   runtime.successEpochBySession.delete(sessionID)
+  runtime.compactionReasonBySession.delete(sessionID)
   runtime.compactionAttemptBySession.delete(sessionID)
 }
 
@@ -65,6 +68,29 @@ export function markOpenCode2OwnedExecutionSuccess(
     (runtime.successEpochBySession.get(sessionID) ?? 0) + 1,
   )
   runtime.compactionAttemptBySession.delete(sessionID)
+}
+
+export function observeOpenCode2CompactionReason(
+  runtime: OpenCode2HostLimitRuntime,
+  sessionID: string,
+  event: unknown,
+): void {
+  const item = record(event)
+  const type = firstString(item?.type)
+  if (type !== "session.compaction.started" && type !== "session.compaction.ended") return
+  const data = record(item?.data)
+  const properties = record(item?.properties)
+  const reason = firstString(data?.reason, properties?.reason)
+  if (reason) runtime.compactionReasonBySession.set(sessionID, reason)
+}
+
+export function consumeOpenCode2CompactionReason(
+  runtime: OpenCode2HostLimitRuntime,
+  sessionID: string,
+): string | undefined {
+  const reason = runtime.compactionReasonBySession.get(sessionID)
+  runtime.compactionReasonBySession.delete(sessionID)
+  return reason
 }
 
 export function observeOpenCode2NativeCompaction(

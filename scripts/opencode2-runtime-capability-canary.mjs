@@ -373,7 +373,13 @@ async function main() {
     }, "persisted V2 no-progress pause after autonomous continuations", diagnostics, 120_000)
     assert.match(thirdNoProgress.stopReason ?? "", /3 continuation turns without host-observed progress/)
 
-    const autonomousTrace = await readTrace(traceFile)
+    const autonomousTrace = await waitFor(async () => {
+      const trace = await readTrace(traceFile)
+      const closed = trace
+        .filter((item) => item.phase === "goal.execution.boundary.closed" && item.sessionID === sessionID)
+        .map((item) => item.stalledTurns)
+      return closed.length >= 3 ? trace : null
+    }, "three persisted Goal boundary trace records", diagnostics, 10_000)
     const closedTurns = autonomousTrace
       .filter((item) => item.phase === "goal.execution.boundary.closed" && item.sessionID === sessionID)
       .map((item) => item.stalledTurns)

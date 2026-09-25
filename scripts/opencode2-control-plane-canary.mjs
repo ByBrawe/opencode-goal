@@ -398,7 +398,7 @@ async function main() {
     sessionID = String((created.body?.data ?? created.body)?.id ?? "")
     assert.ok(sessionID)
 
-    const command = async (text) => {
+    const command = async (text, { requireProvider = true } = {}) => {
       const before = provider.stats.requests.length
       const response = await request(`/api/session/${encodeURIComponent(sessionID)}/command`, {
         method: "POST",
@@ -406,7 +406,7 @@ async function main() {
       }, 90_000)
       assert.ok(response.ok, `/goal ${text} failed: HTTP ${response.status} ${response.text}\n${await diagnostics()}`)
 
-      const deadline = Date.now() + 45_000
+      const deadline = Date.now() + (requireProvider ? 45_000 : 1_500)
       let lastCount = provider.stats.requests.length
       let stableSince = provider.stats.requests.length > before ? Date.now() : 0
       while (Date.now() < deadline) {
@@ -415,13 +415,16 @@ async function main() {
           lastCount = count
           stableSince = count > before ? Date.now() : 0
         }
-        if (count > before && stableSince && Date.now() - stableSince >= 750) break
+        if (count > before && stableSince && Date.now() - stableSince >= 500) break
+        if (!requireProvider && count === before && Date.now() - (deadline - 1_500) >= 500) break
         await new Promise((resolve) => setTimeout(resolve, 50))
       }
-      assert.ok(
-        provider.stats.requests.length > before,
-        `/goal ${text} produced no provider request after command admission\n${await diagnostics()}`,
-      )
+      if (requireProvider) {
+        assert.ok(
+          provider.stats.requests.length > before,
+          `/goal ${text} produced no provider request after command admission\n${await diagnostics()}`,
+        )
+      }
       return provider.stats.requests.slice(before)
     }
 
@@ -432,16 +435,25 @@ async function main() {
       assert.ok(requests.some((item) => expected.test(item.currentUserText)), `read-only /goal ${text} did not show expected V1 view\n${JSON.stringify(requests, null, 2)}`)
     }
 
-    const assertMutation = async (text) => {
+    const assertLifecycleMutation = async (text) => {
       const requests = await command(text)
       assert.ok(
         requests.some((item) => item.hasControlTool && item.toolCommand === text),
-        `mutating /goal ${text} was not bound to the exact host capability\n${JSON.stringify(requests, null, 2)}`,
+        `lifecycle /goal ${text} was not bound to the exact host capability\n${JSON.stringify(requests, null, 2)}`,
       )
       return requests
     }
 
-    await assertMutation('ship control parity --accept "admin surfaces agree" --max-turns 3')
+    const assertAdminMutation = async (text) => {
+      const requests = await command(text, { requireProvider: false })
+      assert.ok(
+        requests.every((item) => !item.hasControlTool),
+        `host-native admin /goal ${text} leaked the lifecycle control tool\n${JSON.stringify(requests, null, 2)}`,
+      )
+      return requests
+    }
+
+    await assertLifecycleMutation('ship control parity --accept "admin surfaces agree" --max-turns 3')
     const initial = await waitFor(async () => {
       const goal = await store.load(sessionID)
       return goal?.objective === "ship control parity" && goal.budget.maxTurns === 3 ? goal : null
@@ -455,12 +467,12 @@ async function main() {
     await assertReadOnly("list", /Project Goal snapshots/)
     await assertReadOnly("history", /No archived goals/)
 
-    await assertMutation("budget --max-turns 9")
+    await assertAdminMutation("budget --max-turns 9")
     await waitFor(async () => (await store.load(sessionID))?.budget.maxTurns === 9, "persisted V2 budget update", diagnostics)
 
-    await assertMutation('add queued first --accept "first queued done"')
+    await assertAdminMutation('add queued first --accept "first queued done"')
     await waitFor(async () => (await sequences.load(sessionID)).items.length === 1, "first queued Goal persistence", diagnostics)
-    await assertMutation('add queued second --check "npm test"')
+    await assertAdminMutation('add queued second --check "npm test"')
     let queue = await waitFor(async () => {
       const state = await sequences.load(sessionID)
       return state.items.length === 2 ? state : null
@@ -470,56 +482,68 @@ async function main() {
     const secondID = queue.items[1].id
 
     await assertReadOnly("queue", /Goal Sequence/)
-    await assertMutation(`queue move ${secondID.slice(0, 12)} 1`)
+    await assertAdminMutation(`queue move ${secondID.slice(0, 12)} 1`)
     queue = await waitFor(async () => {
       const state = await sequences.load(sessionID)
       return state.items[0]?.id === secondID ? state : null
     }, "queued Goal move persistence", diagnostics)
 
-    await assertMutation(`queue remove ${firstID.slice(0, 12)}`)
+    await assertAdminMutation(`queue remove ${firstID.slice(0, 12)}`)
     queue = await waitFor(async () => {
       const state = await sequences.load(sessionID)
       return state.items.length === 1 && state.items[0]?.id === secondID ? state : null
     }, "queued Goal removal persistence", diagnostics)
 
+    await assertAdminMutation("queue clear")
+    await waitFor(async () => (await sequences.load(sessionID)).items.length === 0, "queue clear persistence", diagnostics)
+
+    await assertAdminMutation('add queued promotion --check "npm test"')
+    queue = await waitFor(async () => {
+      const state = await sequences.load(sessionID)
+      return state.items.length === 1 ? state : null
+    }, "queued promotion Goal persistence", diagnostics)
+    const promotionID = queue.items[0].id
+
     const archivedID = (await store.load(sessionID)).id
-    await assertMutation("clear")
+    await assertLifecycleMutation("clear")
     await waitFor(async () => (await store.load(sessionID)) === null, "cleared current Goal persistence", diagnostics)
 
     await waitFor(async () => {
       const history = await store.history(sessionID, 500)
       return history.some((item) => item.goalID === archivedID)
     }, "durable Goal archive after clear", diagnostics)
-    await assertMutation(`restore ${archivedID.slice(0, 12)}`)
+    await assertAdminMutation(`restore ${archivedID.slice(0, 12)}`)
     await waitFor(async () => {
       const goal = await store.load(sessionID)
       return goal?.id === archivedID && goal.status === "paused"
     }, "restored archived Goal persistence", diagnostics)
 
-    await assertMutation("clear")
+    await assertLifecycleMutation("clear")
     await waitFor(async () => (await store.load(sessionID)) === null, "cleared restored Goal persistence", diagnostics)
     await assertReadOnly("history", /Archived goals/)
-    await assertMutation("history prune --keep 1")
+    await assertAdminMutation("history prune --keep 1")
     await waitFor(async () => (await store.history(sessionID, 500)).length === 1, "pruned Goal history persistence", diagnostics)
 
-    await assertMutation("next")
+    await assertAdminMutation("next")
     const promoted = await waitFor(async () => {
       const goal = await store.load(sessionID)
       const state = await sequences.load(sessionID)
-      return goal?.id === secondID && goal.status === "active" && state.items.length === 0 ? goal : null
+      return goal?.id === promotionID && goal.status === "active" && state.items.length === 0 ? goal : null
     }, "queued Goal promotion persistence", diagnostics)
 
-    await assertReadOnly("queue", /Pending: 0/)
-
+    // next is terminal administration state; do not require another model turn
+    // after the newly promoted Goal becomes the continuation owner.
     assert.equal(server.exitCode, null, `OpenCode 2 server exited during control-plane canary\n${await diagnostics()}`)
     console.log(JSON.stringify({
       ok: true,
       version,
       sessionID,
       readOnlyViews: ["budget", "audit", "doctor", "list", "queue", "history"],
-      mutations: ["budget", "add", "queue_move", "queue_remove", "clear", "restore", "history_prune", "next"],
+      lifecycleCapabilityMutations: ["create", "clear"],
+      hostNativeAdminMutations: ["budget", "add", "queue_move", "queue_remove", "queue_clear", "restore", "history_prune", "next"],
       promotedGoalID: promoted.id,
-      exactHostCapabilityBound: true,
+      lifecycleCapabilityBound: true,
+      adminMutationsHostNative: true,
       providerRequests: provider.stats.requests,
     }, null, 2))
   } finally {

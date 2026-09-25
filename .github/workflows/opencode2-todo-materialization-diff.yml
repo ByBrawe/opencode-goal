@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   compare-stock-and-goal:
-    name: OpenCode 2.0.15 stock vs Goal Todo tools
+    name: OpenCode 2.0.16 stock vs Goal Todo tools
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -26,8 +26,8 @@ jobs:
           node-version: "24"
       - run: npm install
       - run: npm run build
-      - name: Install OpenCode 2.0.15
-        run: npm install -g @opencode/cli@2.0.15
+      - name: Install OpenCode 2.0.16
+        run: npm install -g @opencode/cli@2.0.16
       - name: Check comparison canary syntax
         run: node --check scripts/opencode2-todo-materialization-diff-canary.mjs
       - name: Compare stock and Goal tool materialization

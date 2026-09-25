@@ -19,6 +19,7 @@ on:
       - "scripts/opencode2-verifier-capability-canary.mjs"
       - "scripts/opencode2-runtime-capability-canary.mjs"
       - "scripts/opencode2-runtime-probe-plugin.mjs"
+      - "scripts/opencode2-telemetry-capability-canary.mjs"
       - "scripts/run-opencode2-host-ci.mjs"
       - ".github/workflows/opencode2-canary.yml"
       - "package.json"
@@ -36,6 +37,7 @@ on:
       - "scripts/opencode2-verifier-capability-canary.mjs"
       - "scripts/opencode2-runtime-capability-canary.mjs"
       - "scripts/opencode2-runtime-probe-plugin.mjs"
+      - "scripts/opencode2-telemetry-capability-canary.mjs"
       - "scripts/run-opencode2-host-ci.mjs"
       - ".github/workflows/opencode2-canary.yml"
       - "package.json"
@@ -117,6 +119,24 @@ jobs:
       - name: Prove event delivery, no-progress turn closing, and compaction hook registration
         run: node scripts/opencode2-runtime-capability-canary.mjs
 
+
+  telemetry-capabilities:
+    name: OpenCode 2.0.11 V1 telemetry event capabilities
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+      - name: Install exact OpenCode 2.0.11
+        run: npm install -g @opencode/cli@2.0.11
+      - name: Check telemetry capability canary syntax
+        run: node --check scripts/opencode2-telemetry-capability-canary.mjs
+      - name: Prove step/tool/usage/inbox/empty-turn telemetry payloads
+        run: node scripts/opencode2-telemetry-capability-canary.mjs
 
   autonomous-adapter:
     name: OpenCode 2.0.11 autonomous Goal coordinator

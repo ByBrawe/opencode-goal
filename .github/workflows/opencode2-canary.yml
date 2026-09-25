@@ -16,6 +16,7 @@ on:
       - "scripts/opencode2-autonomous-adapter-canary.mjs"
       - "scripts/opencode2-control-plane-canary.mjs"
       - "scripts/opencode2-semantic-completion-canary.mjs"
+      - "scripts/opencode2-telemetry-parity-canary.mjs"
       - "scripts/opencode2-verifier-capability-canary.mjs"
       - "scripts/opencode2-runtime-capability-canary.mjs"
       - "scripts/opencode2-runtime-probe-plugin.mjs"
@@ -34,6 +35,7 @@ on:
       - "scripts/opencode2-autonomous-adapter-canary.mjs"
       - "scripts/opencode2-control-plane-canary.mjs"
       - "scripts/opencode2-semantic-completion-canary.mjs"
+      - "scripts/opencode2-telemetry-parity-canary.mjs"
       - "scripts/opencode2-verifier-capability-canary.mjs"
       - "scripts/opencode2-runtime-capability-canary.mjs"
       - "scripts/opencode2-runtime-probe-plugin.mjs"
@@ -177,6 +179,26 @@ jobs:
         run: node --check scripts/opencode2-control-plane-canary.mjs
       - name: Prove V1 control-plane semantics on exact host
         run: node scripts/opencode2-control-plane-canary.mjs
+
+  telemetry-parity:
+    name: OpenCode 2.0.11 V1 telemetry runtime parity
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+      - run: npm install
+      - run: npm run build
+      - name: Install exact OpenCode 2.0.11
+        run: npm install -g @opencode/cli@2.0.11
+      - name: Check telemetry parity canary syntax
+        run: node --check scripts/opencode2-telemetry-parity-canary.mjs
+      - name: Prove V1 telemetry runtime semantics on exact host
+        run: node scripts/opencode2-telemetry-parity-canary.mjs
 
   semantic-completion:
     name: OpenCode 2.0.11 V1-grade semantic completion

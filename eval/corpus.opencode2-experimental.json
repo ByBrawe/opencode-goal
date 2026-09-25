@@ -9,8 +9,8 @@
       "category": "opencode2-experimental",
       "weight": 3,
       "testFile": "test/opencode2-experimental.test.mjs",
-      "testName": "experimental V2 plugin registers read-only inspection without command wrapping or mutating control",
-      "expected": "The experimental V2 plugin does not wrap model-visible command text and does not register mutating lifecycle control; only read-only Goal inspection is wired while host safety capabilities are missing."
+      "testName": "stable V2 kill switch preserves the read-only fail-closed adapter",
+      "expected": "With both stable V2 layers explicitly disabled, Goal does not register the host-native mutating lifecycle surface; read-only Goal inspection remains available and no command wrapping or mutation authority is introduced."
     },
     {
       "id": "opencode2.readonly-lifecycle-no-mutation",

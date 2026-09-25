@@ -91,6 +91,22 @@ Exact OpenCode 2.0.11 does not expose provider failures exactly like V1, so V2 r
 
 The exact host-limit capability canary and production ownership tests must remain green before stable promotion.
 
+## V1 Todo-planning parity preview
+
+V1 observes OpenCode's native `todowrite` execution plan. Exact packaged OpenCode 2.0.11 and 2.0.15 do not materialize `todowrite` into the provider tool list, and a stock-vs-Goal 2.0.15 comparison proves Goal does not remove it.
+
+The V2 adapter therefore preserves the V1 planning quality boundary without pretending the fallback is native:
+
+- native `todowrite` always wins when present; `opencode_goal_todo_plan` is hidden in that case;
+- when native `todowrite` is absent, the fallback appears only on the exact Goal-owned execution message/revision and is hidden from foreground, Plan/read-only, verifier, and compaction contexts;
+- fallback input reuses the same Todo normalization, durable item manifest, drift guards, stale-revision behavior, bounded continuation rendering, stall-window scaling, and completion veto used by V1;
+- the persisted snapshot is explicitly tagged `goal_fallback`; legacy snapshots without a source remain native-compatible;
+- a later native `todo.updated` observation upgrades an identical fallback snapshot to `native`; fallback cannot downgrade native state;
+- Todo updates never increment host progress, never create evidence, never prove requirements, and never widen Goal scope;
+- completion remains blocked while a current Todo plan has pending/in-progress required work, but completed Todos still do not prove the Goal.
+
+Stable promotion requires an exact production-host fallback canary while packaged V2 lacks native Todo materialization.
+
 ## V1-grade completion preview
 
 When both lifecycle and autonomous V2 previews are enabled, Goal-owned OpenCode 2 executions expose the same model-facing work controls used by stable V1: checkpoint notes, host file evidence, verified completion, waiting-user sleep, and repeated blocker reporting. These controls are visible only to the exact host-admitted Goal-owned execution identity for the current Goal revision; ordinary foreground turns and verifier children do not inherit them.

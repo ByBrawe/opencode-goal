@@ -61,6 +61,19 @@ The exact-host parity canary must prove one real Goal-owned write/tool loop coun
 
 One V1 model-context capability remains intentionally unclaimed here: exact OpenCode 2.0.11 `session.context.model` exposes model identity but not context/input/output limits in the proven hook payload, so context-limit/headroom enforcement is not inferred from undocumented data.
 
+## V1 native Todo telemetry preview
+
+OpenCode 2 native Todo state remains an advisory planning surface, matching the stable V1 boundary:
+
+- Goal never owns or rewrites OpenCode's Todo database; the model continues to use the host-native `todowrite` tool;
+- the adapter observes exact host `todo.updated` payloads and reuses the V1 `normalizeNativeTodos()` + `observeTodoPlan()` pipeline;
+- Todo snapshots bind only while an exact Goal-owned execution is active and the persisted Goal id/revision still matches that owner;
+- foreground, lifecycle/admin, paused, stale-revision, malformed, and other-session Todo events cannot update Goal telemetry;
+- Todo content/status remains advisory: it never increments `progressRevision`, never creates evidence, and never proves requirements or semantic completion;
+- same-revision anomaly detection and post-edit stale-plan behavior stay shared with V1.
+
+The exact OpenCode 2.0.11 autonomous-adapter canary requires one real Goal-owned `todowrite` call to persist the Todo manifest while progress/evidence remain unchanged.
+
 ## V1-grade completion preview
 
 When both lifecycle and autonomous V2 previews are enabled, Goal-owned OpenCode 2 executions expose the same model-facing work controls used by stable V1: checkpoint notes, host file evidence, verified completion, waiting-user sleep, and repeated blocker reporting. These controls are visible only to the exact host-admitted Goal-owned execution identity for the current Goal revision; ordinary foreground turns and verifier children do not inherit them.

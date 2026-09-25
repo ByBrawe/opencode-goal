@@ -1418,7 +1418,8 @@ export const OpenCode2GoalsExperimental = {
       nextUnit: string,
     ): Promise<boolean> => {
       if (!source.unitRotation || !unitRotationNeeded(source, nextUnit)) return false
-      if (typeof ctx.session.create !== "function" || typeof ctx.session.prompt !== "function") return false
+      const createSession = ctx.session.create
+      if (typeof createSession !== "function" || typeof ctx.session.prompt !== "function") return false
 
       return await withUnitHandoffLease(directory, source.id, async () => {
         const freshSource = await new GoalStore(directory).load(source.sessionID)
@@ -1428,7 +1429,7 @@ export const OpenCode2GoalsExperimental = {
         if (!target) {
           let created: unknown
           try {
-            created = await ctx.session.create({
+            created = await createSession({
               parentID: freshSource.sessionID,
               title: `Goal unit ${freshSource.unitRotation!.chainIndex + 1}: ${freshSource.objective.slice(0, 80)}`,
             })

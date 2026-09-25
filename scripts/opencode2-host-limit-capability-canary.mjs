@@ -363,20 +363,28 @@ async function main() {
     assert.match(String(errorEvent.data.error.message ?? ""), /prompt exceeds max length/i)
 
     const retrySession = await createSession("V2 host limit retry")
-    const retryPromise = sendPrompt(retrySession, "RETRY_PROBE")
-    const retryStatus = await waitFor(async () => {
-      const trace = await readTrace(traceFile)
-      return trace.find((item) =>
-        item.phase === "event"
-        && item.type === "session.status"
-        && item.properties?.sessionID === retrySession
-        && item.properties?.status?.type === "retry"
-      )
-    }, "exact session.status retry event", diagnostics, 60_000)
-    assert.equal(typeof retryStatus.properties.status.attempt, "number")
-    assert.equal(typeof retryStatus.properties.status.message, "string")
-    const retryResult = await retryPromise
+    const retryResult = await sendPrompt(retrySession, "RETRY_PROBE")
     assert.ok(retryResult.ok, `retry session did not recover: ${retryResult.status} ${retryResult.text}`)
+    await waitFor(() => p.stats.retry >= 2, "one internal provider retry", diagnostics, 30_000)
+    const retryTrace = await waitFor(async () => {
+      const trace = await readTrace(traceFile)
+      const terminal = trace.find((item) =>
+        item.phase === "event"
+        && item.type === "session.execution.succeeded"
+        && item.data?.sessionID === retrySession
+      )
+      return terminal ? trace : null
+    }, "successful retry execution terminal", diagnostics, 30_000)
+    const retryStatusEvents = retryTrace.filter((item) =>
+      item.phase === "event"
+      && item.type === "session.status"
+      && item.properties?.sessionID === retrySession
+    )
+    assert.deepEqual(
+      retryStatusEvents,
+      [],
+      "generic custom-provider 429 retry is internal to the V2 execution and must not be treated as a durable usage-limit signal",
+    )
 
     console.log(JSON.stringify({
       ok: true,
@@ -386,8 +394,9 @@ async function main() {
         providerRequests: p.stats.overflow,
       },
       retry: {
-        event: retryStatus,
         providerRequests: p.stats.retry,
+        statusEvents: retryStatusEvents,
+        executionSucceeded: true,
       },
     }, null, 2))
   } finally {

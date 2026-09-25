@@ -290,11 +290,11 @@ function stableV2FeatureEnabled(
   return true
 }
 
-function directLifecycleEnabled(): boolean {
+function directLifecycleEnabled(ctx: OpenCode2ExperimentalContext): boolean {
   return stableV2FeatureEnabled(ctx, "lifecycle", OPENCODE2_DIRECT_LIFECYCLE_ENV)
 }
 
-function autonomousEnabledByConfig(): boolean {
+function autonomousEnabledByConfig(ctx: OpenCode2ExperimentalContext): boolean {
   return stableV2FeatureEnabled(ctx, "autonomous", OPENCODE2_AUTONOMOUS_ENV)
 }
 
@@ -781,7 +781,7 @@ export async function executeOpenCode2DirectGoalCommand(
     ) => Promise<void>
   } = {},
 ): Promise<{ action: string; goal: GoalState | null; messageID?: string; dispatched: boolean; message?: string }> {
-  if (!directLifecycleEnabled()) {
+  if (!directLifecycleEnabled(ctx)) {
     throw new Error(`OpenCode Goals V2 direct lifecycle is disabled by plugin options or ${OPENCODE2_DIRECT_LIFECYCLE_ENV}. Enable options.lifecycle or remove/set the environment override to 1.`)
   }
   if (!input?.sessionID) throw new Error("OpenCode Goals V2 direct command requires a sessionID")
@@ -1005,8 +1005,8 @@ export const OpenCode2GoalsExperimental = {
     const autonomousDispatching = new Set<string>()
     const handoffDispatching = new Set<string>()
     const handoffRetryTimers = new Map<string, ReturnType<typeof setTimeout>>()
-    const lifecycleEnabled = directLifecycleEnabled()
-    const autonomousEnabled = lifecycleEnabled && autonomousEnabledByConfig()
+    const lifecycleEnabled = directLifecycleEnabled(ctx)
+    const autonomousEnabled = lifecycleEnabled && autonomousEnabledByConfig(ctx)
     const semanticVerifier = createOpenCode2SemanticVerifierRuntime(
       ctx.session,
       async (sessionID) => await resolveSessionDirectory(ctx, sessionID),

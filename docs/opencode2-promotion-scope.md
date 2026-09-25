@@ -45,6 +45,21 @@ The host-authenticated V2 `/goal` command surface also reuses the stable V1 pers
 
 Stable promotion requires an exact OpenCode 2.0.11 canary to prove the read-only views remain mutation-free, lifecycle mutation still requires the one-use capability, and representative host-native budget/archive/restore/sequence mutations persist without depending on provider execution.
 
+## V1 runtime accounting and empty-turn parity preview
+
+Exact OpenCode 2.0.11 telemetry proves that assistant work is exposed per assistant message through `session.step.ended`, while `session.usage.updated` is cumulative at session scope. Goal therefore preserves the stable V1 accounting boundary instead of adding cumulative usage repeatedly:
+
+- only exact Goal-owned execution steps can mutate Goal usage;
+- each `session.step.ended` assistant identity is accounted once through the shared V1 `accountAssistantUsage()` path;
+- text and tool activity mark that exact assistant message meaningful; ordinary/direct/verifier traffic does not become Goal usage;
+- a fully empty Goal-owned assistant step still records token/cost/runtime usage but refunds the logical Goal-turn count through the shared V1 `recordEmptyAssistantTurn()` policy;
+- the second consecutive empty Goal-owned assistant step pauses the Goal, and the dedicated empty-turn policy suppresses generic no-progress double-counting;
+- reached Goal budgets are not applied in the middle of an execution. The existing successful execution boundary closes the turn through `closeObservedTurn()`, which applies `settleReachedGoalBudget()` only after the last step usage is durable;
+- `session.usage.updated` remains advisory/cumulative telemetry and is not summed into Goal usage;
+- exact 2.0.11 `session.context` exposes model identity but did not expose model context-window limits in the proven shape, so V2 does not invent those limits.
+
+Stable promotion requires the exact host to prove both a meaningful Goal-owned step reaching `maxTurns=1` and the two-empty-turn bounded retry/pause behavior with no duplicate autonomous continuation.
+
 ## V1-grade completion preview
 
 When both lifecycle and autonomous V2 previews are enabled, Goal-owned OpenCode 2 executions expose the same model-facing work controls used by stable V1: checkpoint notes, host file evidence, verified completion, waiting-user sleep, and repeated blocker reporting. These controls are visible only to the exact host-admitted Goal-owned execution identity for the current Goal revision; ordinary foreground turns and verifier children do not inherit them.

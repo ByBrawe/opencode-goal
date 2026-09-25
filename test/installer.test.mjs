@@ -113,7 +113,47 @@ $ARGUMENTS
     assert.equal(await exists(commandPath), false)
 
     const config = JSON.parse(await readFile(path.join(configDir, "opencode.json"), "utf8"))
-    assert.deepEqual(config.plugin, [packageSpec])
+    assert.deepEqual(config.plugins, [packageSpec])
+    assert.equal(config.plugin, undefined)
+  } finally {
+    await rm(temp, { recursive: true, force: true })
+  }
+})
+
+test("OpenCode 2 installer migrates only Goal-owned registrations to native plugins without touching unrelated V1 entries", async () => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-installer-v2-config-dialect-"))
+  const configDir = path.join(temp, "config")
+  try {
+    await mkdir(configDir, { recursive: true })
+    await writeFile(path.join(configDir, "opencode.jsonc"), `{
+  // Keep legacy V1 registrations that do not belong to Goal.
+  "plugin": [
+    "legacy-v1-plugin",
+    "@bybrawe/opencode-goal@1.0.0",
+  ],
+  "plugins": [
+    { "package": "native-v2-plugin", "options": { "enabled": true } },
+    { "package": "@bybrawe/opencode-goal@1.3.35" },
+  ],
+}
+`, "utf8")
+
+    const result = await runInstaller(configDir, [], { OPENCODE_GOAL_HOST_VERSION: "2.0.11" })
+    assert.equal(result.code, 0, result.stderr)
+
+    const source = await readFile(path.join(configDir, "opencode.jsonc"), "utf8")
+    assert.match(source, /Keep legacy V1 registrations/)
+    const config = JSON.parse(source.replace(/\/\/.*$/gm, "").replace(/,\s*([}\]])/g, "$1"))
+    assert.deepEqual(config.plugin, ["legacy-v1-plugin"])
+    assert.deepEqual(config.plugins, [
+      { package: "native-v2-plugin", options: { enabled: true } },
+      packageSpec,
+    ])
+    assert.equal(await exists(path.join(configDir, "commands", "goal.md")), false)
+
+    const second = await runInstaller(configDir, [], { OPENCODE_GOAL_HOST_VERSION: "2.0.11" })
+    assert.equal(second.code, 0, second.stderr)
+    assert.equal(await readFile(path.join(configDir, "opencode.jsonc"), "utf8"), source)
   } finally {
     await rm(temp, { recursive: true, force: true })
   }

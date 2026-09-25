@@ -50,8 +50,9 @@ The installer:
 - installs/pins `@bybrawe/opencode-goal@<exact-version>` in the OpenCode plugin list;
 - upgrades old, bare, or `@latest` Goal plugin entries;
 - removes known duplicate legacy local Goal plugin copies;
-- installs a managed global `commands/goal.md` so `/goal` is discoverable;
-- preserves unrelated OpenCode settings and JSONC comments outside the managed plugin array.
+- on OpenCode 1.x, installs a managed global `commands/goal.md` so `/goal` is discoverable;
+- on OpenCode 2.x, writes the native `plugins` config and uses the plugin-native `/goal` command instead of the legacy command bridge;
+- preserves unrelated OpenCode settings, plugin registrations, and JSONC comments outside the Goal-owned entry.
 
 Default OpenCode locations:
 
@@ -59,17 +60,19 @@ macOS / Linux:
 
 ```text
 ~/.config/opencode/opencode.json or opencode.jsonc
-~/.config/opencode/commands/goal.md
+~/.config/opencode/commands/goal.md   # OpenCode 1.x bridge only
 ```
 
 Windows:
 
 ```text
 %USERPROFILE%\.config\opencode\opencode.json or opencode.jsonc
-%USERPROFILE%\.config\opencode\commands\goal.md
+%USERPROFILE%\.config\opencode\commands\goal.md   # OpenCode 1.x bridge only
 ```
 
 OpenCode loads the npm package through its dedicated `./server` entrypoint. The root export remains the public JavaScript API.
+
+OpenCode 2 uses the V2 lifecycle and autonomous coordinator by default. The legacy `OPENCODE_GOAL_V2_DIRECT_LIFECYCLE` and `OPENCODE_GOAL_V2_AUTONOMOUS` environment variables remain available as emergency kill switches: set either to `0`, `false`, `no`, or `off` to disable that V2 layer. Unknown explicit values fail closed.
 
 ## Why use OpenCode Goals?
 

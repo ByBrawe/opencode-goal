@@ -655,7 +655,7 @@ async function main() {
     assert.ok(compact.ok, `V2 Goal compaction admission failed: HTTP ${compact.status} ${compact.text}\n${await diagnostics()}`)
     await waitFor(
       () => provider.stats.requests.slice(compactionRequestsBefore).some((item) =>
-        item.text.includes("OpenCode Goals experimental V2 persisted state")
+        item.text.includes("OpenCode Goals V2 persisted state")
         && item.text.includes("Objective: ship v2 capability")
       ),
       "active Goal context inside exact-host V2 compaction request",

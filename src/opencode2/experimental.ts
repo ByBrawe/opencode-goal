@@ -312,6 +312,20 @@ const DIRECT_MUTATION_ACTIONS = new Set<ReturnType<typeof parseGoalCommand>["act
 ])
 const DIRECT_READ_ACTIONS = OPENCODE2_READ_CONTROL_ACTIONS
 
+function assertDirectLifecycleSessionMutable(
+  goal: GoalState | null,
+  action: ReturnType<typeof parseGoalCommand>["action"],
+): void {
+  if (!goal || !DIRECT_MUTATION_ACTIONS.has(action)) return
+  if (goal.status !== "handed_off" && goal.status !== "handoff_pending") return
+  const next = goal.unitRotation?.nextSessionID
+    ? ` Continue from session ${goal.unitRotation.nextSessionID}.`
+    : ""
+  throw new Error(
+    `OpenCode Goals V2 session ${goal.sessionID} is ${goal.status} and is inert after unit handoff.${next} No Goal state was changed.`,
+  )
+}
+
 export interface OpenCode2DirectCapability {
   sessionID: string
   messageID: string
@@ -618,11 +632,12 @@ async function applyAuthorizedGoalMutation(
     throw new Error("OpenCode Goals V2 direct lifecycle capability workspace changed before persistence; no Goal state was changed.")
   }
 
-  const controlPlane = await applyOpenCode2ControlPlaneMutation(directory, sessionID, parsed)
-  if (controlPlane) return controlPlane
-
   const store = new GoalStore(directory, { onTransition: createGoalTransitionNotifier(directory) })
   let goal = await store.load(sessionID)
+  assertDirectLifecycleSessionMutable(goal, parsed.action)
+
+  const controlPlane = await applyOpenCode2ControlPlaneMutation(directory, sessionID, parsed)
+  if (controlPlane) return controlPlane
 
   if (parsed.action === "pause") {
     if (goal) {
@@ -795,6 +810,7 @@ export async function executeOpenCode2DirectGoalCommand(
 
   const directory = await resolveSessionDirectory(ctx, input.sessionID)
   const goal = await loadDirectGoal(ctx, input.sessionID, directory)
+  assertDirectLifecycleSessionMutable(goal, parsed.action)
 
   const readOnly = await readOpenCode2ControlPlane(directory, input.sessionID, parsed)
   if (readOnly !== undefined) {
@@ -1190,12 +1206,32 @@ export const OpenCode2GoalsExperimental = {
       const goals = await new GoalStore(directory).list()
       return goals.find((candidate) =>
         candidate.id === source.id
+        && candidate.revision === source.revision
         && candidate.sessionID !== source.sessionID
         && candidate.unitRotation?.handoff?.fromSessionID === source.sessionID
         && candidate.unitRotation?.handoff?.toUnit === nextUnit
         && candidate.status !== "completed"
         && candidate.status !== "handed_off"
       )
+    }
+
+    const discardPreparedUnitHandoff = async (
+      directory: string,
+      target: GoalState,
+    ): Promise<void> => {
+      try {
+        const store = new GoalStore(directory, { onTransition: createGoalTransitionNotifier(directory) })
+        const current = await store.load(target.sessionID)
+        if (current?.id === target.id && current.status === "handoff_pending") {
+          await store.clear(target.sessionID)
+        }
+      } catch {
+        // Best-effort rollback only. Source ownership stays authoritative until
+        // its terminal handoff is durably persisted.
+      }
+      if (typeof ctx.session.delete === "function") {
+        await Promise.resolve(ctx.session.delete({ sessionID: target.sessionID })).catch(() => undefined)
+      }
     }
 
     const admitUnitHandoffPrompt = async (
@@ -1295,12 +1331,26 @@ export const OpenCode2GoalsExperimental = {
       const handoff = target.unitRotation?.handoff
       if (!handoff || handoff.fromSessionID !== source.sessionID) return false
 
+      if (source.status !== "handed_off") {
+        if (
+          source.status !== "active"
+          || source.revision !== target.revision
+          || !unitRotationNeeded(source, handoff.toUnit)
+        ) {
+          await discardPreparedUnitHandoff(directory, target)
+          return false
+        }
+      } else if (source.revision !== target.revision) {
+        return false
+      }
+
       if (target.status === "handoff_pending" && handoff.phase === "prepared") {
         try {
           target = await admitUnitHandoffPrompt(directory, target)
         } catch {
-          // Admission happens before source ownership is retired. Failure means
-          // no rotation: the source session remains active and can continue.
+          // Admission happens before source ownership is retired. Roll back the
+          // prepared target completely so failure means no rotation.
+          await discardPreparedUnitHandoff(directory, target)
           return false
         }
       }
@@ -1309,12 +1359,28 @@ export const OpenCode2GoalsExperimental = {
       target = await store.load(target.sessionID)
       if (!source || !target) return false
 
-      if (source.status === "active" && target.status === "handoff_pending" && target.unitRotation?.handoff?.phase === "admitted") {
+      const admittedHandoff = target.unitRotation?.handoff
+      if (source.status !== "handed_off") {
+        if (
+          source.status !== "active"
+          || source.revision !== target.revision
+          || !admittedHandoff
+          || !unitRotationNeeded(source, admittedHandoff.toUnit)
+        ) {
+          await discardPreparedUnitHandoff(directory, target)
+          return false
+        }
+      } else if (source.revision !== target.revision) {
+        return false
+      }
+
+      if (source.status === "active" && target.status === "handoff_pending" && admittedHandoff?.phase === "admitted") {
         const terminal = markUnitHandoffSourceTerminal(source, target)
         try {
           await store.save(terminal)
           source = terminal
         } catch {
+          await discardPreparedUnitHandoff(directory, target)
           return false
         }
       }

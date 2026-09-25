@@ -110,7 +110,7 @@ test("successful compaction guarantees exactly one Goal continuation without req
     fake.pending[1].resolve({})
     await tick()
   } finally {
-    await rm(root, { recursive: true, force: true })
+    await rm(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 50 })
   }
 })
 
@@ -144,7 +144,7 @@ test("post-compaction continuation still obeys delegated-task deferral", async (
     fake.pending[0].resolve({})
     await tick()
   } finally {
-    await rm(root, { recursive: true, force: true })
+    await rm(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 50 })
   }
 })
 
@@ -164,6 +164,6 @@ test("inactive Goals do not acquire compaction continuation ownership", async ()
     assert.equal(auto.enabled, true)
     assert.equal(fake.promptCount, 0)
   } finally {
-    await rm(root, { recursive: true, force: true })
+    await rm(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 50 })
   }
 })

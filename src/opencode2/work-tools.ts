@@ -4,6 +4,10 @@ import { GoalStore } from "../persistence/store.js"
 import { reportBlocker } from "../runtime/blocker.js"
 import { runConfiguredChecks } from "../runtime/checks.js"
 import { addProgressNote } from "../runtime/progress.js"
+import {
+  normalizeNativeTodos,
+  observeTodoPlan,
+} from "../runtime/todo-plan.js"
 import { completeGoal } from "../verification/audit.js"
 import { verifyDeclaredFiles } from "../verification/contracts.js"
 import { proveRequirementsFromEvidence, recordFileEvidence } from "../verification/evidence.js"
@@ -16,6 +20,7 @@ import { SemanticVerifierUnavailableError } from "../opencode/verifier.js"
 import type { OpenCode2AutonomousRuntime, OpenCode2GoalExecutionOwner } from "./autonomous-runtime.js"
 
 export const OPENCODE2_GOAL_WORK_TOOLS = [
+  "opencode_goal_todo_plan",
   "opencode_goal_progress",
   "opencode_goal_evidence_file",
   "opencode_goal_complete",
@@ -177,11 +182,83 @@ export function createOpenCode2GoalWorkTools(input: {
 
     const owner = input.autonomousRuntime.executionOwnerBySession.get(id)
     const owned = Boolean(owner && lastUserMessageID && owner.messageID === lastUserMessageID)
-    if (!owned) hideFrom(event)
-    return owned
+    if (!owned) {
+      hideFrom(event)
+      return false
+    }
+
+    // Prefer the real OpenCode Todo tool whenever the host actually
+    // materializes it. The Goal fallback exists only for packaged V2 hosts
+    // where native todowrite is absent from the model-facing tool set.
+    if (event?.tools && typeof event.tools === "object" && event.tools.todowrite) {
+      delete event.tools.opencode_goal_todo_plan
+    }
+    return true
+  }
+
+  async function observeNativeTodoEvent(event: any): Promise<boolean> {
+    const properties = event?.properties && typeof event.properties === "object" ? event.properties : undefined
+    const data = event?.data && typeof event.data === "object" ? event.data : undefined
+    const id = typeof properties?.sessionID === "string"
+      ? properties.sessionID
+      : typeof data?.sessionID === "string" ? data.sessionID : undefined
+    const todos = normalizeNativeTodos(properties?.todos ?? data?.todos)
+    if (!id || !todos) return false
+
+    return await serialize(id, async () => {
+      const current = await currentOwnedGoal({ sessionID: id })
+      if ("rejection" in current) return false
+      const next = observeTodoPlan(current.goal, todos, Date.now(), "native")
+      if (next !== current.goal) await current.store.save(next)
+      return true
+    })
   }
 
   const definitions: Record<WorkToolName, any> = {
+    opencode_goal_todo_plan: {
+      description: "Maintain an advisory Goal-owned Todo plan when native OpenCode todowrite is unavailable. Todo state is planning only: it is not host progress or completion evidence.",
+      input: {
+        type: "object",
+        properties: {
+          todos: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                content: { type: "string" },
+                status: { type: "string", enum: ["pending", "in_progress", "completed", "cancelled"] },
+                priority: { type: "string" },
+                id: { type: "string" },
+              },
+              required: ["content", "status"],
+              additionalProperties: false,
+            },
+          },
+        },
+        required: ["todos"],
+        additionalProperties: false,
+      },
+      output: outputSchema,
+      execute: async (args: any, context: ToolContext) => {
+        const id = sessionID(context)
+        return await serialize(id, async () => {
+          const current = await currentOwnedGoal(context)
+          if ("rejection" in current) return response(current.rejection)
+          const todos = normalizeNativeTodos(args?.todos)
+          if (!todos) return response("Rejected: malformed Todo plan. Goal state was not changed.", current.goal)
+
+          const next = observeTodoPlan(current.goal, todos, Date.now(), "goal_fallback")
+          if (next !== current.goal) await current.store.save(next)
+          return response(
+            next === current.goal
+              ? "Advisory Goal Todo plan unchanged. Todo state is not progress or completion evidence."
+              : "Advisory Goal Todo plan recorded for the current Goal revision. Todo state is not progress or completion evidence.",
+            next,
+          )
+        })
+      },
+    },
+
     opencode_goal_progress: {
       description: "Record a checkpoint note. This does not count as verified progress by itself.",
       input: {
@@ -391,6 +468,7 @@ export function createOpenCode2GoalWorkTools(input: {
     markForegroundSteering,
     clearSession,
     currentSteeringEpoch,
+    observeNativeTodoEvent,
     toolNames: OPENCODE2_GOAL_WORK_TOOLS,
   }
 }

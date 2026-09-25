@@ -70,10 +70,12 @@ test("V2 Goal work tools are visible only to exact Goal-owned execution and pres
 
     const fileRequirement = latest.requirements.find((item) => item.verification === "file")
     assert.ok(fileRequirement)
+    const nativeStatuses = []
     const evidence = await tools.definitions.opencode_goal_evidence_file.execute(
       { requirementID: fileRequirement.id },
-      { sessionID },
+      { sessionID, progress: async ({ status }) => nativeStatuses.push(status) },
     )
+    assert.deepEqual(nativeStatuses, ["Verifying declared file evidence"])
     assert.match(evidence.content, /proof\.txt/i)
     latest = await store.load(sessionID)
     assert.equal(latest.requirements.find((item) => item.id === fileRequirement.id)?.status, "proven")

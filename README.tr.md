@@ -72,7 +72,7 @@ Windows:
 
 OpenCode npm paketini özel `./server` entrypoint'i üzerinden yükler. Root export normal JavaScript API'si olarak kalır.
 
-OpenCode 2, V2 lifecycle ve autonomous coordinator yolunu varsayılan olarak etkinleştirir. Native plugin options üzerinden `{ "package": "@bybrawe/opencode-goal@<version>", "options": { "lifecycle": false, "autonomous": false } }` ile iki katman ayrı ayrı kapatılabilir. Eski `OPENCODE_GOAL_V2_DIRECT_LIFECYCLE` ve `OPENCODE_GOAL_V2_AUTONOMOUS` ortam değişkenleri daha yüksek öncelikli acil kapatma anahtarı olarak korunur: ilgili V2 katmanını kapatmak için `0`, `false`, `no` veya `off` verilebilir. Tanınmayan açık environment değerleri fail-closed davranır.
+OpenCode 2, V2 lifecycle ve autonomous coordinator yolunu varsayılan olarak etkinleştirir. Native `plugins` kayıtları üzerinden `{ "package": "@bybrawe/opencode-goal@<version>", "options": { "lifecycle": false, "autonomous": false } }` ile iki katman ayrı ayrı kapatılabilir. Eski `OPENCODE_GOAL_V2_DIRECT_LIFECYCLE` ve `OPENCODE_GOAL_V2_AUTONOMOUS` ortam değişkenleri daha yüksek öncelikli acil kapatma anahtarı olarak korunur: ilgili V2 katmanını kapatmak için `0`, `false`, `no` veya `off` verilebilir. Tanınmayan açık environment değerleri fail-closed davranır. Uygun hostlarda V2-native prompt admission ve tool-execution hook'ları doğrudan kullanılır; uzun süren evidence/completion araçları host-native tool progress API'si üzerinden ilerleme bildirir.
 
 ## Neden OpenCode Goals?
 

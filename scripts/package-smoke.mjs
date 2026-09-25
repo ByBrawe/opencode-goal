@@ -197,6 +197,35 @@ async function main() {
     }
     if (await exists(commandPath)) throw new Error("published installer uninstall did not remove its managed /goal command")
 
+    const installerV2Config = path.join(temp, "installer-v2-config")
+    const installerV2Env = {
+      ...process.env,
+      OPENCODE_CONFIG_DIR: installerV2Config,
+      OPENCODE_GOAL_HOST_VERSION: "2.0.15",
+    }
+    run(process.execPath, [installerPath], { cwd: consumer, env: installerV2Env })
+    const configV2Path = path.join(installerV2Config, "opencode.json")
+    const installedV2Config = JSON.parse(await readFile(configV2Path, "utf8"))
+    if (!Array.isArray(installedV2Config.plugins) || installedV2Config.plugins.length !== 1 || installedV2Config.plugins[0] !== `${packageJSON.name}@${packageJSON.version}`) {
+      throw new Error("published installer did not create the exact OpenCode 2 plugins pin")
+    }
+    if (installedV2Config.plugin !== undefined) {
+      throw new Error("published OpenCode 2 installer wrote the legacy singular plugin key")
+    }
+    const commandV2Path = path.join(installerV2Config, "commands", "goal.md")
+    if (await exists(commandV2Path)) {
+      throw new Error("published OpenCode 2 installer created the legacy managed /goal command bridge")
+    }
+
+    run(process.execPath, [installerPath, "--uninstall"], { cwd: consumer, env: installerV2Env })
+    const uninstalledV2Config = JSON.parse(await readFile(configV2Path, "utf8"))
+    if (!Array.isArray(uninstalledV2Config.plugins) || uninstalledV2Config.plugins.some((value) => {
+      const spec = typeof value === "string" ? value : value?.package
+      return typeof spec === "string" && spec.startsWith(packageJSON.name)
+    })) {
+      throw new Error("published OpenCode 2 installer uninstall did not remove the Goal registration")
+    }
+
     const report = {
       schemaVersion: 1,
       generatedAt: new Date().toISOString(),
@@ -215,8 +244,10 @@ async function main() {
       consumerImport: /consumer import ok/.test(String(consumerResult.stdout ?? "")),
       serverEntrypoint: true,
       installer: true,
+      installerV2: true,
       installerBinLinked: true,
       commandDiscovery: true,
+      nativeV2Command: true,
       uninstaller: true,
       gate: true,
     }
@@ -225,7 +256,7 @@ async function main() {
     console.log(`minimum OpenCode ${report.minimumOpenCode}`)
     console.log(`runtime dependency ${report.runtimeDependency}`)
     console.log(`tarball ${report.filename} files=${report.fileCount} packed=${report.packageSize} unpacked=${report.unpackedSize}`)
-    console.log("clean production-only consumer public API + server + TUI import + npm-linked installer + /goal command + uninstaller PASS")
+    console.log("clean production-only consumer public API + server + TUI import + V1/V2 npm-linked installer + /goal command modes + uninstaller PASS")
 
     if (options.jsonPath) {
       const target = path.resolve(root, options.jsonPath)

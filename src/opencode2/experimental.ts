@@ -347,6 +347,8 @@ function canonicalGoalCommand(parsed: ReturnType<typeof parseGoalCommand>): stri
       ...(item.contains === undefined ? {} : { contains: item.contains }),
     })),
     notifyCommand: parsed.notifyCommand ?? null,
+    unitCommand: parsed.unitCommand ?? null,
+    freshSessionPerUnit: parsed.freshSessionPerUnit ?? false,
     goalIDPrefix: parsed.goalIDPrefix ?? null,
     historyKeep: parsed.historyKeep ?? null,
     queuePosition: parsed.queuePosition ?? null,
@@ -629,6 +631,9 @@ async function applyAuthorizedGoalMutation(
       checks: parsed.checks,
       files: parsed.files,
       ...(parsed.notifyCommand ? { notifyCommand: parsed.notifyCommand } : {}),
+      ...(parsed.unitCommand && parsed.freshSessionPerUnit ? {
+        unitRotation: { command: parsed.unitCommand, freshSessionPerUnit: true as const },
+      } : {}),
       budget: directBudgetPatch(parsed),
     })
     await store.save(goal)
@@ -647,6 +652,9 @@ async function applyAuthorizedGoalMutation(
     ...(parsed.checks.length ? { checks: parsed.checks } : {}),
     ...(parsed.files.length ? { files: parsed.files } : {}),
     ...(parsed.notifyCommand ? { notifyCommand: parsed.notifyCommand } : {}),
+    ...(parsed.unitCommand && parsed.freshSessionPerUnit ? {
+      unitRotation: { command: parsed.unitCommand, freshSessionPerUnit: true as const },
+    } : {}),
   })
   const budgetPatch = directBudgetPatch(parsed)
   if (Object.keys(budgetPatch).length) goal = applyGoalBudget(goal, budgetPatch)

@@ -18,7 +18,7 @@ permissions:
 
 jobs:
   three-unit-handoff:
-    name: OpenCode 2.0.15 three-session unit handoff
+    name: OpenCode 2.0.16 three-session unit handoff
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -30,8 +30,8 @@ jobs:
           node-version: "24"
       - run: npm install
       - run: npm run build
-      - name: Install OpenCode 2.0.15
-        run: npm install -g @opencode/cli@2.0.15
+      - name: Install OpenCode 2.0.16
+        run: npm install -g @opencode/cli@2.0.16
       - name: Check handoff canary syntax
         run: node --check scripts/opencode2-unit-handoff-canary.mjs
       - name: Prove three native sessions preserve one Goal

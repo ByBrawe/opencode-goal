@@ -864,6 +864,10 @@ export async function executeOpenCode2DirectGoalCommand(
     ...input.prompt,
     sessionID: input.sessionID,
     text: raw,
+    metadata: {
+      opencode_goal_v2_direct_command: true,
+      opencode_goal_v2_action: parsed.action,
+    },
     ...(input.delivery !== undefined ? { delivery: input.delivery } : {}),
   }
   const admitted = await ctx.session.prompt({ ...promptInput, resume: false })
@@ -1888,6 +1892,31 @@ export const OpenCode2GoalsExperimental = {
       }
       if (!goal) return
       appendSystemContext(event, experimentalContext(goal))
+    }
+
+    try {
+      await ctx.session.hook("prompt", async (event: any) => {
+        if (!autonomousEnabled) return
+        const sessionID = sessionIDFromEvent(event)
+        if (!sessionID) return
+
+        const prompt = nestedRecord(event, "prompt")
+        const metadata = record(event?.metadata) ?? record(prompt?.metadata)
+        if (
+          metadata?.opencode_goal_v2_autonomous === true
+          || metadata?.opencode_goal_v2_direct_command === true
+          || metadata?.opencode_goal_v2_verifier === true
+          || metadata?.opencode_goal_unit_handoff === true
+        ) return
+
+        // V2 prompt admission runs before durable inbox admission and before
+        // model context construction. Mark steering here so in-flight Goal
+        // verification cannot race an ordinary foreground user prompt.
+        workTools.markForegroundAdmission(sessionID)
+      })
+    } catch {
+      // Older hosts may not expose prompt admission. The context hook remains
+      // the conservative fallback steering boundary.
     }
 
     try {

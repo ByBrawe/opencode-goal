@@ -314,15 +314,22 @@ function findRootClose(source: string, start: number): number {
   }
 }
 
+function configuredPluginSpec(value: unknown): string | undefined {
+  if (typeof value === "string") return value.trim()
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined
+  const spec = (value as { package?: unknown }).package
+  return typeof spec === "string" ? spec.trim() : undefined
+}
+
 function isPackageSpec(value: unknown): boolean {
-  if (typeof value !== "string") return false
-  const spec = value.trim()
-  return spec === packageName || spec.startsWith(`${packageName}@`)
+  const spec = configuredPluginSpec(value)
+  return Boolean(spec && (spec === packageName || spec.startsWith(`${packageName}@`)))
 }
 
 function isKnownLocalGoalSpec(value: unknown): boolean {
-  if (typeof value !== "string") return false
-  const normalized = value.trim().replaceAll("\\", "/")
+  const spec = configuredPluginSpec(value)
+  if (!spec) return false
+  const normalized = spec.replaceAll("\\", "/")
   return normalized === "./plugins/opencode-goal.ts"
     || normalized === "./plugins/opencode-goal.js"
     || normalized.endsWith("/plugins/opencode-goal.ts")
@@ -335,21 +342,21 @@ function formatPluginArray(values: unknown[], indent: string, eol: string): stri
   return `[${eol}${values.map((value) => `${childIndent}${JSON.stringify(value)}`).join(`,${eol}`)}${eol}${indent}]`
 }
 
-function rewritePluginConfig(source: string, mode: "install" | "uninstall"): { content: string; changed: boolean } {
-  const parsed = parseJsonc(source)
-  const existing = parsed.plugin
-  if (existing !== undefined && !Array.isArray(existing)) throw new Error("OpenCode config 'plugin' must be an array")
-  const filtered = ((existing ?? []) as unknown[]).filter((value) => !isPackageSpec(value) && !isKnownLocalGoalSpec(value))
-  const nextPlugins = mode === "install" ? [...filtered, packageSpec] : filtered
-  const scan = scanRootProperty(source, "plugin")
+function rewritePluginArrayProperty(
+  source: string,
+  key: "plugin" | "plugins",
+  values: unknown[],
+  createIfMissing: boolean,
+): { content: string; changed: boolean } {
+  const scan = scanRootProperty(source, key)
   const eol = source.includes("\r\n") ? "\r\n" : "\n"
 
   if (scan.property) {
-    const replacement = formatPluginArray(nextPlugins, scan.property.indent, eol)
+    const replacement = formatPluginArray(values, scan.property.indent, eol)
     const content = `${source.slice(0, scan.property.valueStart)}${replacement}${source.slice(scan.property.valueEnd)}`
     return { content, changed: content !== source }
   }
-  if (mode === "uninstall") return { content: source, changed: false }
+  if (!createIfMissing) return { content: source, changed: false }
 
   const propertyIndent = scan.firstIndent || "  "
   const lineStart = Math.max(source.lastIndexOf("\n", scan.rootClose - 1), source.lastIndexOf("\r", scan.rootClose - 1)) + 1
@@ -362,9 +369,57 @@ function rewritePluginConfig(source: string, mode: "install" | "uninstall"): { c
     if (scan.lastValueEnd <= adjustedInsertion) adjustedInsertion += 1
   }
   const needsLineBreak = adjustedInsertion > 0 && !content.slice(0, adjustedInsertion).endsWith("\n") && !content.slice(0, adjustedInsertion).endsWith("\r")
-  const insertion = `${needsLineBreak ? eol : ""}${propertyIndent}"plugin": [${JSON.stringify(packageSpec)}]${eol}`
+  const rendered = formatPluginArray(values, propertyIndent, eol)
+  const insertion = `${needsLineBreak ? eol : ""}${propertyIndent}${JSON.stringify(key)}: ${rendered}${eol}`
   content = `${content.slice(0, adjustedInsertion)}${insertion}${content.slice(adjustedInsertion)}`
   return { content, changed: content !== source }
+}
+
+function pluginArray(config: Record<string, unknown>, key: "plugin" | "plugins"): unknown[] | undefined {
+  const value = config[key]
+  if (value === undefined) return undefined
+  if (!Array.isArray(value)) throw new Error(`OpenCode config '${key}' must be an array`)
+  return value
+}
+
+function withoutGoalPlugins(values: unknown[] = []): unknown[] {
+  return values.filter((value) => !isPackageSpec(value) && !isKnownLocalGoalSpec(value))
+}
+
+function rewritePluginConfig(source: string, mode: "install" | "uninstall"): { content: string; changed: boolean } {
+  const targetKey: "plugin" | "plugins" = nativeGoalCommandMode ? "plugins" : "plugin"
+  const legacyKey: "plugin" | "plugins" = nativeGoalCommandMode ? "plugin" : "plugins"
+
+  const initial = parseJsonc(source) as Record<string, unknown>
+  const initialTarget = pluginArray(initial, targetKey)
+  const initialLegacy = pluginArray(initial, legacyKey)
+
+  // Remove Goal-owned registrations from the inactive config dialect first.
+  // Preserve every unrelated plugin entry byte-for-byte through the JSONC
+  // property rewriter; V2 installation must not silently migrate third-party
+  // V1 plugins, and V1 installation must not erase a user's V2 plugin list.
+  let content = source
+  let changed = false
+  if (initialLegacy) {
+    const cleanedLegacy = withoutGoalPlugins(initialLegacy)
+    if (cleanedLegacy.length !== initialLegacy.length) {
+      const updated = rewritePluginArrayProperty(content, legacyKey, cleanedLegacy, false)
+      content = updated.content
+      changed ||= updated.changed
+    }
+  }
+
+  // Re-parse after the first property rewrite so root offsets are current.
+  const current = parseJsonc(content) as Record<string, unknown>
+  const currentTarget = pluginArray(current, targetKey) ?? []
+  const cleanedTarget = withoutGoalPlugins(currentTarget)
+  const nextTarget = mode === "install" ? [...cleanedTarget, packageSpec] : cleanedTarget
+  const shouldCreateTarget = mode === "install"
+  const updatedTarget = rewritePluginArrayProperty(content, targetKey, nextTarget, shouldCreateTarget)
+  content = updatedTarget.content
+  changed ||= updatedTarget.changed
+
+  return { content, changed }
 }
 
 async function fileExists(path: string): Promise<boolean> {
@@ -472,7 +527,7 @@ async function installOrUpdate(): Promise<void> {
 
   if (!target) {
     target = join(configDir, "opencode.json")
-    const initial = `${JSON.stringify({ $schema: "https://opencode.ai/config.json", plugin: [packageSpec] }, null, 2)}\n`
+    const initial = `${JSON.stringify({ $schema: "https://opencode.ai/config.json", [nativeGoalCommandMode ? "plugins" : "plugin"]: [packageSpec] }, null, 2)}\n`
     await writeAtomic(target, initial)
     console.log(`Installed OpenCode Goals ${packageVersion} in ${target}`)
   } else {

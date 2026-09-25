@@ -14,8 +14,6 @@ const serverFile = path.join(root, "dist", "server.js")
 const OPENCODE_BINARY = process.env.OPENCODE2_BINARY || "opencode2"
 const SERVER_USERNAME = "opencode"
 const SERVER_PASSWORD = "opencode-goal-v2-unit-handoff"
-const DIRECT_ENV = "OPENCODE_GOAL_V2_DIRECT_LIFECYCLE"
-const AUTONOMOUS_ENV = "OPENCODE_GOAL_V2_AUTONOMOUS"
 const CONTROL_TOOL = "opencode_goals_v2_control"
 const READ_ONLY_TOOL = "opencode_goals_v2_get"
 const COMPLETE_TOOL = "opencode_goal_complete"
@@ -294,7 +292,7 @@ function startProvider(unitFile) {
         results: verifierRequest.requirements.map((requirement) => ({
           requirementID: requirement.id,
           verdict: "proven",
-          reason: "The current README contains the exact requested V2 semantic completion proof.",
+          reason: "The current README contains the exact requested V2 unit-handoff proof.",
           evidence: [{ path: "README.md", quote: PROOF }],
           hostEvidenceIDs: [],
         })),
@@ -357,7 +355,7 @@ function commandNames(payload) {
 }
 
 async function main() {
-  assert.equal(process.platform, "linux", "the exact OpenCode 2 semantic completion canary is intentionally Ubuntu-only")
+  assert.equal(process.platform, "linux", "the OpenCode 2 unit-handoff canary is intentionally Ubuntu-only")
 
   const workspace = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-v2-unit-handoff-"))
   const home = path.join(workspace, ".home")

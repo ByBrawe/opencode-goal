@@ -18,44 +18,28 @@ const commandDir = join(configDir, "commands")
 const goalCommandPath = join(commandDir, "goal.md")
 const managedCommandMarker = "<!-- managed-by:@bybrawe/opencode-goal -->"
 const legacyInstaller = join(dirname(fileURLToPath(import.meta.url)), "install-legacy.js")
-const installerArgs = process.argv.slice(2)
+const rawInstallerArgs = process.argv.slice(2)
+const installerArgs = rawInstallerArgs.filter((arg) => !["--native-v2", "--legacy-v1"].includes(arg))
 
-function parseOpenCodeMajorVersion(value: string): number | undefined {
-  const match = value.match(/(?:^|\D)(\d+)\.(\d+)(?:\.(\d+))?/)
-  if (!match) return undefined
-  const major = Number.parseInt(match[1]!, 10)
-  return Number.isFinite(major) ? major : undefined
+// Installation selects a config dialect; it must not execute whichever host
+// happens to win PATH lookup. Native V2 is the default, including before a host
+// has been installed. Keep an explicit V1 escape hatch and the historical
+// target-version environment variable for companion installers.
+function installTargetMajor(): 1 | 2 {
+  if (rawInstallerArgs.includes("--native-v2") && rawInstallerArgs.includes("--legacy-v1")) {
+    throw new Error("Use either --native-v2 or --legacy-v1, not both.")
+  }
+  if (rawInstallerArgs.includes("--legacy-v1")) return 1
+  if (rawInstallerArgs.includes("--native-v2")) return 2
+  const target = String(process.env.OPENCODE_GOAL_HOST_VERSION ?? "").trim()
+  if (!target) return 2
+  const match = target.match(/^(?:opencode(?:2)?\s+v?)?v?([12])(?:\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)?$/)
+  if (!match) throw new Error("Invalid OPENCODE_GOAL_HOST_VERSION; choose --native-v2 or --legacy-v1 explicitly.")
+  return match[1] === "1" ? 1 : 2
 }
 
-function detectOpenCodeMajorVersion(): number | undefined {
-  const explicit = String(process.env.OPENCODE_GOAL_HOST_VERSION ?? "").trim()
-  if (explicit) {
-    const major = parseOpenCodeMajorVersion(explicit)
-    if (major !== undefined) return major
-  }
-
-  const candidates = [...new Set([
-    String(process.env.OPENCODE_BINARY ?? "").trim(),
-    "opencode",
-    "opencode2",
-  ].filter(Boolean))]
-
-  for (const command of candidates) {
-    const result = spawnSync(command, ["--version"], {
-      cwd: packageRoot,
-      encoding: "utf8",
-      windowsHide: true,
-      timeout: 5_000,
-    })
-    if (result.error || result.status !== 0) continue
-    const major = parseOpenCodeMajorVersion(`${String(result.stdout ?? "")}\n${String(result.stderr ?? "")}`)
-    if (major !== undefined) return major
-  }
-  return undefined
-}
-
-const detectedOpenCodeMajor = detectOpenCodeMajorVersion()
-const nativeGoalCommandMode = detectedOpenCodeMajor !== undefined && detectedOpenCodeMajor >= 2
+let targetMajor: 1 | 2 = 2
+let nativeGoalCommandMode = true
 
 function runLegacy(targetConfigDir: string, args = installerArgs, inherit = true) {
   const result = spawnSync(process.execPath, [legacyInstaller, ...args], {
@@ -168,7 +152,7 @@ async function installAcrossExistingConfigs(existing: string[]): Promise<void> {
   for (const plan of plans) console.log(`- ${plan.target}`)
   console.log(`Pinned plugin spec: ${packageSpec}`)
   console.log(nativeGoalCommandMode
-    ? `OpenCode ${detectedOpenCodeMajor}.x detected; using the plugin-native /goal command and removing the legacy managed bridge: ${goalCommandPath}`
+    ? `OpenCode ${targetMajor}.x selected; using the plugin-native /goal command and removing the legacy managed bridge: ${goalCommandPath}`
     : `Installed managed /goal command: ${goalCommandPath}`)
   console.log("Fully restart OpenCode, type /goal, then verify with: /goal status")
 }
@@ -182,6 +166,8 @@ async function main() {
     return
   }
 
+  targetMajor = installTargetMajor()
+  nativeGoalCommandMode = targetMajor === 2
   await mkdir(configDir, { recursive: true })
   const existing: string[] = []
   for (const name of configCandidates) {

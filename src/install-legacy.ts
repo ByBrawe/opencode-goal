@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { isDeepStrictEqual } from "node:util"
 import { copyFile, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
@@ -21,7 +22,7 @@ const nativeGoalCommandMode = process.env.OPENCODE_GOAL_NATIVE_COMMANDS === "1"
 const uninstallRequested = installerArgs.length === 1 && ["--uninstall", "uninstall", "--remove"].includes(installerArgs[0] ?? "")
 
 if (installerArgs.includes("--help") || installerArgs.includes("-h")) {
-  console.log(`OpenCode Goals installer/updater\n\nUsage:\n  opencode-goal\n  npx -y @bybrawe/opencode-goal@latest\n  npx -y @bybrawe/opencode-goal@latest --uninstall\n\nInstall/update adds ${packageName} to the global OpenCode config, pins the exact package version,\nand installs a managed global commands/goal.md so /goal is discoverable in current OpenCode CLI/TUI.\nUninstall removes OpenCode Goals package/local plugin registrations and the managed /goal command\nbut preserves project Goal state and any user-owned goal.md file.\n\nSet OPENCODE_CONFIG_DIR to target a non-default OpenCode config directory.`)
+  console.log(`OpenCode Goals installer/updater\n\nUsage:\n  opencode-goal\n  npx -y @bybrawe/opencode-goal@latest\n  npx -y @bybrawe/opencode-goal@latest --uninstall\n\nInstall/update adds ${packageName} to the global OpenCode config, pins the exact package version,\nand defaults to native OpenCode 2 plugins and the plugin-native /goal command.\nUse --legacy-v1 for V1 and its managed commands/goal.md bridge, or --native-v2 to select V2 explicitly.\nNo host executable is launched to select the config dialect.\nUninstall removes OpenCode Goals package/local plugin registrations and the managed /goal command\nbut preserves project Goal state and any user-owned goal.md file.\n\nSet OPENCODE_CONFIG_DIR to target a non-default OpenCode config directory.`)
   process.exit(0)
 }
 
@@ -316,6 +317,7 @@ function findRootClose(source: string, start: number): number {
 
 function configuredPluginSpec(value: unknown): string | undefined {
   if (typeof value === "string") return value.trim()
+  if (Array.isArray(value)) return typeof value[0] === "string" ? value[0].trim() : undefined
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined
   const spec = (value as { package?: unknown }).package
   return typeof spec === "string" ? spec.trim() : undefined
@@ -394,6 +396,39 @@ function rewritePluginConfig(source: string, mode: "install" | "uninstall"): { c
   const initialTarget = pluginArray(initial, targetKey)
   const initialLegacy = pluginArray(initial, legacyKey)
 
+  // A version update may not erase native options (including explicit false)
+  // or silently choose between conflicting duplicate object registrations.
+  // Validate before rewriting either property. Uninstall needs no winner.
+  let pinned: unknown = packageSpec
+  if (mode === "install") {
+    const objects = [...(initialTarget ?? []), ...(initialLegacy ?? [])]
+      .filter((entry) => isPackageSpec(entry) || isKnownLocalGoalSpec(entry))
+      .map((entry) => {
+        if (!Array.isArray(entry)) return entry
+        if (entry.length !== 2 || !entry[1] || typeof entry[1] !== "object" || Array.isArray(entry[1])) {
+          throw new Error("Invalid Goal package/options tuple; no configuration was changed")
+        }
+        return { package: entry[0], options: entry[1] }
+      })
+      .filter((entry): entry is Record<string, unknown> => Boolean(entry && typeof entry === "object" && !Array.isArray(entry)))
+    const optionsOf = (entry: Record<string, unknown>) => {
+      const { package: _package, ...options } = entry
+      return options
+    }
+    const configured = objects.filter((entry) => Object.keys(optionsOf(entry)).length > 0)
+    const preferred = configured[0]
+    if (preferred) {
+      if (configured.some((entry) => !isDeepStrictEqual(optionsOf(entry), optionsOf(preferred)))) {
+        throw new Error("Conflicting Goal object registrations; reconcile their options before updating")
+      }
+      const legacyTuple = [...(initialTarget ?? []), ...(initialLegacy ?? [])].some((entry) =>
+        Array.isArray(entry) && (isPackageSpec(entry) || isKnownLocalGoalSpec(entry)) && isDeepStrictEqual(entry[1], preferred.options))
+      pinned = !nativeGoalCommandMode && legacyTuple
+        ? [packageSpec, preferred.options]
+        : { ...preferred, package: packageSpec }
+    }
+  }
+
   // Remove Goal-owned registrations from the inactive config dialect first.
   // Preserve every unrelated plugin entry byte-for-byte through the JSONC
   // property rewriter; V2 installation must not silently migrate third-party
@@ -413,7 +448,7 @@ function rewritePluginConfig(source: string, mode: "install" | "uninstall"): { c
   const current = parseJsonc(content) as Record<string, unknown>
   const currentTarget = pluginArray(current, targetKey) ?? []
   const cleanedTarget = withoutGoalPlugins(currentTarget)
-  const nextTarget = mode === "install" ? [...cleanedTarget, packageSpec] : cleanedTarget
+  const nextTarget = mode === "install" ? [...cleanedTarget, pinned] : cleanedTarget
   const shouldCreateTarget = mode === "install"
   const updatedTarget = rewritePluginArrayProperty(content, targetKey, nextTarget, shouldCreateTarget)
   content = updatedTarget.content

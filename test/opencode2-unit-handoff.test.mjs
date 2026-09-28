@@ -1,9 +1,10 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { createGoal, pauseGoal, resumeGoal, waitForUserGoal } from "../dist/domain/goal.js"
+import { GoalStore, GoalStoreIntegrityError } from "../dist/persistence/store.js"
 import {
   activateUnitHandoffTarget,
   createUnitHandoffTarget,
@@ -141,6 +142,38 @@ test("Goal-scoped unit handoff lease serializes concurrent rotation attempts", a
     assert.deepEqual(order, ["a:start", "a:end", "b:start", "b:end"])
   } finally {
     await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("durable storage rejects handoff records whose session binding is inconsistent", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-unit-handoff-integrity-"))
+  try {
+    const store = new GoalStore(root)
+    const source = seededGoal()
+    const validTarget = createUnitHandoffTarget(source, "target-session", "unit-002", 200)
+    await store.save(validTarget)
+    assert.equal((await store.load("target-session"))?.status, "handoff_pending")
+
+    const corrupt = {
+      ...validTarget,
+      storageGeneration: 1,
+      unitRotation: {
+        ...validTarget.unitRotation,
+        handoff: {
+          ...validTarget.unitRotation.handoff,
+          toSessionID: "different-session",
+        },
+      },
+    }
+    await writeFile(store.fileFor("target-session"), `${JSON.stringify(corrupt, null, 2)}\n`, "utf8")
+    await assert.rejects(
+      () => store.load("target-session"),
+      (error) => error instanceof GoalStoreIntegrityError
+        && error.kind === "invalid_state"
+        && /handoff binding/i.test(error.message),
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 50 })
   }
 })
 

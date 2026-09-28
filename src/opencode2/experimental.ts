@@ -1437,38 +1437,36 @@ export const OpenCode2GoalsExperimental = {
 
       try {
         return await withUnitHandoffLease(directory, source.id, async () => {
-        const freshSource = await new GoalStore(directory).load(source.sessionID)
-        if (!freshSource || freshSource.id !== source.id || !unitRotationNeeded(freshSource, nextUnit)) return false
+          const freshSource = await new GoalStore(directory).load(source.sessionID)
+          if (!freshSource || freshSource.id !== source.id || !unitRotationNeeded(freshSource, nextUnit)) return false
 
-        let target = await findPreparedUnitHandoff(directory, freshSource, nextUnit)
-        if (!target) {
-          let created: unknown
-          try {
-            created = await createSession({
-              parentID: freshSource.sessionID,
-              title: `Goal unit ${freshSource.unitRotation!.chainIndex + 1}: ${freshSource.objective.slice(0, 80)}`,
-            })
-          } catch {
-            return false
-          }
-          const targetSessionID = firstString(record(created)?.id, nestedRecord(created, "data")?.id)
-          if (!targetSessionID || targetSessionID === freshSource.sessionID) return false
-
-          target = createUnitHandoffTarget(freshSource, targetSessionID, nextUnit)
-          try {
-            await new GoalStore(directory, { onTransition: createGoalTransitionNotifier(directory) }).save(target)
-          } catch {
-            if (typeof ctx.session.delete === "function") {
-              await Promise.resolve(ctx.session.delete({ sessionID: targetSessionID })).catch(() => undefined)
+          let target = await findPreparedUnitHandoff(directory, freshSource, nextUnit)
+          if (!target) {
+            let created: unknown
+            try {
+              created = await createSession({
+                parentID: freshSource.sessionID,
+                title: `Goal unit ${freshSource.unitRotation!.chainIndex + 1}: ${freshSource.objective.slice(0, 80)}`,
+              })
+            } catch {
+              return false
             }
-            return false
+            const targetSessionID = firstString(record(created)?.id, nestedRecord(created, "data")?.id)
+            if (!targetSessionID || targetSessionID === freshSource.sessionID) return false
+
+            target = createUnitHandoffTarget(freshSource, targetSessionID, nextUnit)
+            try {
+              await new GoalStore(directory, { onTransition: createGoalTransitionNotifier(directory) }).save(target)
+            } catch {
+              if (typeof ctx.session.delete === "function") {
+                await Promise.resolve(ctx.session.delete({ sessionID: targetSessionID })).catch(() => undefined)
+              }
+              return false
+            }
           }
-        }
 
-        return await completeUnitHandoff(directory, freshSource, target)
-      })
-    }
-
+          return await completeUnitHandoff(directory, freshSource, target)
+        })
       } catch {
         // Before the terminal source write, handoff failure means "no rotation":
         // let the caller continue in the existing active session. After the
@@ -1481,6 +1479,7 @@ export const OpenCode2GoalsExperimental = {
         scheduleUnitHandoffRecovery(directory, recoveryKey)
         return true
       }
+    }
 
     const recoverUnitHandoffs = async (directory: string): Promise<void> => {
       const store = new GoalStore(directory, { onTransition: createGoalTransitionNotifier(directory) })

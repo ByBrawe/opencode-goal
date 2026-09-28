@@ -108,6 +108,32 @@ function validUnitRotation(value: unknown): value is GoalUnitRotation | undefine
   return true
 }
 
+function validUnitRotationBinding(state: Partial<GoalState>): boolean {
+  const rotation = state.unitRotation
+  const status = state.status
+  if (!rotation) return status !== "handoff_pending" && status !== "handed_off"
+
+  const handoff = rotation.handoff
+  if (!handoff) return status !== "handoff_pending" && status !== "handed_off"
+  if (handoff.fromSessionID === handoff.toSessionID) return false
+
+  if (state.sessionID === handoff.fromSessionID) {
+    return status === "handed_off"
+      && handoff.phase === "source_terminal"
+      && rotation.nextSessionID === handoff.toSessionID
+  }
+
+  if (state.sessionID !== handoff.toSessionID) return false
+  if (rotation.previousSessionID !== handoff.fromSessionID) return false
+  if (handoff.phase === "source_terminal") return false
+  if (status === "handed_off") return false
+  if (status === "handoff_pending") {
+    return handoff.phase === "prepared" || handoff.phase === "admitted"
+  }
+  if (handoff.phase === "prepared" || handoff.phase === "admitted") return false
+  return handoff.phase === "dispatch_pending" || handoff.phase === "dispatched"
+}
+
 function storageGeneration(goal: GoalState | null | undefined): number {
   return goal?.storageGeneration ?? 0
 }
@@ -133,7 +159,7 @@ function validateState(value: unknown): GoalState | null {
   if (!Array.isArray(state.requirements) || !Array.isArray(state.evidence) || !validGeneration(state.storageGeneration)) return null
   if (state.notifyCommand !== undefined && (typeof state.notifyCommand !== "string" || !state.notifyCommand.trim())) return null
   if (!validRuntimeFingerprint(state.runtimeFingerprint)) return null
-  if (!validUnitRotation(state.unitRotation)) return null
+  if (!validUnitRotation(state.unitRotation) || !validUnitRotationBinding(state)) return null
   if (state.pendingContinuation !== undefined && typeof state.pendingContinuation !== "boolean") return null
   if (state.emptyTurnCount !== undefined && (!Number.isSafeInteger(state.emptyTurnCount) || Number(state.emptyTurnCount) < 0)) return null
   if (state.lastEmptyTurnAt !== undefined && (typeof state.lastEmptyTurnAt !== "number" || !Number.isFinite(state.lastEmptyTurnAt) || state.lastEmptyTurnAt < 0)) return null
@@ -173,9 +199,11 @@ function stateIntegrityDetail(value: unknown): string {
   if (notifyCommand !== undefined && (typeof notifyCommand !== "string" || !notifyCommand.trim())) return "invalid notifyCommand"
   const runtimeFingerprint = value && typeof value === "object" ? (value as { runtimeFingerprint?: unknown }).runtimeFingerprint : undefined
   if (!validRuntimeFingerprint(runtimeFingerprint)) return "invalid runtimeFingerprint"
-  const unitRotation = value && typeof value === "object" ? (value as { unitRotation?: unknown }).unitRotation : undefined
+  const state = value && typeof value === "object" ? value as Partial<GoalState> : {}
+  const unitRotation = state.unitRotation
   if (!validUnitRotation(unitRotation)) return "invalid unitRotation"
-  const pendingContinuation = value && typeof value === "object" ? (value as { pendingContinuation?: unknown }).pendingContinuation : undefined
+  if (!validUnitRotationBinding(state)) return "invalid unitRotation handoff binding"
+  const pendingContinuation = state.pendingContinuation
   if (pendingContinuation !== undefined && typeof pendingContinuation !== "boolean") return `invalid pendingContinuation ${String(pendingContinuation)}`
   const emptyTurnCount = value && typeof value === "object" ? (value as { emptyTurnCount?: unknown }).emptyTurnCount : undefined
   if (emptyTurnCount !== undefined && (!Number.isSafeInteger(emptyTurnCount) || Number(emptyTurnCount) < 0)) return `invalid emptyTurnCount ${String(emptyTurnCount)}`

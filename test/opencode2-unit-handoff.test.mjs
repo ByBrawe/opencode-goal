@@ -5,6 +5,7 @@ import os from "node:os"
 import path from "node:path"
 import { createGoal, pauseGoal, resumeGoal, waitForUserGoal } from "../dist/domain/goal.js"
 import { GoalStore, GoalStoreIntegrityError } from "../dist/persistence/store.js"
+import { formatProjectGoalIndex } from "../dist/opencode/project-index.js"
 import {
   activateUnitHandoffTarget,
   createUnitHandoffTarget,
@@ -143,6 +144,25 @@ test("Goal-scoped unit handoff lease serializes concurrent rotation attempts", a
   } finally {
     await rm(root, { recursive: true, force: true })
   }
+})
+
+test("project Goal selector treats one handoff chain as one logical Goal", () => {
+  const source = seededGoal()
+  let target = createUnitHandoffTarget(source, "target-session", "unit-002", 200)
+  target = markUnitHandoffAdmitted(target, 210)
+  const terminal = markUnitHandoffSourceTerminal(source, target, 220)
+  target = markUnitHandoffDispatched(activateUnitHandoffTarget(target, 230), 240)
+
+  const shown = formatProjectGoalIndex(
+    [terminal, target],
+    target.sessionID,
+    source.id.slice(0, 12),
+  )
+  assert.doesNotMatch(shown, /Multiple live project Goals/)
+  assert.match(shown, /Session chain: 2 snapshots/)
+  assert.match(shown, new RegExp(`Logical owner: ${target.sessionID}`))
+  assert.match(shown, /\[handed_off\]/)
+  assert.match(shown, /\[active\]/)
 })
 
 test("durable storage rejects handoff records whose session binding is inconsistent", async () => {

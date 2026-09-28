@@ -1319,6 +1319,16 @@ export const OpenCode2GoalsExperimental = {
       }
     }
 
+    const scheduleUnitHandoffRecovery = (directory: string, sessionID: string): void => {
+      if (handoffRetryTimers.has(sessionID)) return
+      const timer = setTimeout(() => {
+        handoffRetryTimers.delete(sessionID)
+        void recoverUnitHandoffs(directory)
+      }, OPENCODE2_INFRA_RETRY_POLL_MS)
+      ;(timer as any).unref?.()
+      handoffRetryTimers.set(sessionID, timer)
+    }
+
     const completeUnitHandoff = async (
       directory: string,
       sourceSnapshot: GoalState,
@@ -1389,26 +1399,30 @@ export const OpenCode2GoalsExperimental = {
         return false
       }
 
-      target = await store.load(target.sessionID)
-      if (!target) return false
-      if (target.status === "handoff_pending") {
-        const active = activateUnitHandoffTarget(target)
-        await store.save(active)
-        target = active
+      try {
+        target = await store.load(target.sessionID)
+        if (!target) {
+          scheduleUnitHandoffRecovery(directory, targetSnapshot.sessionID)
+          return true
+        }
+        if (target.status === "handoff_pending") {
+          const active = activateUnitHandoffTarget(target)
+          await store.save(active)
+          target = active
+        }
+      } catch {
+        // Source ownership is already terminal and must never be reactivated.
+        // Retry target activation from durable state instead of falling back to
+        // a continuation in the predecessor session.
+        scheduleUnitHandoffRecovery(directory, targetSnapshot.sessionID)
+        return true
       }
 
       // Once source is terminal, failure cannot return ownership to it.
       // Retry uses the same persisted inbox ID, so a crash or transport retry
       // cannot admit a second continuation.
       const dispatched = await dispatchUnitHandoffTarget(directory, target)
-      if (!dispatched && !handoffRetryTimers.has(target.sessionID)) {
-        const timer = setTimeout(() => {
-          handoffRetryTimers.delete(target.sessionID)
-          void recoverUnitHandoffs(directory)
-        }, OPENCODE2_INFRA_RETRY_POLL_MS)
-        ;(timer as any).unref?.()
-        handoffRetryTimers.set(target.sessionID, timer)
-      }
+      if (!dispatched) scheduleUnitHandoffRecovery(directory, target.sessionID)
       return true
     }
 

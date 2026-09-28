@@ -93,7 +93,14 @@ export interface OpenCode2ExperimentalContext {
   }
   session: {
     get(input: { sessionID: string }): unknown | Promise<unknown>
-    create?(input: { parentID: string; title?: string }): unknown | Promise<unknown>
+    create?(input: {
+      id?: string
+      title?: string
+      agent?: string
+      model?: { providerID: string; id: string; variant?: string }
+      location?: { directory: string }
+      metadata?: Readonly<UnknownRecord>
+    }): unknown | Promise<unknown>
     wait?(input: { sessionID: string }): unknown | Promise<unknown>
     delete?(input: { sessionID: string }): unknown | Promise<unknown>
     hook(name: string, callback: (event: any) => void | Promise<void>): unknown | Promise<unknown>
@@ -1444,9 +1451,18 @@ export const OpenCode2GoalsExperimental = {
           if (!target) {
             let created: unknown
             try {
+              const model = freshSource.execution?.model
               created = await createSession({
-                parentID: freshSource.sessionID,
                 title: `Goal unit ${freshSource.unitRotation!.chainIndex + 1}: ${freshSource.objective.slice(0, 80)}`,
+                location: { directory },
+                ...(freshSource.execution?.agent ? { agent: freshSource.execution.agent } : {}),
+                ...(model ? { model: { providerID: model.providerID, id: model.modelID } } : {}),
+                metadata: {
+                  opencode_goal_id: freshSource.id,
+                  opencode_goal_revision: freshSource.revision,
+                  opencode_goal_unit_handoff: true,
+                  opencode_goal_source_session: freshSource.sessionID,
+                },
               })
             } catch {
               return false

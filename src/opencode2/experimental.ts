@@ -1175,9 +1175,10 @@ export const OpenCode2GoalsExperimental = {
       revision: number,
       error: unknown,
     ) => {
+      if (lifecycleAbort.signal.aborted) return
       try {
         const { store, goal } = await coordinatorGoal(sessionID)
-        if (!goal || goal.id !== goalID || goal.revision !== revision || goal.status !== "active") return
+        if (lifecycleAbort.signal.aborted || !goal || goal.id !== goalID || goal.revision !== revision || goal.status !== "active") return
         if (isTransientInfrastructureError(error)) {
           const recovering = enterInfrastructureRecovery(goal, {
             kind: "continuation_dispatch",
@@ -1202,60 +1203,64 @@ export const OpenCode2GoalsExperimental = {
     ) => {
       if (lifecycleAbort.signal.aborted || !autonomousEnabled || autonomousDispatching.has(sessionID) || typeof ctx.session.prompt !== "function") return
 
-      const { goal } = await coordinatorGoal(sessionID)
-      if (
-        lifecycleAbort.signal.aborted
-        || !goal
-        || goal.id !== expectedGoal.id
-        || goal.revision !== expectedGoal.revision
-        || goal.status !== "active"
-        || isReadOnlyAgent(goal.execution?.agent)
-        || budgetLimitHits(goal.usage, goal.budget).length > 0
-        || Boolean(goal.infrastructureRecovery?.nextRetryAt && goal.infrastructureRecovery.nextRetryAt > Date.now())
-      ) return
-
+      // Claim before the first await: concurrent triggers must not both
+      // pass the guard while resolving the same persisted Goal.
       autonomousDispatching.add(sessionID)
       let messageID = ""
-      const promptInput = {
-        sessionID,
-        text: prompt,
-        delivery: "steer" as const,
-        metadata: {
-          opencode_goal_v2_autonomous: true,
-          opencode_goal_v2_source: source,
-          opencode_goal_id: goal.id,
-          opencode_goal_revision: goal.revision,
-        },
-      }
-
+      let resumeOwnsSlot = false
       try {
+        const { goal } = await coordinatorGoal(sessionID)
+        if (
+          lifecycleAbort.signal.aborted
+          || !goal
+          || goal.id !== expectedGoal.id
+          || goal.revision !== expectedGoal.revision
+          || goal.status !== "active"
+          || isReadOnlyAgent(goal.execution?.agent)
+          || budgetLimitHits(goal.usage, goal.budget).length > 0
+          || Boolean(goal.infrastructureRecovery?.nextRetryAt && goal.infrastructureRecovery.nextRetryAt > Date.now())
+        ) return
+
+        const promptInput = {
+          sessionID,
+          text: prompt,
+          delivery: "steer" as const,
+          metadata: {
+            opencode_goal_v2_autonomous: true,
+            opencode_goal_v2_source: source,
+            opencode_goal_id: goal.id,
+            opencode_goal_revision: goal.revision,
+          },
+        }
         const admitted = await ctx.session.prompt({ ...promptInput, resume: false })
         messageID = firstString(record(admitted)?.id, nestedRecord(admitted, "data")?.id) ?? ""
         if (!messageID) throw new Error("OpenCode 2 did not return a host user-message ID for Goal continuation admission")
+        if (lifecycleAbort.signal.aborted) return
 
         rememberOpenCode2GoalPrompt(autonomousRuntime, sessionID, messageID, goal, source)
+        resumeOwnsSlot = true
         queueMicrotask(() => {
-          if (lifecycleAbort.signal.aborted) {
-            autonomousDispatching.delete(sessionID)
-            return
-          }
-          void Promise.resolve(ctx.session.prompt!({ ...promptInput, id: messageID, resume: true }))
-            .then((resumed) => {
-              const resumedMessageID = firstString(record(resumed)?.id, nestedRecord(resumed, "data")?.id)
-              if (resumedMessageID && resumedMessageID !== messageID) {
-                throw new Error("OpenCode 2 resumed Goal continuation with a different host user-message ID")
-              }
-            })
-            .catch(async (error) => {
-              forgetOpenCode2GoalPrompt(autonomousRuntime, sessionID, messageID)
-              await pauseAutonomousDispatchFailure(sessionID, goal.id, goal.revision, error)
-            })
-            .finally(() => autonomousDispatching.delete(sessionID))
+          // Enter through a promise so synchronous host errors follow
+          // the same recovery/finally path as rejected native requests.
+          void Promise.resolve().then(() => {
+            if (lifecycleAbort.signal.aborted) return
+            return ctx.session.prompt!({ ...promptInput, id: messageID, resume: true })
+          }).then((resumed) => {
+            const resumedMessageID = firstString(record(resumed)?.id, nestedRecord(resumed, "data")?.id)
+            if (resumedMessageID && resumedMessageID !== messageID) {
+              throw new Error("OpenCode 2 resumed Goal continuation with a different host user-message ID")
+            }
+          }).catch(async (error) => {
+            forgetOpenCode2GoalPrompt(autonomousRuntime, sessionID, messageID)
+            await pauseAutonomousDispatchFailure(sessionID, goal.id, goal.revision, error)
+          }).finally(() => autonomousDispatching.delete(sessionID))
         })
       } catch (error) {
         if (messageID) forgetOpenCode2GoalPrompt(autonomousRuntime, sessionID, messageID)
-        autonomousDispatching.delete(sessionID)
-        await pauseAutonomousDispatchFailure(sessionID, goal.id, goal.revision, error)
+        await pauseAutonomousDispatchFailure(sessionID, expectedGoal.id, expectedGoal.revision, error)
+      } finally {
+        // A deferred native resume owns the slot until its own finally.
+        if (!resumeOwnsSlot) autonomousDispatching.delete(sessionID)
       }
     }
 

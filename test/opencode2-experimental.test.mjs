@@ -1534,3 +1534,132 @@ test("V2 read-only adapter fails closed when the session workspace cannot be res
     await rm(root, { recursive: true, force: true })
   }
 })
+
+function unloadDeferred() {
+  let resolve, reject
+  const promise = new Promise((yes, no) => { resolve = yes; reject = no })
+  return { promise, resolve, reject }
+}
+
+for (const phase of ["after-unload", "during-recovery-read"]) {
+  test(`V2 unload fence: ${phase} cannot mutate the persisted Goal`, async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "goal-v2-unload-fence-"))
+    try {
+      await withAutonomousPreview(async () => {
+        const host = fakeV2EventContext(root)
+        const sessionID = `v2-unload-${phase}`
+        const store = new GoalStore(root)
+        const failure = unloadDeferred()
+        const readEntered = unloadDeferred()
+        const releaseRead = unloadDeferred()
+        const originalPrompt = host.ctx.session.prompt
+        const originalLoad = GoalStore.prototype.load
+        const originalSave = GoalStore.prototype.save
+        let resumeStarted = false
+        let cleanup
+        let saveCalls = 0
+        const pendingSaves = []
+        host.ctx.session.prompt = (input) => {
+          if (input.resume === true && input.metadata?.opencode_goal_v2_autonomous === true) {
+            resumeStarted = true
+            return failure.promise
+          }
+          return originalPrompt(input)
+        }
+        try {
+          cleanup = await OpenCode2GoalsExperimental.setup(host.ctx)
+          const command = "verify unload ownership"
+          const dispatched = await dispatchDirectCommand(host, sessionID, command)
+          await armCapability(host, sessionID, dispatched.messageID)
+          await host.emitEvent({ type: "session.execution.started", data: { sessionID } })
+          await consumeCapability(host, sessionID, command)
+          await host.emitEvent({ type: "session.execution.succeeded", data: { sessionID } })
+          await waitForValue(() => resumeStarted, "deferred native Goal resume")
+          const before = await store.load(sessionID)
+          assert.equal(before.status, "active")
+
+          if (phase === "during-recovery-read") {
+            let hold = true
+            GoalStore.prototype.load = async function (...args) {
+              const goal = await originalLoad.apply(this, args)
+              if (hold && args[0] === sessionID) {
+                hold = false
+                readEntered.resolve()
+                await releaseRead.promise
+              }
+              return goal
+            }
+            failure.reject(new Error("late native transport failure"))
+            await readEntered.promise
+          }
+          await cleanup()
+          GoalStore.prototype.save = function (...args) {
+            saveCalls++
+            const result = originalSave.apply(this, args)
+            pendingSaves.push(result)
+            return result
+          }
+          let readsAfterUnload = 0
+          const originalGet = host.ctx.session.get
+          host.ctx.session.get = (...args) => {
+            readsAfterUnload++
+            return originalGet(...args)
+          }
+          if (phase === "after-unload") failure.reject(new Error("late native transport failure"))
+          else releaseRead.resolve()
+          // Flush continuations after the controlled async boundary. The
+          // save spy fires synchronously before any disk write is awaited.
+          for (let i = 0; i < 4; i++) await new Promise((resolve) => setImmediate(resolve))
+          assert.equal(readsAfterUnload, 0, "unloaded generation must not start failure recovery")
+          assert.equal(saveCalls, 0, "unloaded generation must not persist late failure recovery")
+          assert.deepEqual(await originalLoad.call(store, sessionID), before)
+        } finally {
+          releaseRead.resolve()
+          failure.resolve({ id: "cleanup-only" })
+          await cleanup?.().catch(() => {})
+          await new Promise((resolve) => setTimeout(resolve, 100))
+          await Promise.allSettled(pendingSaves)
+          GoalStore.prototype.load = originalLoad
+          GoalStore.prototype.save = originalSave
+        }
+      })
+    } finally {
+      await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+    }
+  })
+}
+
+test("V2 synchronous native resume rejection follows bounded failure recovery", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "goal-v2-sync-resume-"))
+  try {
+    await withAutonomousPreview(async () => {
+      const host = fakeV2EventContext(root)
+      const sessionID = "v2-sync-resume"
+      const store = new GoalStore(root)
+      const originalPrompt = host.ctx.session.prompt
+      host.ctx.session.prompt = (input) => {
+        if (input.resume === true && input.metadata?.opencode_goal_v2_autonomous === true) {
+          throw new Error("synchronous native resume sentinel")
+        }
+        return originalPrompt(input)
+      }
+      const cleanup = await OpenCode2GoalsExperimental.setup(host.ctx)
+      try {
+        const command = "test synchronous native admission rejection"
+        const dispatched = await dispatchDirectCommand(host, sessionID, command)
+        await armCapability(host, sessionID, dispatched.messageID)
+        await host.emitEvent({ type: "session.execution.started", data: { sessionID } })
+        await consumeCapability(host, sessionID, command)
+        await host.emitEvent({ type: "session.execution.succeeded", data: { sessionID } })
+        const paused = await waitForValue(async () => {
+          const goal = await store.load(sessionID)
+          return goal?.status === "paused" ? goal : undefined
+        }, "synchronous resume rejection to settle safely")
+        assert.match(paused.stopReason, /synchronous native resume sentinel/)
+        assert.equal(host.prompts.filter((input) => input.metadata?.opencode_goal_v2_autonomous === true).length, 1)
+      } finally { await cleanup() }
+    })
+  } finally {
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+  }
+})

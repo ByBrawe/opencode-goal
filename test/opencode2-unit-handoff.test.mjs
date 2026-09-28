@@ -83,7 +83,7 @@ test("prepared handoff preserves Goal identity, evidence, budget, usage, and rev
   assert.equal(target.unitRotation.chainIndex, 1)
   assert.equal(target.unitRotation.previousSessionID, "source-session")
   assert.equal(target.unitRotation.handoff.phase, "prepared")
-  assert.ok(unitHandoffMessageID(target)?.startsWith("goal-handoff-"))
+  assert.ok(unitHandoffMessageID(target)?.startsWith("msg_goal_handoff_"))
 })
 
 test("handoff phases keep exactly one runnable Goal owner", () => {

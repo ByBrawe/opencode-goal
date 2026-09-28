@@ -13,6 +13,11 @@ import OpenCode2GoalsExperimental, {
 } from "../dist/opencode2/experimental.js"
 import { createOpenCode2CompactionBoundaryRuntime } from "../dist/opencode2/compaction-boundary.js"
 import { createGoal } from "../dist/domain/goal.js"
+import {
+  createUnitHandoffTarget,
+  observeInitialGoalUnit,
+  unitHandoffMessageID,
+} from "../dist/opencode2/unit-handoff.js"
 import { GoalStore } from "../dist/persistence/store.js"
 import { GoalSequenceStore } from "../dist/persistence/sequence-store.js"
 
@@ -761,6 +766,73 @@ test("V2 autonomous coordinator counts only exact owned continuation executions"
     })
   } finally {
     await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("V2 restart recovers a prepared unit handoff exactly once with one durable inbox ID", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-unit-restart-recovery-"))
+  try {
+    await withAutonomousPreview(async () => {
+      const sourceSessionID = "v2-unit-restart-source"
+      const targetSessionID = "v2-unit-restart-target"
+      const store = new GoalStore(root)
+      let source = createGoal({
+        sessionID: sourceSessionID,
+        objective: "recover unit handoff after restart",
+        unitRotation: {
+          command: "node scripts/current-unit.mjs",
+          freshSessionPerUnit: true,
+        },
+        now: 100,
+      })
+      source = observeInitialGoalUnit(source, "unit-a", 110)
+      await store.save(source)
+      const prepared = createUnitHandoffTarget(source, targetSessionID, "unit-b", 120)
+      const messageID = unitHandoffMessageID(prepared)
+      assert.ok(messageID)
+      await store.save(prepared)
+
+      const firstHost = fakeV2EventContext(root)
+      firstHost.ctx.location = { directory: root }
+      const firstCleanup = await OpenCode2GoalsExperimental.setup(firstHost.ctx)
+
+      const dispatched = await waitForValue(async () => {
+        const current = await store.load(targetSessionID)
+        return current?.status === "active" && current.unitRotation?.handoff?.phase === "dispatched"
+          ? current
+          : null
+      }, "restart-recovered dispatched unit handoff")
+
+      const terminalSource = await store.load(sourceSessionID)
+      assert.equal(terminalSource?.status, "handed_off")
+      assert.equal(terminalSource?.unitRotation?.nextSessionID, targetSessionID)
+      assert.equal(dispatched.unitRotation?.previousSessionID, sourceSessionID)
+
+      const handoffPrompts = firstHost.prompts.filter((item) =>
+        item.sessionID === targetSessionID
+        && item.metadata?.opencode_goal_v2_source === "handoff"
+      )
+      assert.equal(handoffPrompts.length, 2, "recovery should admit once and resume once")
+      assert.deepEqual(handoffPrompts.map((item) => item.resume), [false, true])
+      assert.equal(handoffPrompts[0].returnedID, messageID)
+      assert.equal(handoffPrompts[1].returnedID, messageID)
+      await firstCleanup()
+
+      const secondHost = fakeV2EventContext(root)
+      secondHost.ctx.location = { directory: root }
+      const secondCleanup = await OpenCode2GoalsExperimental.setup(secondHost.ctx)
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      assert.equal(
+        secondHost.prompts.filter((item) => item.metadata?.opencode_goal_v2_source === "handoff").length,
+        0,
+        "a dispatched durable handoff must not be replayed after another restart",
+      )
+      assert.equal((await store.load(sourceSessionID))?.status, "handed_off")
+      assert.equal((await store.load(targetSessionID))?.unitRotation?.handoff?.phase, "dispatched")
+      await secondCleanup()
+    })
+  } finally {
+    await rm(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 50 })
   }
 })
 

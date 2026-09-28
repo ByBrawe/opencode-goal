@@ -1,6 +1,7 @@
 const CONTROL_PLANE_ROOTS = [
   ".opencode/goals",
   ".opencode/goal-locks",
+  ".opencode/goal-handoff-locks",
   ".opencode/goal-sequences",
   // Companion Loop scheduler/log state is plugin control-plane churn too. A
   // Loop busy/deferred log write must never keep an otherwise stalled Goal

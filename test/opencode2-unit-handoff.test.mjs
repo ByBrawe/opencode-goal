@@ -122,7 +122,6 @@ test("terminal, paused, and waiting-user Goals never become unit-rotation candid
   assert.equal(unitRotationNeeded(waiting, "unit-002"), false)
 })
 
-
 test("Goal-scoped unit handoff lease serializes concurrent rotation attempts", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-unit-handoff-lock-"))
   try {
@@ -133,16 +132,25 @@ test("Goal-scoped unit handoff lease serializes concurrent rotation attempts", a
       active += 1
       peak = Math.max(peak, active)
       order.push(`${name}:start`)
-      await new Promise((resolve) => setTimeout(resolve, delay))
-      order.push(`${name}:end`)
-      active -= 1
+      try {
+        await new Promise((resolve) => setTimeout(resolve, delay))
+        order.push(`${name}:end`)
+      } finally {
+        active -= 1
+      }
     }, 2_000)
 
     await Promise.all([run("a", 40), run("b", 1)])
-    assert.equal(peak, 1)
-    assert.deepEqual(order, ["a:start", "a:end", "b:start", "b:end"])
+    assert.equal(peak, 1, "the lease must never admit two concurrent owners")
+    assert.equal(active, 0, "both owners must release the lease")
+    assert.deepEqual([...order].sort(), ["a:end", "a:start", "b:end", "b:start"])
+    // Filesystem lease acquisition is mutually exclusive, not FIFO. Either
+    // contender may win; its complete critical section must precede the other.
+    const first = order[0].split(":")[0]
+    const second = first === "a" ? "b" : "a"
+    assert.deepEqual(order, [`${first}:start`, `${first}:end`, `${second}:start`, `${second}:end`])
   } finally {
-    await rm(root, { recursive: true, force: true })
+    await rm(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 50 })
   }
 })
 

@@ -507,7 +507,18 @@ async function main() {
     const chain = (await goalStore.list())
       .filter((goal) => goal.id === goalID)
       .sort((a, b) => (a.unitRotation?.chainIndex ?? -1) - (b.unitRotation?.chainIndex ?? -1))
-    assert.equal(chain.length, 3, `expected exactly three persisted session owners: ${JSON.stringify(chain.map((goal) => ({ sessionID: goal.sessionID, status: goal.status, unit: goal.unitRotation?.currentUnit, index: goal.unitRotation?.chainIndex })))}\n${await diagnostics()}`)
+    const nativeSessionResponse = await request("/api/session?limit=50", { method: "GET" }, 5_000).catch(() => null)
+    const nativeSessionsRaw = nativeSessionResponse?.body?.data ?? nativeSessionResponse?.body
+    const nativeSessions = Array.isArray(nativeSessionsRaw)
+      ? nativeSessionsRaw.map((item) => ({
+          id: item?.id,
+          title: item?.title,
+          location: item?.location,
+          metadata: item?.metadata,
+          outcome: item?.outcome,
+        }))
+      : nativeSessionsRaw
+    assert.equal(chain.length, 3, `expected exactly three persisted session owners: ${JSON.stringify(chain.map((goal) => ({ sessionID: goal.sessionID, status: goal.status, unit: goal.unitRotation?.currentUnit, index: goal.unitRotation?.chainIndex })))}\nnativeSessions=${JSON.stringify(nativeSessions)}\n${await diagnostics()}`)
     assert.deepEqual(chain.map((goal) => goal.status), ["handed_off", "handed_off", "completed"])
     assert.deepEqual(chain.map((goal) => goal.unitRotation?.currentUnit), ["unit-001", "unit-002", "unit-003"])
     assert.deepEqual(chain.map((goal) => goal.unitRotation?.chainIndex), [0, 1, 2])

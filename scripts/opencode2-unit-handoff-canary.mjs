@@ -440,7 +440,8 @@ async function main() {
       encoding: "utf8",
       windowsHide: true,
     })).trim()
-    assert.ok(version.includes("2.0.16"), `expected current OpenCode 2.0.16, got: ${version}`)
+    // The workflow additionally asserts equality with its exact matrix version.
+    assert.ok(["opencode v2.0.16", "opencode v2.0.18"].includes(version), `expected a pinned OpenCode 2.0.16 or 2.0.18 host, got: ${version}`)
 
     const port = await reservePort()
     server = spawn(OPENCODE_BINARY, ["serve", "--hostname", "127.0.0.1", "--port", String(port)], {

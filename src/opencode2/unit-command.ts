@@ -25,22 +25,30 @@ export async function runUnitIdentityCommand(
     let stderr = ""
     let settled = false
     let failure: Error | undefined
-    let escalation: ReturnType<typeof setTimeout> | undefined
+    let termination: Promise<void> | undefined
     const stop = (error: Error) => {
       if (settled || failure) return
       failure = error
       if (!child.pid) { try { child.kill() } catch {}; return }
-      if (process.platform === "win32") {
-        const killer = spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" })
-        const fallback = () => { try { child.kill() } catch {} }
-        killer.once("error", fallback)
-        killer.once("close", (code) => { if (code !== 0) fallback() })
-      } else {
-        try { process.kill(-child.pid, "SIGTERM") } catch { try { child.kill("SIGTERM") } catch {} }
-        escalation = setTimeout(() => {
-          try { process.kill(-child.pid!, "SIGKILL") } catch { try { child.kill("SIGKILL") } catch {} }
-        }, 1_000)
-      }
+      const pid = child.pid
+      termination = new Promise<void>((done) => {
+        if (process.platform === "win32") {
+          const fallback = () => { try { child.kill() } catch {} }
+          try {
+            const killer = spawn("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" })
+            killer.once("error", () => { fallback(); done() })
+            killer.once("close", (code) => { if (code !== 0) fallback(); done() })
+          } catch { fallback(); done() }
+        } else {
+          try { process.kill(-pid, "SIGTERM") } catch { try { child.kill("SIGTERM") } catch {} }
+          // Pipe-detached descendants may outlive the shell's close event.
+          // Do not cancel escalation or permit Goal recovery before it runs.
+          setTimeout(() => {
+            try { process.kill(-pid, "SIGKILL") } catch {}
+            done()
+          }, 1_000)
+        }
+      })
     }
     const timer = setTimeout(() => stop(new Error(`unit command timed out after ${timeoutMs}ms`)), timeoutMs)
     timer.unref?.()
@@ -53,18 +61,18 @@ export async function runUnitIdentityCommand(
       stdout += chunk
     })
     child.stderr?.on("data", (chunk: string) => { stderr = (stderr + chunk).slice(-MAX_OUTPUT_BYTES) })
-    child.once("error", (error) => {
+    child.once("error", async (error) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
-      clearTimeout(escalation)
+      await termination
       reject(error)
     })
-    child.once("close", (code, signal) => {
+    child.once("close", async (code, signal) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
-      clearTimeout(escalation)
+      await termination
       if (failure) { reject(failure); return }
       if (code !== 0 || signal) { reject(new Error(`unit command failed (${code ?? signal ?? "unknown"}): ${stderr.trim() || "no stderr"}`)); return }
       resolve(stdout)

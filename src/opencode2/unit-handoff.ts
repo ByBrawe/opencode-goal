@@ -1,13 +1,12 @@
 import { createHash, randomUUID } from "node:crypto"
-import { spawn } from "node:child_process"
 import path from "node:path"
 import type { GoalState, GoalUnitRotation } from "../domain/types.js"
 import { assertGoalStoragePathSafe } from "../persistence/store.js"
 import { acquireGoalStoreProcessLock } from "../persistence/process-lock.js"
+import { runUnitIdentityCommand } from "./unit-command.js"
 
 export const DEFAULT_UNIT_COMMAND_TIMEOUT_MS = 10_000
 export const MAX_UNIT_IDENTITY_CHARS = 4_096
-
 
 export async function withUnitHandoffLease<T>(
   directory: string,
@@ -48,55 +47,8 @@ export async function readGoalUnitIdentity(
   directory: string,
   options: { timeoutMs?: number } = {},
 ): Promise<string> {
-  const timeoutMs = options.timeoutMs ?? DEFAULT_UNIT_COMMAND_TIMEOUT_MS
-  if (!Number.isFinite(timeoutMs) || timeoutMs < 1) throw new Error("unit command timeout must be positive")
-  const normalizedCommand = command.trim()
-  if (!normalizedCommand) throw new Error("unit command must not be empty")
-
-  return await new Promise((resolve, reject) => {
-    const child = spawn(normalizedCommand, {
-      cwd: directory,
-      shell: true,
-      env: process.env,
-      windowsHide: true,
-    })
-    let stdout = ""
-    let stderr = ""
-    let settled = false
-    const appendOut = (chunk: Buffer | string) => { stdout = (stdout + String(chunk)).slice(-16_384) }
-    const appendErr = (chunk: Buffer | string) => { stderr = (stderr + String(chunk)).slice(-16_384) }
-    child.stdout?.on("data", appendOut)
-    child.stderr?.on("data", appendErr)
-
-    const finish = (error?: Error) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      if (error) reject(error)
-    }
-
-    const timer = setTimeout(() => {
-      child.kill()
-      finish(new Error(`unit command timed out after ${timeoutMs}ms`))
-    }, timeoutMs)
-    ;(timer as any).unref?.()
-
-    child.once("error", (error) => finish(error))
-    child.once("close", (code, signal) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      if (code !== 0) {
-        reject(new Error(`unit command failed (${code ?? signal ?? "unknown"}): ${stderr.trim() || "no stderr"}`))
-        return
-      }
-      try {
-        resolve(normalizedUnitIdentity(stdout))
-      } catch (error) {
-        reject(error)
-      }
-    })
-  })
+  const stdout = await runUnitIdentityCommand(command, directory, options.timeoutMs ?? DEFAULT_UNIT_COMMAND_TIMEOUT_MS)
+  return normalizedUnitIdentity(stdout)
 }
 
 export function observeInitialGoalUnit(goal: GoalState, unit: string, now = Date.now()): GoalState {

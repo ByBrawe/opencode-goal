@@ -12,7 +12,7 @@ import {
   corroborateSemanticVerifierEvidence,
   semanticVerificationPrompt,
   semanticVerifierHostEvidence,
-} from "../opencode/verifier.js"
+} from "../verification/verifier-evidence.js"
 
 export const OPENCODE2_VERIFIER_RESULT_TOOL = "opencode_goal_verifier_result"
 

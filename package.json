@@ -17,6 +17,14 @@
     "./tui": {
       "types": "./dist/tui/index.d.ts",
       "import": "./dist/tui/index.js"
+    },
+    "./v2": {
+      "types": "./dist/native.d.ts",
+      "import": "./dist/native.js"
+    },
+    "./v1": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
     }
   },
   "bin": {
@@ -43,7 +51,7 @@
   "scripts": {
     "clean": "rm -rf dist",
     "build": "tsc -p tsconfig.json",
-    "check": "tsc -p tsconfig.json --noEmit",
+    "check": "tsc -p tsconfig.json --noEmit && node --check scripts/native-entry-test.mjs",
     "test": "npm run build && node scripts/unit-tests.mjs",
     "eval": "npm run build && node scripts/eval-corpus.mjs",
     "package:smoke": "npm run build && node scripts/package-smoke.mjs",

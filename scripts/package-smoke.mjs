@@ -68,6 +68,7 @@ function assertPackageFiles(pack) {
   const required = [
     "package.json", "README.md", "CHANGELOG.md", "LICENSE", "bin/opencode-goal.js",
     "dist/index.js", "dist/index.d.ts", "dist/server.js", "dist/server.d.ts",
+    "dist/native.js", "dist/native.d.ts", "dist/legacy-loader.js", "dist/legacy-v1.js",
     "dist/install.js", "dist/tui/index.js", "dist/tui/index.d.ts",
   ]
   for (const file of required) {
@@ -137,6 +138,9 @@ async function main() {
       "--no-fund",
       tarball,
     ], { cwd: consumer })
+
+    const nativeProbe = run(process.execPath, [path.join(root, "scripts", "native-entry-test.mjs"), consumer], { cwd: root })
+    console.log(nativeProbe.stdout.trim())
 
     const probe = String.raw`
       import fs from "node:fs";
@@ -254,6 +258,8 @@ async function main() {
       files,
       consumerImport: /consumer import ok/.test(String(consumerResult.stdout ?? "")),
       serverEntrypoint: true,
+      nativeEntrypointIsolation: true,
+      lazyLegacyDelegation: true,
       installer: true,
       installerV2: true,
       installerBinLinked: true,

@@ -12,7 +12,7 @@ import {
   createGoalTransitionNotifier,
   notifyGoal,
 } from "../opencode/notify.js"
-import { SemanticVerifierUnavailableError } from "../opencode/verifier.js"
+import { SemanticVerifierUnavailableError } from "../verification/verifier-evidence.js"
 import type { OpenCode2AutonomousRuntime, OpenCode2GoalExecutionOwner } from "./autonomous-runtime.js"
 
 export const OPENCODE2_GOAL_WORK_TOOLS = [

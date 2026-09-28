@@ -1,5 +1,5 @@
 import type { PluginModule } from "@opencode-ai/plugin"
-import OpenCodeGoalPlugin from "./index.js"
+import OpenCodeGoalPlugin from "./legacy-loader.js"
 import OpenCode2GoalsExperimental from "./opencode2/experimental.js"
 
 const plugin = {

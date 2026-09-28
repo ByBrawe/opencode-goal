@@ -1015,9 +1015,28 @@ function addExperimentalTool(tools: any, name: string, definition: any): void {
   add.call(tools, name, definition, { codemode: false })
 }
 
+type NativeCleanup = () => Promise<void>
+
+// A V2 host owns registrations, but it cannot run our returned cleanup when
+// setup rejects before returning it. Roll back our subscription/timers first
+// and preserve the original registration error.
+function protectNativeSetup(
+  setup: (ctx: OpenCode2ExperimentalContext, onCleanup: (cleanup: NativeCleanup) => void) => Promise<NativeCleanup>,
+): (ctx: OpenCode2ExperimentalContext) => Promise<NativeCleanup> {
+  return async (ctx) => {
+    let cleanup: NativeCleanup | undefined
+    try {
+      return await setup(ctx, (value) => { cleanup = value })
+    } catch (error) {
+      await cleanup?.().catch(() => undefined)
+      throw error
+    }
+  }
+}
+
 export const OpenCode2GoalsExperimental = {
   id: OPENCODE2_EXPERIMENTAL_PLUGIN_ID,
-  setup: async (ctx: OpenCode2ExperimentalContext) => {
+  setup: protectNativeSetup(async (ctx: OpenCode2ExperimentalContext, onCleanup) => {
     const runtime = createOpenCode2DirectLifecycleRuntime()
     const compactionRuntime = createOpenCode2CompactionBoundaryRuntime()
     const autonomousRuntime = createOpenCode2AutonomousRuntime()
@@ -1041,6 +1060,36 @@ export const OpenCode2GoalsExperimental = {
     })
     const lifecycleAbort = new AbortController()
     let lifecycleTask: Promise<void> | undefined
+    let cleanupTask: Promise<void> | undefined
+    const dispose = (): Promise<void> => {
+      if (cleanupTask) return cleanupTask
+      // Publish the shared promise before abort listeners can re-enter cleanup.
+      cleanupTask = Promise.resolve().then(async () => {
+        runtime.capabilities.clear()
+        runtime.armedBySession.clear()
+        runtime.executionGenerationBySession.clear()
+        runtime.activeExecutionGenerationBySession.clear()
+        compactionRuntime.sessions.clear()
+        autonomousRuntime.pendingPromptBySession.clear()
+        autonomousRuntime.executionOwnerBySession.clear()
+        autonomousRuntime.kickoffBySession.clear()
+        telemetryRuntime.currentBySession.clear()
+        toolProgressRuntime.shellPending.clear()
+        for (const timer of hostLimitRetryTimers.values()) clearTimeout(timer)
+        hostLimitRetryTimers.clear()
+        for (const timer of handoffRetryTimers.values()) clearTimeout(timer)
+        handoffRetryTimers.clear()
+        hostLimitRuntime.successEpochBySession.clear()
+        hostLimitRuntime.compactionReasonBySession.clear()
+        hostLimitRuntime.compactionAttemptBySession.clear()
+        autonomousDispatching.clear()
+        handoffDispatching.clear()
+        await lifecycleTask?.catch(() => undefined)
+      })
+      lifecycleAbort.abort()
+      return cleanupTask
+    }
+    onCleanup(dispose)
 
     const coordinatorGoal = async (sessionID: string) => {
       const directory = await resolveSessionDirectory(ctx, sessionID)
@@ -1151,11 +1200,12 @@ export const OpenCode2GoalsExperimental = {
       prompt: string,
       source: OpenCode2GoalContinuationSource,
     ) => {
-      if (!autonomousEnabled || autonomousDispatching.has(sessionID) || typeof ctx.session.prompt !== "function") return
+      if (lifecycleAbort.signal.aborted || !autonomousEnabled || autonomousDispatching.has(sessionID) || typeof ctx.session.prompt !== "function") return
 
       const { goal } = await coordinatorGoal(sessionID)
       if (
-        !goal
+        lifecycleAbort.signal.aborted
+        || !goal
         || goal.id !== expectedGoal.id
         || goal.revision !== expectedGoal.revision
         || goal.status !== "active"
@@ -1185,6 +1235,10 @@ export const OpenCode2GoalsExperimental = {
 
         rememberOpenCode2GoalPrompt(autonomousRuntime, sessionID, messageID, goal, source)
         queueMicrotask(() => {
+          if (lifecycleAbort.signal.aborted) {
+            autonomousDispatching.delete(sessionID)
+            return
+          }
           void Promise.resolve(ctx.session.prompt!({ ...promptInput, id: messageID, resume: true }))
             .then((resumed) => {
               const resumedMessageID = firstString(record(resumed)?.id, nestedRecord(resumed, "data")?.id)
@@ -1327,7 +1381,7 @@ export const OpenCode2GoalsExperimental = {
     }
 
     const scheduleUnitHandoffRecovery = (directory: string, sessionID: string): void => {
-      if (handoffRetryTimers.has(sessionID)) return
+      if (lifecycleAbort.signal.aborted || handoffRetryTimers.has(sessionID)) return
       const timer = setTimeout(() => {
         handoffRetryTimers.delete(sessionID)
         void recoverUnitHandoffs(directory)
@@ -1498,6 +1552,7 @@ export const OpenCode2GoalsExperimental = {
     }
 
     const recoverUnitHandoffs = async (directory: string): Promise<void> => {
+      if (lifecycleAbort.signal.aborted) return
       const store = new GoalStore(directory, { onTransition: createGoalTransitionNotifier(directory) })
       let goals: GoalState[]
       try {
@@ -1529,6 +1584,7 @@ export const OpenCode2GoalsExperimental = {
 
     async function wakeHostLimitRetry(sessionID: string): Promise<void> {
       cancelHostLimitRetry(sessionID)
+      if (lifecycleAbort.signal.aborted) return
       try {
         const { store, goal } = await coordinatorGoal(sessionID)
         if (!goal || goal.status !== "active" || !goal.infrastructureRecovery) return
@@ -1567,6 +1623,7 @@ export const OpenCode2GoalsExperimental = {
 
     const armHostLimitRetry = (goal: GoalState) => {
       cancelHostLimitRetry(goal.sessionID)
+      if (lifecycleAbort.signal.aborted) return
       const retryAt = goal.infrastructureRecovery?.nextRetryAt
       if (goal.status !== "active" || !retryAt || retryAt <= 0) return
 
@@ -1627,6 +1684,7 @@ export const OpenCode2GoalsExperimental = {
         try {
           const events = ctx.event!.subscribe({ signal: lifecycleAbort.signal })
           for await (const event of events) {
+            if (lifecycleAbort.signal.aborted) break
             const boundary = inspectOpenCode2AuthorityBoundary(runtime, compactionRuntime, event)
             const sessionID = boundary.sessionID
             const type = firstString(record(event)?.type)
@@ -2109,30 +2167,8 @@ export const OpenCode2GoalsExperimental = {
       }
     }
 
-    return async () => {
-      lifecycleAbort.abort()
-      runtime.capabilities.clear()
-      runtime.armedBySession.clear()
-      runtime.executionGenerationBySession.clear()
-      runtime.activeExecutionGenerationBySession.clear()
-      compactionRuntime.sessions.clear()
-      autonomousRuntime.pendingPromptBySession.clear()
-      autonomousRuntime.executionOwnerBySession.clear()
-      autonomousRuntime.kickoffBySession.clear()
-      telemetryRuntime.currentBySession.clear()
-      toolProgressRuntime.shellPending.clear()
-      for (const timer of hostLimitRetryTimers.values()) clearTimeout(timer)
-      hostLimitRetryTimers.clear()
-      for (const timer of handoffRetryTimers.values()) clearTimeout(timer)
-      handoffRetryTimers.clear()
-      hostLimitRuntime.successEpochBySession.clear()
-      hostLimitRuntime.compactionReasonBySession.clear()
-      hostLimitRuntime.compactionAttemptBySession.clear()
-      autonomousDispatching.clear()
-      handoffDispatching.clear()
-      await lifecycleTask?.catch(() => undefined)
-    }
-  },
+    return dispose
+  }),
 }
 
 export default OpenCode2GoalsExperimental

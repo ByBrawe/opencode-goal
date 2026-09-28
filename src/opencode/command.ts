@@ -224,11 +224,17 @@ export function parseGoalCommand(input: string): ParsedGoalCommand {
   if ((action === "add") && (unitCommand !== undefined || freshSessionPerUnit)) {
     throw new Error("/goal add does not support per-unit session rotation; configure it on the live Goal")
   }
+  if (unitCommand !== undefined && !unitCommand.trim()) {
+    throw new Error("--unit requires a non-empty host command")
+  }
   if (unitCommand !== undefined && !freshSessionPerUnit) {
     throw new Error("--unit requires --fresh-session-per-unit")
   }
   if (freshSessionPerUnit && unitCommand === undefined) {
     throw new Error("--fresh-session-per-unit requires --unit <host command>")
+  }
+  if ((unitCommand !== undefined || freshSessionPerUnit) && action !== "create" && action !== "edit") {
+    throw new Error(`/goal ${action} does not support per-unit session rotation; use create or edit`)
   }
 
   const parsed: ParsedGoalCommand = { action, objective: objective.join(" ").trim(), acceptance, constraints, checks, files }

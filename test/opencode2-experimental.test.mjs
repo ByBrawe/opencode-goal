@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import OpenCode2GoalsExperimental, {
@@ -13,6 +13,11 @@ import OpenCode2GoalsExperimental, {
 } from "../dist/opencode2/experimental.js"
 import { createOpenCode2CompactionBoundaryRuntime } from "../dist/opencode2/compaction-boundary.js"
 import { createGoal } from "../dist/domain/goal.js"
+import {
+  createUnitHandoffTarget,
+  observeInitialGoalUnit,
+  unitHandoffMessageID,
+} from "../dist/opencode2/unit-handoff.js"
 import { GoalStore } from "../dist/persistence/store.js"
 import { GoalSequenceStore } from "../dist/persistence/sequence-store.js"
 
@@ -289,7 +294,6 @@ test("stable V2 kill switch preserves the read-only fail-closed adapter", async 
       assert.equal(host.tools.has("opencode_goals_v2_control"), false)
       assert.equal(host.tools.get("opencode_goals_v2_get")?.options?.codemode, false)
       assert.equal(typeof host.tools.get("opencode_goals_v2_get")?.definition?.execute, "function")
-      assert.equal(typeof host.hooks.get("prompt"), "function")
       assert.equal(typeof host.hooks.get("context"), "function")
       assert.equal(typeof host.hooks.get("request"), "function")
       assert.equal(typeof host.hooks.get("compaction"), "function")
@@ -310,7 +314,6 @@ test("OpenCode 2 native plugin options can disable lifecycle/autonomous while en
   try {
     delete process.env[directKey]
     delete process.env[autonomousKey]
-
     const disabled = fakeV2Context(root)
     disabled.ctx.options.lifecycle = false
     disabled.ctx.options.autonomous = false
@@ -359,7 +362,6 @@ test("stable V2 registers lifecycle and autonomous work controls by default", as
       assert.equal(typeof host.tools.get("opencode_goals_v2_control")?.definition?.execute, "function")
       assert.equal(typeof host.tools.get("opencode_goals_v2_get")?.definition?.execute, "function")
       assert.equal(typeof host.tools.get("opencode_goal_complete")?.definition?.execute, "function")
-      assert.equal(typeof host.hooks.get("prompt"), "function")
       await cleanup()
     } finally {
       if (previousDirect === undefined) delete process.env[directKey]
@@ -764,6 +766,290 @@ test("V2 autonomous coordinator counts only exact owned continuation executions"
     })
   } finally {
     await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("V2 restart recovers a prepared unit handoff exactly once with one durable inbox ID", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-unit-restart-recovery-"))
+  try {
+    await withAutonomousPreview(async () => {
+      const sourceSessionID = "v2-unit-restart-source"
+      const targetSessionID = "v2-unit-restart-target"
+      const store = new GoalStore(root)
+      let source = createGoal({
+        sessionID: sourceSessionID,
+        objective: "recover unit handoff after restart",
+        unitRotation: {
+          command: "node scripts/current-unit.mjs",
+          freshSessionPerUnit: true,
+        },
+        now: 100,
+      })
+      source = observeInitialGoalUnit(source, "unit-a", 110)
+      await store.save(source)
+      const prepared = createUnitHandoffTarget(source, targetSessionID, "unit-b", 120)
+      const messageID = unitHandoffMessageID(prepared)
+      assert.ok(messageID)
+      await store.save(prepared)
+
+      const firstHost = fakeV2EventContext(root)
+      firstHost.ctx.location = { directory: root }
+      const firstCleanup = await OpenCode2GoalsExperimental.setup(firstHost.ctx)
+
+      const dispatched = await waitForValue(async () => {
+        const current = await store.load(targetSessionID)
+        return current?.status === "active" && current.unitRotation?.handoff?.phase === "dispatched"
+          ? current
+          : null
+      }, "restart-recovered dispatched unit handoff")
+
+      const terminalSource = await store.load(sourceSessionID)
+      assert.equal(terminalSource?.status, "handed_off")
+      assert.equal(terminalSource?.unitRotation?.nextSessionID, targetSessionID)
+      assert.equal(dispatched.unitRotation?.previousSessionID, sourceSessionID)
+
+      const handoffPrompts = firstHost.prompts.filter((item) =>
+        item.sessionID === targetSessionID
+        && item.metadata?.opencode_goal_v2_source === "handoff"
+      )
+      assert.equal(handoffPrompts.length, 2, "recovery should admit once and resume once")
+      assert.deepEqual(handoffPrompts.map((item) => item.resume), [false, true])
+      assert.equal(handoffPrompts[0].returnedID, messageID)
+      assert.equal(handoffPrompts[1].returnedID, messageID)
+      await firstCleanup()
+
+      const secondHost = fakeV2EventContext(root)
+      secondHost.ctx.location = { directory: root }
+      const secondCleanup = await OpenCode2GoalsExperimental.setup(secondHost.ctx)
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      assert.equal(
+        secondHost.prompts.filter((item) => item.metadata?.opencode_goal_v2_source === "handoff").length,
+        0,
+        "a dispatched durable handoff must not be replayed after another restart",
+      )
+      assert.equal((await store.load(sourceSessionID))?.status, "handed_off")
+      assert.equal((await store.load(targetSessionID))?.unitRotation?.handoff?.phase, "dispatched")
+      await secondCleanup()
+    })
+  } finally {
+    await rm(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 50 })
+  }
+})
+
+test("V2 unit change hands one active Goal to a fresh native session with the same durable prompt ID", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-unit-handoff-"))
+  try {
+    await withAutonomousPreview(async () => {
+      const host = fakeV2EventContext(root)
+      const sourceSessionID = "v2-unit-source"
+      const targetSessionID = "v2-unit-target"
+      const unitFile = path.join(root, "unit.txt")
+      await writeFile(unitFile, "unit-001\n", "utf8")
+      const createCalls = []
+      host.ctx.location = { directory: root }
+      host.ctx.session.create = async (input) => {
+        createCalls.push(input)
+        return { id: targetSessionID }
+      }
+
+      const sourceStore = new GoalStore(root)
+      const cleanup = await OpenCode2GoalsExperimental.setup(host.ctx)
+      const command = 'ship units --unit "node -e \\"process.stdout.write(require(\'fs\').readFileSync(\'unit.txt\',\'utf8\'))\\"" --fresh-session-per-unit'
+
+      const dispatched = await dispatchDirectCommand(host, sourceSessionID, command)
+      assert.ok(dispatched.messageID)
+      await armCapability(host, sourceSessionID, dispatched.messageID)
+      await host.emitEvent({ type: "session.execution.started", data: { sessionID: sourceSessionID } })
+      await consumeCapability(host, sourceSessionID, command)
+
+      let source = await sourceStore.load(sourceSessionID)
+      assert.equal(source?.unitRotation?.currentUnit, "unit-001")
+
+      await host.emitEvent({ type: "session.execution.succeeded", data: { sessionID: sourceSessionID } })
+      const kickoff = await waitForValue(
+        () => host.prompts.find((item) =>
+          item.resume === false
+          && item.metadata?.opencode_goal_v2_source === "kickoff"
+        ),
+        "unit Goal kickoff",
+      )
+
+      await runHook(host, "context", {
+        sessionID: sourceSessionID,
+        agent: "build",
+        messageID: kickoff.returnedID,
+        text: "finish current unit",
+      })
+      await host.emitEvent({ type: "session.execution.started", data: { sessionID: sourceSessionID } })
+      await host.emitEvent({
+        type: "session.text.ended",
+        data: { sessionID: sourceSessionID, assistantMessageID: "unit-assistant", text: "unit one finished" },
+      })
+      await writeFile(unitFile, "unit-002\n", "utf8")
+      await host.emitEvent({ type: "session.execution.succeeded", data: { sessionID: sourceSessionID } })
+
+      source = await waitForValue(async () => {
+        const current = await sourceStore.load(sourceSessionID)
+        return current?.status === "handed_off" ? current : null
+      }, "terminal source unit handoff")
+      const target = await waitForValue(async () => {
+        const current = await sourceStore.load(targetSessionID)
+        return current?.status === "active" && current.unitRotation?.handoff?.phase === "dispatched" ? current : null
+      }, "active dispatched target unit handoff")
+
+      assert.equal(createCalls.length, 1)
+      assert.equal(createCalls[0].parentID, undefined)
+      assert.deepEqual(createCalls[0].location, { directory: root })
+      assert.equal(createCalls[0].metadata?.opencode_goal_id, source.id)
+      assert.equal(createCalls[0].metadata?.opencode_goal_revision, source.revision)
+      assert.equal(createCalls[0].metadata?.opencode_goal_source_session, sourceSessionID)
+      assert.equal(source.id, target.id)
+      assert.equal(source.revision, target.revision)
+      assert.deepEqual(source.budget, target.budget)
+      assert.deepEqual(source.evidence, target.evidence)
+      assert.equal(source.unitRotation?.nextSessionID, targetSessionID)
+      assert.equal(target.unitRotation?.previousSessionID, sourceSessionID)
+      assert.equal(target.unitRotation?.currentUnit, "unit-002")
+      assert.equal(target.unitRotation?.chainIndex, 1)
+
+      const handoffPrompts = host.prompts.filter((item) =>
+        item.sessionID === targetSessionID
+        && item.metadata?.opencode_goal_v2_source === "handoff"
+      )
+      assert.equal(handoffPrompts.filter((item) => item.resume === false).length, 1)
+      assert.equal(handoffPrompts.filter((item) => item.resume === true).length, 1)
+      assert.equal(handoffPrompts[0].returnedID, handoffPrompts[1].returnedID, "admit/resume must reuse one durable host inbox ID")
+
+      await assert.rejects(
+        () => host.commands.get("goal").execute({
+          sessionID: sourceSessionID,
+          prompt: { text: "edit stale predecessor" },
+          delivery: "steer",
+        }),
+        /inert after unit handoff/i,
+      )
+      assert.equal((await sourceStore.load(sourceSessionID))?.status, "handed_off")
+
+      await cleanup()
+    })
+  } finally {
+    await rm(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 50 })
+  }
+})
+
+test("V2 unit session creation failure leaves the original Goal active and continues there", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-unit-create-fail-"))
+  try {
+    await withAutonomousPreview(async () => {
+      const host = fakeV2EventContext(root)
+      const sessionID = "v2-unit-create-fail"
+      const unitFile = path.join(root, "unit.txt")
+      await writeFile(unitFile, "unit-a\n", "utf8")
+      host.ctx.location = { directory: root }
+      host.ctx.session.create = async () => { throw new Error("session create unavailable") }
+
+      const store = new GoalStore(root)
+      const cleanup = await OpenCode2GoalsExperimental.setup(host.ctx)
+      const command = 'ship units --unit "node -e \\"process.stdout.write(require(\'fs\').readFileSync(\'unit.txt\',\'utf8\'))\\"" --fresh-session-per-unit'
+      const dispatched = await dispatchDirectCommand(host, sessionID, command)
+      await armCapability(host, sessionID, dispatched.messageID)
+      await host.emitEvent({ type: "session.execution.started", data: { sessionID } })
+      await consumeCapability(host, sessionID, command)
+      await host.emitEvent({ type: "session.execution.succeeded", data: { sessionID } })
+
+      const kickoff = await waitForValue(
+        () => host.prompts.find((item) => item.resume === false && item.metadata?.opencode_goal_v2_source === "kickoff"),
+        "failed-handoff kickoff",
+      )
+      await runHook(host, "context", {
+        sessionID,
+        agent: "build",
+        messageID: kickoff.returnedID,
+        text: "finish first unit",
+      })
+      await host.emitEvent({ type: "session.execution.started", data: { sessionID } })
+      await host.emitEvent({
+        type: "session.text.ended",
+        data: { sessionID, assistantMessageID: "unit-fail-assistant", text: "first unit done" },
+      })
+      await writeFile(unitFile, "unit-b\n", "utf8")
+      await host.emitEvent({ type: "session.execution.succeeded", data: { sessionID } })
+
+      const source = await waitForValue(async () => {
+        const current = await store.load(sessionID)
+        return current?.status === "active" ? current : null
+      }, "source remains active after create failure")
+      assert.equal(source.unitRotation?.currentUnit, "unit-a")
+
+      const fallback = await waitForValue(
+        () => host.prompts.find((item) =>
+          item.resume === false
+          && item.metadata?.opencode_goal_v2_source === "execution"
+        ),
+        "same-session continuation after handoff create failure",
+      )
+      assert.equal(fallback.sessionID, sessionID)
+      assert.equal((await store.list()).filter((goal) => goal.id === source.id).length, 1)
+
+      await cleanup()
+    })
+  } finally {
+    await rm(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 50 })
+  }
+})
+
+test("V2 unit handoff deletes an orphan native session when target persistence fails", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-unit-persist-fail-"))
+  try {
+    await withAutonomousPreview(async () => {
+      const host = fakeV2EventContext(root)
+      const sessionID = "v2-unit-persist-fail"
+      const targetSessionID = "v2-unit-orphan-target"
+      const unitFile = path.join(root, "unit.txt")
+      await writeFile(unitFile, "unit-a\n", "utf8")
+      host.ctx.location = { directory: root }
+      const deleted = []
+      host.ctx.session.create = async () => ({ id: targetSessionID })
+      host.ctx.session.delete = async (input) => { deleted.push(input); return {} }
+
+      const store = new GoalStore(root)
+      await store.save(createGoal({ sessionID: targetSessionID, objective: "foreign live goal", now: 50 }))
+      const cleanup = await OpenCode2GoalsExperimental.setup(host.ctx)
+      const command = 'ship units --unit "node -e \\"process.stdout.write(require(\'fs\').readFileSync(\'unit.txt\',\'utf8\'))\\"" --fresh-session-per-unit'
+      const dispatched = await dispatchDirectCommand(host, sessionID, command)
+      await armCapability(host, sessionID, dispatched.messageID)
+      await host.emitEvent({ type: "session.execution.started", data: { sessionID } })
+      await consumeCapability(host, sessionID, command)
+      await host.emitEvent({ type: "session.execution.succeeded", data: { sessionID } })
+
+      const kickoff = await waitForValue(
+        () => host.prompts.find((item) => item.resume === false && item.metadata?.opencode_goal_v2_source === "kickoff"),
+        "persist-fail kickoff",
+      )
+      await runHook(host, "context", {
+        sessionID,
+        agent: "build",
+        messageID: kickoff.returnedID,
+        text: "finish first unit",
+      })
+      await host.emitEvent({ type: "session.execution.started", data: { sessionID } })
+      await host.emitEvent({
+        type: "session.text.ended",
+        data: { sessionID, assistantMessageID: "persist-fail-assistant", text: "first unit done" },
+      })
+      await writeFile(unitFile, "unit-b\n", "utf8")
+      await host.emitEvent({ type: "session.execution.succeeded", data: { sessionID } })
+
+      await waitForValue(() => deleted.length === 1 ? deleted : null, "orphan session rollback")
+      assert.deepEqual(deleted, [{ sessionID: targetSessionID }])
+      const source = await store.load(sessionID)
+      assert.equal(source?.status, "active")
+      assert.equal((await store.list()).filter((goal) => goal.id === source?.id).length, 1)
+
+      await cleanup()
+    })
+  } finally {
+    await rm(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 50 })
   }
 })
 

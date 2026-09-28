@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto"
 import { promises as fs } from "node:fs"
 import path from "node:path"
 import { isDeepStrictEqual } from "node:util"
-import type { GoalRuntimeFingerprint, GoalState } from "../domain/types.js"
+import type { GoalRuntimeFingerprint, GoalState, GoalUnitRotation } from "../domain/types.js"
 import { stampGoalRuntimeFingerprint } from "../runtime/fingerprint.js"
 import { acquireGoalStoreProcessLock, GoalStoreConcurrencyError } from "./process-lock.js"
 
@@ -11,7 +11,7 @@ export type { GoalStoreConcurrencyKind } from "./process-lock.js"
 
 export type GoalArchiveReason = "cleared" | "replaced"
 export type GoalStoreIntegrityKind = "invalid_json" | "invalid_state" | "invalid_archive" | "unsafe_path"
-export type GoalStoreTransitionReason = "completed" | "blocked" | "paused"
+export type GoalStoreTransitionReason = "completed" | "blocked" | "paused" | "handoff"
 
 export class GoalStoreIntegrityError extends Error {
   readonly code = "GOAL_STORE_INTEGRITY"
@@ -56,6 +56,7 @@ export interface GoalStoreOptions {
 
 function transitionReason(status: GoalState["status"]): GoalStoreTransitionReason | undefined {
   if (status === "completed") return "completed"
+  if (status === "handed_off") return "handoff"
   if (status === "blocked") return "blocked"
   if (status === "paused" || status === "waiting_user" || status === "budget_limited" || status === "usage_limited") return "paused"
   return undefined
@@ -78,6 +79,59 @@ function validRuntimeFingerprint(value: unknown): value is GoalRuntimeFingerprin
     if (optional !== undefined && (typeof optional !== "string" || !optional.trim())) return false
   }
   return true
+}
+
+function validUnitRotation(value: unknown): value is GoalUnitRotation | undefined {
+  if (value === undefined) return true
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false
+  const rotation = value as Partial<GoalUnitRotation>
+  if (typeof rotation.command !== "string" || !rotation.command.trim()) return false
+  if (rotation.freshSessionPerUnit !== true) return false
+  if (typeof rotation.rootSessionID !== "string" || !rotation.rootSessionID.trim()) return false
+  if (!Number.isSafeInteger(rotation.chainIndex) || Number(rotation.chainIndex) < 0) return false
+  for (const optional of [rotation.currentUnit, rotation.previousSessionID, rotation.nextSessionID]) {
+    if (optional !== undefined && (typeof optional !== "string" || !optional.trim())) return false
+  }
+  if (rotation.observedAt !== undefined && (typeof rotation.observedAt !== "number" || !Number.isFinite(rotation.observedAt) || rotation.observedAt < 0)) return false
+  if (rotation.handoff !== undefined) {
+    const handoff = rotation.handoff
+    if (!handoff || typeof handoff !== "object") return false
+    if (typeof handoff.fromSessionID !== "string" || !handoff.fromSessionID.trim()) return false
+    if (typeof handoff.toSessionID !== "string" || !handoff.toSessionID.trim()) return false
+    if (typeof handoff.toUnit !== "string" || !handoff.toUnit.trim()) return false
+    if (handoff.fromUnit !== undefined && (typeof handoff.fromUnit !== "string" || !handoff.fromUnit.trim())) return false
+    if (!["prepared", "admitted", "source_terminal", "dispatch_pending", "dispatched"].includes(String(handoff.phase))) return false
+    if (typeof handoff.createdAt !== "number" || !Number.isFinite(handoff.createdAt) || handoff.createdAt < 0) return false
+    if (handoff.messageID !== undefined && (typeof handoff.messageID !== "string" || !handoff.messageID.trim())) return false
+    if (handoff.dispatchedAt !== undefined && (typeof handoff.dispatchedAt !== "number" || !Number.isFinite(handoff.dispatchedAt) || handoff.dispatchedAt < 0)) return false
+  }
+  return true
+}
+
+function validUnitRotationBinding(state: Partial<GoalState>): boolean {
+  const rotation = state.unitRotation
+  const status = state.status
+  if (!rotation) return status !== "handoff_pending" && status !== "handed_off"
+
+  const handoff = rotation.handoff
+  if (!handoff) return status !== "handoff_pending" && status !== "handed_off"
+  if (handoff.fromSessionID === handoff.toSessionID) return false
+
+  if (state.sessionID === handoff.fromSessionID) {
+    return status === "handed_off"
+      && handoff.phase === "source_terminal"
+      && rotation.nextSessionID === handoff.toSessionID
+  }
+
+  if (state.sessionID !== handoff.toSessionID) return false
+  if (rotation.previousSessionID !== handoff.fromSessionID) return false
+  if (handoff.phase === "source_terminal") return false
+  if (status === "handed_off") return false
+  if (status === "handoff_pending") {
+    return handoff.phase === "prepared" || handoff.phase === "admitted"
+  }
+  if (handoff.phase === "prepared" || handoff.phase === "admitted") return false
+  return handoff.phase === "dispatch_pending" || handoff.phase === "dispatched"
 }
 
 function storageGeneration(goal: GoalState | null | undefined): number {
@@ -105,6 +159,7 @@ function validateState(value: unknown): GoalState | null {
   if (!Array.isArray(state.requirements) || !Array.isArray(state.evidence) || !validGeneration(state.storageGeneration)) return null
   if (state.notifyCommand !== undefined && (typeof state.notifyCommand !== "string" || !state.notifyCommand.trim())) return null
   if (!validRuntimeFingerprint(state.runtimeFingerprint)) return null
+  if (!validUnitRotation(state.unitRotation) || !validUnitRotationBinding(state)) return null
   if (state.pendingContinuation !== undefined && typeof state.pendingContinuation !== "boolean") return null
   if (state.emptyTurnCount !== undefined && (!Number.isSafeInteger(state.emptyTurnCount) || Number(state.emptyTurnCount) < 0)) return null
   if (state.lastEmptyTurnAt !== undefined && (typeof state.lastEmptyTurnAt !== "number" || !Number.isFinite(state.lastEmptyTurnAt) || state.lastEmptyTurnAt < 0)) return null
@@ -144,7 +199,11 @@ function stateIntegrityDetail(value: unknown): string {
   if (notifyCommand !== undefined && (typeof notifyCommand !== "string" || !notifyCommand.trim())) return "invalid notifyCommand"
   const runtimeFingerprint = value && typeof value === "object" ? (value as { runtimeFingerprint?: unknown }).runtimeFingerprint : undefined
   if (!validRuntimeFingerprint(runtimeFingerprint)) return "invalid runtimeFingerprint"
-  const pendingContinuation = value && typeof value === "object" ? (value as { pendingContinuation?: unknown }).pendingContinuation : undefined
+  const state = value && typeof value === "object" ? value as Partial<GoalState> : {}
+  const unitRotation = state.unitRotation
+  if (!validUnitRotation(unitRotation)) return "invalid unitRotation"
+  if (!validUnitRotationBinding(state)) return "invalid unitRotation handoff binding"
+  const pendingContinuation = state.pendingContinuation
   if (pendingContinuation !== undefined && typeof pendingContinuation !== "boolean") return `invalid pendingContinuation ${String(pendingContinuation)}`
   const emptyTurnCount = value && typeof value === "object" ? (value as { emptyTurnCount?: unknown }).emptyTurnCount : undefined
   if (emptyTurnCount !== undefined && (!Number.isSafeInteger(emptyTurnCount) || Number(emptyTurnCount) < 0)) return `invalid emptyTurnCount ${String(emptyTurnCount)}`

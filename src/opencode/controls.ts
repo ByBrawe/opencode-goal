@@ -21,11 +21,24 @@ function replaceParts(parts: any[], text: string) {
   parts.splice(0, parts.length, { type: "text", text })
 }
 
+export function formatGoalUnitRotation(goal: GoalState): string {
+  const rotation = goal.unitRotation
+  if (!rotation) return "Unit rotation: disabled"
+  const current = rotation.currentUnit === undefined ? "not observed yet" : JSON.stringify(rotation.currentUnit)
+  const previous = rotation.previousSessionID ? `\nPrevious session: ${rotation.previousSessionID}` : ""
+  const next = rotation.nextSessionID ? `\nNext session: ${rotation.nextSessionID}` : ""
+  const handoff = rotation.handoff
+    ? `\nHandoff: ${rotation.handoff.phase} ${rotation.handoff.fromSessionID} -> ${rotation.handoff.toSessionID}`
+    : ""
+  return `Unit rotation: fresh session per unit\nUnit command: ${rotation.command}\nCurrent unit: ${current}\nSession chain: root=${rotation.rootSessionID}, index=${rotation.chainIndex}${previous}${next}${handoff}`
+}
+
 export function formatDetailedGoalStatus(goal: GoalState | null): string {
   if (!goal) return "No active goal."
   const req = goal.requirements.map((item, i) => `${i + 1}. [${item.status}] ${item.text}`).join("\n")
   const stop = goal.stopReason ? `\nStop reason: ${goal.stopReason}` : ""
-  return `Goal: ${goal.objective}\nStatus: ${goal.status}\nRevision: ${goal.revision}\nBudget: ${formatGoalBudget(goal)}\nModel context: ${formatModelContext(goal)}${stop}\nRequirements:\n${req}`
+  const unit = goal.unitRotation ? `\n${formatGoalUnitRotation(goal)}` : ""
+  return `Goal: ${goal.objective}\nStatus: ${goal.status}\nRevision: ${goal.revision}\nBudget: ${formatGoalBudget(goal)}\nModel context: ${formatModelContext(goal)}${unit}${stop}\nRequirements:\n${req}`
 }
 
 function acceptanceRequirements(goal: GoalState): GoalRequirement[] {
@@ -52,7 +65,8 @@ export function formatGoalContract(goal: GoalState | null): string {
   const constraints = goalConstraints(goal)
   const hostContracts = goal.requirements.filter((item) => item.verification === "command" || item.verification === "file")
   const constraintLines = constraints.length ? constraints.map((item) => `- ${item}`).join("\n") : "- none declared"
-  return `Goal Contract\nObjective: ${goal.objective}\nStatus: ${goal.status}\nRevision: ${goal.revision}\n\nSuccess criteria:\n${requirementLines(acceptance, "none declared beyond the full objective")}\n\nConstraints / non-goals:\n${constraintLines}\n\nHost verification contracts:\n${requirementLines(hostContracts, "none declared")}\n\nBudget: ${formatGoalBudget(goal)}\n\nThe full objective and every declared constraint remain required for completion.`
+  const unit = goal.unitRotation ? `\n\n${formatGoalUnitRotation(goal)}` : ""
+  return `Goal Contract\nObjective: ${goal.objective}\nStatus: ${goal.status}\nRevision: ${goal.revision}${unit}\n\nSuccess criteria:\n${requirementLines(acceptance, "none declared beyond the full objective")}\n\nConstraints / non-goals:\n${constraintLines}\n\nHost verification contracts:\n${requirementLines(hostContracts, "none declared")}\n\nBudget: ${formatGoalBudget(goal)}\n\nThe full objective and every declared constraint remain required for completion.`
 }
 
 function archiveLine(record: GoalArchiveRecord): string {

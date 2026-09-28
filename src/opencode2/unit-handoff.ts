@@ -136,7 +136,7 @@ export function createUnitHandoffTarget(
   now = Date.now(),
 ): GoalState {
   const rotation = baseRotation(source)
-  const messageID = `goal-handoff-${randomUUID()}`
+  const messageID = `msg_goal_handoff_${randomUUID().replaceAll("-", "")}`
   return {
     ...source,
     sessionID: targetSessionID,

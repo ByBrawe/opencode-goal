@@ -1435,7 +1435,8 @@ export const OpenCode2GoalsExperimental = {
       const createSession = ctx.session.create
       if (typeof createSession !== "function" || typeof ctx.session.prompt !== "function") return false
 
-      return await withUnitHandoffLease(directory, source.id, async () => {
+      try {
+        return await withUnitHandoffLease(directory, source.id, async () => {
         const freshSource = await new GoalStore(directory).load(source.sessionID)
         if (!freshSource || freshSource.id !== source.id || !unitRotationNeeded(freshSource, nextUnit)) return false
 
@@ -1467,6 +1468,19 @@ export const OpenCode2GoalsExperimental = {
         return await completeUnitHandoff(directory, freshSource, target)
       })
     }
+
+      } catch {
+        // Before the terminal source write, handoff failure means "no rotation":
+        // let the caller continue in the existing active session. After the
+        // terminal write, predecessor ownership must never be resurrected.
+        const latest = await new GoalStore(directory).load(source.sessionID).catch(() => null)
+        if (latest?.status === "active" && latest.id === source.id && latest.revision === source.revision) {
+          return false
+        }
+        const recoveryKey = latest?.unitRotation?.nextSessionID ?? source.sessionID
+        scheduleUnitHandoffRecovery(directory, recoveryKey)
+        return true
+      }
 
     const recoverUnitHandoffs = async (directory: string): Promise<void> => {
       const store = new GoalStore(directory, { onTransition: createGoalTransitionNotifier(directory) })

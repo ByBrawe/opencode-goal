@@ -2,6 +2,15 @@ name: OpenCode 2 Unit Handoff
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "src/domain/**"
+      - "src/opencode/**"
+      - "src/opencode2/**"
+      - "src/persistence/**"
+      - "scripts/opencode2-unit-handoff-canary.mjs"
+      - ".github/workflows/opencode2-unit-handoff.yml"
   pull_request:
     paths:
       - "src/domain/goal.ts"
@@ -18,7 +27,11 @@ permissions:
 
 jobs:
   three-unit-handoff:
-    name: OpenCode 2.0.16 three-session unit handoff
+    name: OpenCode ${{ matrix.host }} three-session unit handoff
+    strategy:
+      fail-fast: false
+      matrix:
+        host: ['2.0.16', '2.0.18']
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -30,8 +43,17 @@ jobs:
           node-version: "24"
       - run: npm install
       - run: npm run build
-      - name: Install OpenCode 2.0.16
-        run: npm install -g @opencode/cli@2.0.16
+      - name: Install pinned OpenCode 2 host
+        env:
+          HOST_VERSION: ${{ matrix.host }}
+        run: npm install -g "@opencode/cli@$HOST_VERSION"
+      - name: Verify exact host binary
+        env:
+          HOST_VERSION: ${{ matrix.host }}
+        run: |
+          ACTUAL=$(opencode2 --version)
+          echo "$ACTUAL"
+          test "$ACTUAL" = "opencode v$HOST_VERSION"
       - name: Check handoff canary syntax
         run: node --check scripts/opencode2-unit-handoff-canary.mjs
       - name: Prove three native sessions preserve one Goal

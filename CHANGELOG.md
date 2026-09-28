@@ -2,7 +2,7 @@
 
 All notable changes to **OpenCode Goals** are documented here.
 
-## 1.3.38 — 2026-09-25
+## 1.3.38 — 2026-09-28
 
 OpenCode 2 bounded per-unit session handoff release.
 

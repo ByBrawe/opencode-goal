@@ -174,4 +174,12 @@ test("per-unit session rotation is explicit, paired, and excluded from queued Go
     () => parseGoalCommand('budget --unit "node unit.mjs" --fresh-session-per-unit'),
     /accepts only --max-turns/,
   )
+  assert.throws(
+    () => parseGoalCommand('ship plan --unit "" --fresh-session-per-unit'),
+    /non-empty host command/,
+  )
+  assert.throws(
+    () => parseGoalCommand('edit revised --unit "" --fresh-session-per-unit'),
+    /non-empty host command/,
+  )
 })

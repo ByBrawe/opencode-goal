@@ -43,13 +43,41 @@ export function formatProjectGoalIndex(goals: GoalState[], currentSessionID: str
   const normalized = selector.trim().toLowerCase()
   const matches = ordered.filter((goal) => goal.id.toLowerCase().startsWith(normalized))
   if (!matches.length) return `No live project Goal matches "${selector}".`
-  if (matches.length > 1) {
-    return `Multiple live project Goals match "${selector}". Use a longer Goal id prefix:\n${matches.slice(0, 20).map((goal) => projectGoalLine(goal, currentSessionID)).join("\n")}`
+
+  const matchingIDs = [...new Set(matches.map((goal) => goal.id))]
+  if (matchingIDs.length > 1) {
+    const representatives = matchingIDs
+      .map((id) => matches.find((goal) => goal.id === id)!)
+      .slice(0, 20)
+    return `Multiple live project Goals match "${selector}". Use a longer Goal id prefix:\n${representatives.map((goal) => projectGoalLine(goal, currentSessionID)).join("\n")}`
   }
 
-  const goal = matches[0]!
+  const chain = matches
+    .filter((goal) => goal.id === matchingIDs[0])
+    .sort((left, right) => {
+      const leftIndex = left.unitRotation?.chainIndex
+      const rightIndex = right.unitRotation?.chainIndex
+      if (leftIndex !== undefined || rightIndex !== undefined) {
+        return (leftIndex ?? Number.MAX_SAFE_INTEGER) - (rightIndex ?? Number.MAX_SAFE_INTEGER)
+      }
+      return left.updatedAt - right.updatedAt
+    })
+  const goal = chain.find((item) => item.sessionID === currentSessionID && item.status !== "handed_off" && item.status !== "handoff_pending")
+    ?? chain.find((item) => item.status !== "handed_off" && item.status !== "handoff_pending")
+    ?? chain[chain.length - 1]!
   const current = goal.sessionID === currentSessionID ? " (current session)" : ""
-  return `Project Goal: ${goal.id}\nSession: ${goal.sessionID}${current}\nUpdated: ${new Date(goal.updatedAt).toISOString()}\n${formatDetailedGoalStatus(goal)}`
+
+  if (chain.length === 1) {
+    return `Project Goal: ${goal.id}\nSession: ${goal.sessionID}${current}\nUpdated: ${new Date(goal.updatedAt).toISOString()}\n${formatDetailedGoalStatus(goal)}`
+  }
+
+  return [
+    `Project Goal: ${goal.id}`,
+    `Session chain: ${chain.length} snapshots`,
+    ...chain.map((item) => projectGoalLine(item, currentSessionID)),
+    `Logical owner: ${goal.sessionID}${current}`,
+    formatDetailedGoalStatus(goal),
+  ].join("\n")
 }
 
 export function installProjectGoalIndex(input: PluginInput, hooks: PluginHooks): void {

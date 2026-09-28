@@ -206,7 +206,12 @@ export function parseGoalCommand(input: string): ParsedGoalCommand {
     if (["--constraint", "--constraints", "--non-goal", "--non-goals"].includes(current) && next) { constraints.push(next); i += 1; continue }
     if (current === "--check" && next) { checks.push(next); i += 1; continue }
     if (current === "--notify" && next) { notifyCommand = next; i += 1; continue }
-    if (current === "--unit" && next) { unitCommand = next; i += 1; continue }
+    if (current === "--unit") {
+      if (next === undefined) throw new Error("--unit requires <host command>")
+      unitCommand = next
+      i += 1
+      continue
+    }
     if (current === "--fresh-session-per-unit") { freshSessionPerUnit = true; continue }
     if (current === "--file" && next) { files.push({ file: next }); i += 1; continue }
     if (current === "--contains" && next) { files.push(parseContainsContract(next)); i += 1; continue }

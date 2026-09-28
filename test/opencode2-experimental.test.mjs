@@ -898,7 +898,11 @@ test("V2 unit change hands one active Goal to a fresh native session with the sa
       }, "active dispatched target unit handoff")
 
       assert.equal(createCalls.length, 1)
-      assert.equal(createCalls[0].parentID, sourceSessionID)
+      assert.equal(createCalls[0].parentID, undefined)
+      assert.deepEqual(createCalls[0].location, { directory: root })
+      assert.equal(createCalls[0].metadata?.opencode_goal_id, source.id)
+      assert.equal(createCalls[0].metadata?.opencode_goal_revision, source.revision)
+      assert.equal(createCalls[0].metadata?.opencode_goal_source_session, sourceSessionID)
       assert.equal(source.id, target.id)
       assert.equal(source.revision, target.revision)
       assert.deepEqual(source.budget, target.budget)

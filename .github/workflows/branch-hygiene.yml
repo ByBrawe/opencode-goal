@@ -35,7 +35,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           BRANCH_HYGIENE_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-          BRANCH_HYGIENE_ARCHIVE_REF: archive/legacy-branches-2026-09-21
           BRANCH_HYGIENE_DRY_RUN: "1"
         run: node scripts/branch-hygiene.mjs
 
@@ -53,9 +52,11 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: "24"
+      # Historical branch heads are already retained by the archive tag.
+      # Normal cleanup now considers only exact merged-PR heads; it must not
+      # fetch a deleted archive branch or recreate it on every main push.
       - name: Delete exact merged-head branches
         env:
           GITHUB_TOKEN: ${{ github.token }}
           BRANCH_HYGIENE_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-          BRANCH_HYGIENE_ARCHIVE_REF: archive/legacy-branches-2026-09-21
         run: node scripts/branch-hygiene.mjs

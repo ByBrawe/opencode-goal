@@ -162,14 +162,35 @@ async function main() {
       if (typeof toolModule.tool !== "function") throw new Error("runtime OpenCode V1 tool dependency is missing");
       const v2Plugin = await import("@opencode/plugin");
       if (typeof v2Plugin.Plugin?.define !== "function") throw new Error("runtime OpenCode V2 plugin dependency is missing");
-      const tui = await import("@bybrawe/opencode-goal/tui");
-      if (typeof tui.default?.setup !== "function") throw new Error("native TUI plugin setup export is missing"); const statusRPC = await import("@bybrawe/opencode-goal/rpc"); if (statusRPC.GoalStatusRpc?.id !== "opencode-goal-status") throw new Error("shared status RPC export is missing"); if (typeof tui.default?.tui !== "function") throw new Error("TUI plugin export is missing");
-      if (tui.default?.id !== "opencode-goal") throw new Error("TUI plugin id is incorrect");
       const entryDir = path.dirname(fileURLToPath(import.meta.resolve("@bybrawe/opencode-goal")));
       if (!fs.existsSync(path.join(entryDir, "index.d.ts"))) throw new Error("published type declarations are missing");
       console.log("consumer import ok");
     `
     const consumerResult = run(process.execPath, ["--input-type=module", "--eval", probe], { cwd: consumer })
+
+    // The server plugin must work from the isolated production cache with peers
+    // omitted. The TUI is a host UI plugin and intentionally uses OpenCode's
+    // renderer/Solid peer contract, so verify it in a second peer-complete
+    // production install instead of silently turning those peers into private
+    // duplicate runtimes.
+    runNpm([
+      "install",
+      "--ignore-scripts",
+      "--omit=dev",
+      "--no-audit",
+      "--no-fund",
+      tarball,
+    ], { cwd: consumer })
+    const tuiProbe = String.raw`
+      const tui = await import("@bybrawe/opencode-goal/tui");
+      if (typeof tui.default?.setup !== "function") throw new Error("native TUI plugin setup export is missing");
+      if (typeof tui.default?.tui !== "function") throw new Error("TUI plugin V1 compatibility export is missing");
+      if (tui.default?.id !== "opencode-goal") throw new Error("TUI plugin id is incorrect");
+      const statusRPC = await import("@bybrawe/opencode-goal/rpc");
+      if (statusRPC.GoalStatusRpc?.id !== "opencode-goal-status") throw new Error("shared status RPC export is missing");
+      console.log("tui import ok");
+    `
+    const tuiConsumerResult = run(process.execPath, ["--input-type=module", "--eval", tuiProbe], { cwd: consumer })
 
     const installedRoot = path.join(consumer, "node_modules", "@bybrawe", "opencode-goal")
     const installedPackageJSON = JSON.parse(await readFile(path.join(installedRoot, "package.json"), "utf8"))
@@ -257,6 +278,7 @@ async function main() {
       fileCount: files.length,
       files,
       consumerImport: /consumer import ok/.test(String(consumerResult.stdout ?? "")),
+      tuiPeerConsumerImport: /tui import ok/.test(String(tuiConsumerResult.stdout ?? "")),
       serverEntrypoint: true,
       nativeEntrypointIsolation: true,
       lazyLegacyDelegation: true,
@@ -274,7 +296,7 @@ async function main() {
     console.log(`runtime dependency ${report.runtimeDependency}`)
     console.log(`V2 runtime dependency ${report.v2RuntimeDependency}`)
     console.log(`tarball ${report.filename} files=${report.fileCount} packed=${report.packageSize} unpacked=${report.unpackedSize}`)
-    console.log("clean production-only consumer public API + server + TUI import + V1/V2 npm-linked installer + /goal command modes + uninstaller PASS")
+    console.log("clean production-only server consumer + peer-complete native TUI consumer + V1/V2 npm-linked installer + /goal command modes + uninstaller PASS")
 
     if (options.jsonPath) {
       const target = path.resolve(root, options.jsonPath)

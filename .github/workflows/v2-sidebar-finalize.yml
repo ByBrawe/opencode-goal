@@ -1,0 +1,117 @@
+name: Verify native sidebar implementation
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/v2-sidebar-finalize.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: goal-native-sidebar-pass
+  cancel-in-progress: false
+jobs:
+  verify:
+    if: github.repository == 'ByBrawe/opencode-goal' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: '1.4.2'
+      - name: Validate isolated implementation and commit only on full success
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          ruby <<'RUBY'
+          require 'yaml'
+          require 'json'
+          token = ENV.delete('GH_TOKEN')
+          original = '.github/workflows/v2-native-sidebar-pass.yml'
+          current = '.github/workflows/v2-sidebar-finalize.yml'
+          steps = YAML.safe_load(File.read(original), aliases: true).fetch('jobs').fetch('verify').fetch('steps')
+          steps.each do |step|
+            next unless step['run']
+            name = step['name'] || step['run'].lines.first.strip
+            script = step['run']
+            script = 'npm install --no-audit --no-fund' if script.strip == 'npm ci'
+            commit = name.start_with?('Commit only verified')
+            if commit
+              script = script.sub("git rm #{original}", "git rm #{original} #{current}\nnode scripts/actions-security-gate.mjs")
+              script = script.sub('package.json package-lock.json docs/', 'package.json scripts/package-smoke.mjs .github/workflows/native-sidebar.yml docs/')
+            end
+            puts "::group::#{name}"
+            raise "Failed: #{name}" unless system(commit ? { 'GH_TOKEN'=>token } : { 'GH_TOKEN'=>nil, 'GITHUB_TOKEN'=>nil }, 'bash', '-e', '-o', 'pipefail', '-c', script)
+            puts '::endgroup::'
+            if name.start_with?('Add native slot rendering')
+              pkg = JSON.parse(File.read('package.json'))
+              pkg['dependencies']['@opencode/plugin'] = '^2.0.18'
+              File.write('package.json', JSON.pretty_generate(pkg) + "\n")
+              smoke = File.read('scripts/package-smoke.mjs')
+              smoke = smoke.sub('const v2RuntimeDependencyRange = "^2.0.4"', 'const v2RuntimeDependencyRange = "^2.0.18"')
+              smoke = smoke.sub('"dist/install.js", "dist/tui/index.js", "dist/tui/index.d.ts",', '"dist/install.js", "dist/tui/index.js", "dist/tui/index.d.ts", "dist/tui/native.js", "dist/status-rpc.js", "dist/status-rpc.d.ts",')
+              smoke = smoke.sub('if (typeof tui.default?.tui !== "function")', 'if (typeof tui.default?.setup !== "function") throw new Error("native TUI plugin setup export is missing"); const statusRPC = await import("@bybrawe/opencode-goal/rpc"); if (statusRPC.GoalStatusRpc?.id !== "opencode-goal-status") throw new Error("shared status RPC export is missing"); if (typeof tui.default?.tui !== "function")')
+              File.write('scripts/package-smoke.mjs', smoke)
+            end
+            if name.start_with?('Typecheck, native regressions')
+              puts '::group::Actual OpenCode 2 status RPC in two locations'
+              host = File.join(ENV.fetch('RUNNER_TEMP'), 'goal-status-native-host')
+              raise 'host install failed' unless system('npm', 'install', '--prefix', host, '--package-lock=false', '--no-audit', '--no-fund', '@opencode/cli@2.0.18')
+              raise 'native status RPC failed' unless system({ 'OPENCODE2_BINARY'=>File.join(host, 'node_modules/.bin/opencode2') }, 'node', 'scripts/native-status-host-canary.mjs')
+              puts '::endgroup::'
+            end
+            if name.start_with?('Document the native panel')
+              File.write('.github/workflows/native-sidebar.yml', <<~'YAML')
+              name: Native Goal Sidebar
+              on:
+                push:
+                  branches: [main]
+                pull_request:
+                  paths: ['src/**', 'test/**', 'scripts/**', 'package.json', '.github/workflows/native-sidebar.yml']
+                workflow_dispatch:
+              permissions:
+                contents: read
+              concurrency:
+                group: native-sidebar-${{ github.ref }}
+                cancel-in-progress: true
+              jobs:
+                render:
+                  runs-on: ${{ matrix.os }}
+                  timeout-minutes: 15
+                  strategy:
+                    fail-fast: false
+                    matrix:
+                      os: [ubuntu-latest, windows-latest]
+                  steps:
+                    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+                      with:
+                        persist-credentials: false
+                    - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+                      with:
+                        node-version: '24'
+                    - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+                      with:
+                        bun-version: '1.4.2'
+                    - run: npm install
+                    - run: npm run check
+                    - run: npm run build
+                    - run: node --test test/tui-native-status.test.mjs
+                    - run: npm run test:tui-native
+                    - name: Native RPC on real OpenCode 2.0.18
+                      if: runner.os == 'Linux'
+                      shell: bash
+                      run: |
+                        npm install --prefix "$RUNNER_TEMP/native-host" --package-lock=false @opencode/cli@2.0.18
+                        OPENCODE2_BINARY="$RUNNER_TEMP/native-host/node_modules/.bin/opencode2" node scripts/native-status-host-canary.mjs
+              YAML
+            end
+          end
+          RUBY

@@ -1525,6 +1525,7 @@ test("V2 read-only adapter fails closed when the session workspace cannot be res
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-location-"))
   try {
     const host = fakeV2Context(root)
+    host.ctx.options.directory = root
     host.ctx.session.get = async () => ({ id: "missing-location" })
     await assert.rejects(
       executeOpenCode2GoalControl(host.ctx, "status", { sessionID: "missing-location", agent: "build" }),

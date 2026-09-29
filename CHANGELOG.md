@@ -13,6 +13,7 @@ Official OpenCode 2 plugin-definition and package-contract hardening release.
 - Verify server/RPC from a production install with peer dependencies omitted, then verify the TUI separately with the supported OpenTUI/Solid host peer set.
 - Exercise the exact current Loop V2 companion source on OpenCode 2.0.18 before trusted npm publication.
 - Run the required Experimental OpenCode 2 Host gate on every main push so exact-commit publication cannot be blocked by its own path filters.
+- Keep Native Goal Sidebar main runs non-cancellable so an otherwise green exact-commit release gate cannot end as `cancelled`; superseded pull-request runs still cancel.
 
 Goal identity, contract, revision, evidence, handoff recovery and cumulative budgets are unchanged from 1.3.39.
 

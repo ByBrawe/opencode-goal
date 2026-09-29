@@ -3,7 +3,8 @@ import assert from "node:assert/strict"
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import OpenCodeGoalPlugin, { pauseGoal } from "../dist/index.js"
+import OpenCodeGoalPlugin from "../dist/legacy-loader.js"
+import { pauseGoal } from "../dist/api.js"
 import { GoalStore } from "../dist/persistence/store.js"
 
 async function readOnlyGoal(root) {

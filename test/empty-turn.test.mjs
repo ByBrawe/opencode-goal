@@ -3,13 +3,14 @@ import assert from "node:assert/strict"
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import OpenCodeGoalPlugin, {
+import OpenCodeGoalPlugin from "../dist/legacy-loader.js"
+import {
   assistantInfoHasMeaningfulActivity,
   assistantPartHasMeaningfulActivity,
   createGoal,
   recordEmptyAssistantTurn,
   resumeGoal,
-} from "../dist/index.js"
+} from "../dist/api.js"
 
 async function tick(count = 4) {
   for (let index = 0; index < count; index += 1) {

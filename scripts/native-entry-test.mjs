@@ -44,7 +44,7 @@ function probe(mode) {
       const { default: plugin } = await import(entry);
       assert.equal(typeof plugin.setup, "function", entry);
       assert.equal(typeof plugin.id, "string", entry);
-      if (!loop) assert.equal(plugin.id, "@bybrawe/opencode-goal", entry);
+      if (!false) assert.equal(plugin.id, "@bybrawe/opencode-goal", entry);
       if (${JSON.stringify(mode)} === "isolation") {
         assert.equal(globalThis.__legacyModuleLoads, undefined, "native import initialized legacy runtime");
         if (entry.endsWith("/v2")) assert.equal("server" in plugin, false, "native entry must not expose V1 dispatch");

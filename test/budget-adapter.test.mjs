@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import OpenCodeGoalPlugin from "../dist/index.js"
+import OpenCodeGoalPlugin from "../dist/legacy-loader.js"
 
 async function readGoal(root) {
   const dir = path.join(root, ".opencode", "goals")

@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import OpenCodeGoalPlugin from "../dist/index.js"
+import OpenCodeGoalPlugin from "../dist/legacy-loader.js"
 import { DEFAULT_VERIFIER_AGENT } from "../dist/opencode/verifier.js"
 
 function verificationRequest(promptText) {

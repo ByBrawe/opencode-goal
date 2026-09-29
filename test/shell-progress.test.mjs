@@ -4,7 +4,8 @@ import { execFileSync } from "node:child_process"
 import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import OpenCodeGoalPlugin, { shellActivityFingerprint, shellGitWorkspaceMarker, shellProcessExited } from "../dist/index.js"
+import OpenCodeGoalPlugin from "../dist/legacy-loader.js"
+import { shellActivityFingerprint, shellGitWorkspaceMarker, shellProcessExited } from "../dist/api.js"
 
 function fakeClient() {
   return {

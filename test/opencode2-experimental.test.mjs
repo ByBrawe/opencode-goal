@@ -1494,7 +1494,7 @@ test("authorized capability applies create pause resume edit and clear with one 
       await apply("pause")
       goal = await store.load(sessionID)
       assert.equal(goal?.status, "paused")
-      assert.ok(host.interrupts.some((item) => item.sessionID === sessionID && item.resume === false))
+      assert.ok(host.interrupts.some((item) => item.sessionID === sessionID && item.continue === false && !("resume" in item)))
 
       await apply("resume")
       goal = await store.load(sessionID)

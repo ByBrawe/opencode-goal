@@ -14,7 +14,7 @@
     "./rpc": { "types": "./dist/status-rpc.d.ts", "import": "./dist/status-rpc.js" }
   },
   "bin": { "opencode-goal": "bin/opencode-goal.js" },
-  "files": ["dist", "bin", "README.md", "CHANGELOG.md", "LICENSE", "docs/releases/1.3.39.md"],
+  "files": ["dist", "bin", "README.md", "CHANGELOG.md", "LICENSE", "docs/releases/1.3.39.md", "docs/releases/CHANGELOG-through-1.3.38.md"],
   "repository": { "type": "git", "url": "git+https://github.com/ByBrawe/opencode-goal.git" },
   "homepage": "https://github.com/ByBrawe/opencode-goal#readme",
   "bugs": { "url": "https://github.com/ByBrawe/opencode-goal/issues" },

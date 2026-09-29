@@ -242,7 +242,11 @@ export async function assertGoalStoragePathSafe(directory: string, target: strin
   const baseReal = await fs.realpath(base)
   const relative = path.relative(base, resolvedTarget)
   const parts = relative.split(path.sep).filter(Boolean)
-  let current = base
+  // Walk from the canonical project root, not the caller's spelling of it.
+  // On Windows the temp/project path can use an 8.3 alias (RUNNER~1) while
+  // realpath() returns the long form. Mixing those spellings makes a legitimate
+  // child look external even though every component belongs to the same root.
+  let current = baseReal
 
   for (const part of parts) {
     current = path.join(current, part)

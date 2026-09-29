@@ -188,3 +188,32 @@ test("V2 semantic verifier rejects hallucinated quotes and leaves completion unp
     await rm(root, { recursive: true, force: true })
   }
 })
+
+
+test("V2 semantic verifier interrupts timed-out child with public continue flag", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-v2-semantic-timeout-"))
+  try {
+    const goal = createGoal({ sessionID: "parent", objective: "verify safely", now: 100 })
+    const interrupts = []
+    const session = {
+      async create() { return { id: "child-timeout" } },
+      async prompt(input) {
+        if (input.resume === false) return { id: "message-timeout" }
+        return new Promise(() => {})
+      },
+      async interrupt(input) {
+        interrupts.push(input)
+      },
+      async delete() {},
+    }
+    const runtime = createOpenCode2SemanticVerifierRuntime(session, async () => root, { timeoutMs: 20 })
+
+    await assert.rejects(
+      runtime.verify("parent", goal, { allowTimeoutRetry: false }),
+      /semantic verifier timed out/i,
+    )
+    assert.deepEqual(interrupts, [{ sessionID: "child-timeout", continue: false }])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})

@@ -80,10 +80,12 @@ jobs:
               raise 'RPC invariant anchor changed' unless canary.include?(old)
               canary = canary.sub(old, replacement).sub('injectedPathRejected: true', 'injectedPathCannotRedirect: true')
               File.write('scripts/native-status-host-canary.mjs', canary)
-              puts '::group::Actual OpenCode 2 status RPC in two locations'
+              puts '::group::Actual OpenCode 2 status RPC and current handoff implementation'
               host = File.join(ENV.fetch('RUNNER_TEMP'), 'goal-status-native-host')
               raise 'host install failed' unless system('npm', 'install', '--prefix', host, '--package-lock=false', '--no-audit', '--no-fund', '@opencode/cli@2.0.18')
-              raise 'native status RPC failed' unless system({ 'OPENCODE2_BINARY'=>File.join(host, 'node_modules/.bin/opencode2') }, 'node', 'scripts/native-status-host-canary.mjs')
+              host_env = { 'OPENCODE2_BINARY'=>File.join(host, 'node_modules/.bin/opencode2') }
+              raise 'native status RPC failed' unless system(host_env, 'node', 'scripts/native-status-host-canary.mjs')
+              raise 'native handoff failed with status RPC registered' unless system(host_env, 'bash', '-e', '-c', 'node scripts/opencode2-unit-handoff-canary.mjs > "$RUNNER_TEMP/sidebar-handoff.log" 2>&1 || { tail -120 "$RUNNER_TEMP/sidebar-handoff.log"; exit 1; }; head -45 "$RUNNER_TEMP/sidebar-handoff.log"')
               puts '::endgroup::'
             end
             if name.start_with?('Document the native panel')

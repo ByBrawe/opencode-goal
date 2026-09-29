@@ -12,124 +12,145 @@ permissions:
   contents: read
   id-token: write
 
+concurrency:
+  group: npm-release
+  cancel-in-progress: false
+
 jobs:
   publish:
-    name: Publish 1.3.38
+    name: Publish 1.3.39
+    if: github.repository == 'ByBrawe/opencode-goal' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    env:
+      RELEASE_VERSION: '1.3.39'
+      RELEASE_PREDECESSOR: '1.3.38'
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
+          ref: ${{ github.sha }}
           persist-credentials: false
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          node-version: "24"
-          registry-url: "https://registry.npmjs.org"
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
           package-manager-cache: false
       - name: Enforce workflow security policy
         run: node scripts/actions-security-gate.mjs
       - name: Verify trusted-publishing runtime
-        shell: bash
         run: |
           node --version
-          NPM_VERSION="$(npm --version)"
-          echo "npm $NPM_VERSION"
-          NPM_VERSION="$NPM_VERSION" node -e 'const [major, minor] = process.env.NPM_VERSION.split(".").map(Number); if (major < 11 || (major === 11 && minor < 5)) { console.error("npm >= 11.5.1 is required for trusted publishing"); process.exit(1) }'
+          npm --version
+          node -e 'const v=require("child_process").execFileSync("npm",["--version"],{encoding:"utf8"}).trim().split(".").map(Number); if(v[0]<11 || (v[0]===11 && (v[1]<5 || (v[1]===5 && v[2]<1)))) throw Error("npm >=11.5.1 required")'
       - name: Decide whether stable needs publishing
         id: release
         shell: bash
         run: |
-          EXPECTED="1.3.38"
-          ACTUAL="$(node -p "JSON.parse(require('fs').readFileSync('package.json', 'utf8')).version")"
-          if [ "$ACTUAL" != "$EXPECTED" ]; then
-            echo "Package version $ACTUAL is not the one-shot stable $EXPECTED; skipping."
-            echo "publish=false" >> "$GITHUB_OUTPUT"
-            echo "verify=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "verify=true" >> "$GITHUB_OUTPUT"
-          if npm view "@bybrawe/opencode-goal@$EXPECTED" version --registry=https://registry.npmjs.org >/dev/null 2>&1; then
-            echo "@bybrawe/opencode-goal@$EXPECTED is already published; publish will be skipped but registry verification will still run."
-            echo "publish=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "publish=true" >> "$GITHUB_OUTPUT"
-      - name: Verify predecessor stable ordering
+          node --input-type=module <<'JS'
+          import { readFileSync, appendFileSync } from 'node:fs'
+          import { assertRegistrySource } from './scripts/native-release-gate.mjs'
+          const pkg = JSON.parse(readFileSync('package.json', 'utf8'))
+          const output = (publish, verify) => appendFileSync(process.env.GITHUB_OUTPUT, `publish=${publish}\nverify=${verify}\n`)
+          if (pkg.version !== process.env.RELEASE_VERSION) {
+            console.log('No release requested for package version ' + pkg.version)
+            output(false, false)
+          } else {
+            const base = 'https://registry.npmjs.org/' + encodeURIComponent(pkg.name)
+            const response = await fetch(base + '/' + pkg.version, { signal: AbortSignal.timeout(20000) })
+            if (response.ok) {
+              assertRegistrySource(await response.json(), { name: pkg.name, version: pkg.version, sha: process.env.GITHUB_SHA })
+              output(false, true)
+            } else {
+              if (response.status !== 404) throw new Error('Cannot determine immutable npm state: HTTP ' + response.status)
+              const latest = await fetch(base + '/latest', { signal: AbortSignal.timeout(20000) })
+              if (!latest.ok) throw new Error('Cannot verify predecessor: HTTP ' + latest.status)
+              if ((await latest.json()).version !== process.env.RELEASE_PREDECESSOR) throw new Error('npm latest is not the expected predecessor; refusing a downgrade or out-of-order publish')
+              output(true, true)
+            }
+          }
+          JS
+      - name: Wait for every release gate on this exact main commit
+        if: steps.release.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/native-release-gate.mjs
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        if: steps.release.outputs.publish == 'true'
+        with:
+          bun-version: '1.4.2'
+      - name: Install and build exact Goal source
+        if: steps.release.outputs.publish == 'true'
+        run: npm install && npm run build
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        if: steps.release.outputs.publish == 'true'
+        with:
+          repository: ByBrawe/opencode-loop
+          ref: 7832808f6807d324bda88dbb3827d7c4ef16b432
+          path: companion-loop
+          persist-credentials: false
+      - name: Real native pair and read-only status before publication
         if: steps.release.outputs.publish == 'true'
         shell: bash
         run: |
-          LATEST=""
-          VERSION=""
-          BIN=""
-          for attempt in $(seq 1 30); do
-            LATEST="$(npm view "@bybrawe/opencode-goal@latest" version --registry=https://registry.npmjs.org 2>/dev/null || true)"
-            if [ "$LATEST" = "1.3.37" ]; then
-              VERSION="$(npm view "@bybrawe/opencode-goal@$LATEST" version --registry=https://registry.npmjs.org 2>/dev/null || true)"
-              BIN="$(npm view "@bybrawe/opencode-goal@$LATEST" bin.opencode-goal --registry=https://registry.npmjs.org 2>/dev/null || true)"
-              if [ "$VERSION" = "$LATEST" ] && { [ "$BIN" = "bin/opencode-goal.js" ] || [ "$BIN" = "./bin/opencode-goal.js" ]; }; then
-                echo "Predecessor ordering verified on attempt $attempt: latest=$LATEST version=$VERSION bin=$BIN"
-                exit 0
-              fi
-            fi
-            echo "Predecessor not authoritative yet on attempt $attempt: latest=$LATEST version=$VERSION bin=$BIN"
-            sleep 10
-          done
-          echo "Refusing to publish 1.3.38 until npm latest is authoritative 1.3.37 with the expected installer bin."
-          exit 1
-      - name: Install release dependencies
-        if: steps.release.outputs.publish == 'true'
-        run: npm install
+          npm install --prefix "$RUNNER_TEMP/native-host" --package-lock=false @opencode/cli@2.0.18
+          export OPENCODE2_BINARY="$RUNNER_TEMP/native-host/node_modules/.bin/opencode2"
+          test "$("$OPENCODE2_BINARY" --version)" = 'opencode v2.0.18'
+          export OPENCODE_GOAL_INSTALLER="$GITHUB_WORKSPACE/dist/install.js"
+          export OPENCODE_GOAL_V2_PLUGIN_URL="file://$GITHUB_WORKSPACE/dist/server.js"
+          export OPENCODE2_CURRENT_COMMAND_FIELDS=1 OPENCODE2_NATIVE_REQUIRED=1
+          (cd companion-loop && npm ci && node scripts/native-install-pair-test.mjs && node scripts/opencode2-loop-canary.mjs && node scripts/native-cli-host-canary.mjs)
+          node scripts/native-status-host-canary.mjs
       - name: Publish stable with npm trusted publishing
         if: steps.release.outputs.publish == 'true'
         run: npm publish --tag latest --access public
-      - name: Verify published installer bin
+      - name: Verify published source, exports, installer and latest tag
         if: steps.release.outputs.verify == 'true'
         shell: bash
         run: |
-          EXPECTED="1.3.38"
-          VERSION=""
-          LATEST=""
-          BIN=""
-          for attempt in $(seq 1 30); do
-            VERSION="$(npm view "@bybrawe/opencode-goal@$EXPECTED" version --registry=https://registry.npmjs.org 2>/dev/null || true)"
-            LATEST="$(npm view "@bybrawe/opencode-goal@latest" version --registry=https://registry.npmjs.org 2>/dev/null || true)"
-            BIN="$(npm view "@bybrawe/opencode-goal@$EXPECTED" bin.opencode-goal --registry=https://registry.npmjs.org 2>/dev/null || true)"
-            if [ "$VERSION" = "$EXPECTED" ] && [ "$LATEST" = "$EXPECTED" ] && { [ "$BIN" = "bin/opencode-goal.js" ] || [ "$BIN" = "./bin/opencode-goal.js" ]; }; then
-              echo "Registry manifest verified on attempt $attempt: version=$VERSION latest=$LATEST bin=$BIN"
+          node --input-type=module <<'JS'
+          import { readFileSync } from 'node:fs'
+          import assert from 'node:assert/strict'
+          import { setTimeout as delay } from 'node:timers/promises'
+          import { assertRegistrySource } from './scripts/native-release-gate.mjs'
+          const pkg = JSON.parse(readFileSync('package.json', 'utf8'))
+          const base = 'https://registry.npmjs.org/' + encodeURIComponent(pkg.name)
+          let failure
+          for (let attempt = 0; attempt < 30; attempt++) {
+            try {
+              const exact = await fetch(base + '/' + pkg.version, { signal: AbortSignal.timeout(20000) })
+              const latest = await fetch(base + '/latest', { signal: AbortSignal.timeout(20000) })
+              assert.ok(exact.ok && latest.ok)
+              const published = await exact.json()
+              assertRegistrySource(published, { name: pkg.name, version: pkg.version, sha: process.env.GITHUB_SHA })
+              assert.equal((await latest.json()).version, pkg.version)
+              assert.equal(published.bin['opencode-goal'].replace(/^\.\//, ''), 'bin/opencode-goal.js')
+              assert.deepEqual(published.exports, pkg.exports)
+              assert.deepEqual(published.dependencies, pkg.dependencies)
+              console.log('REGISTRY_VERIFIED ' + JSON.stringify({ name: published.name, version: published.version, gitHead: published.gitHead, integrity: published.dist.integrity, latest: pkg.version }))
+              failure = undefined
               break
-            fi
-            echo "Registry manifest not ready on attempt $attempt: version=$VERSION latest=$LATEST bin=$BIN"
-            sleep 10
-          done
-          if [ "$VERSION" != "$EXPECTED" ]; then
-            echo "Published version did not become visible: $VERSION"
-            exit 1
-          fi
-          if [ "$LATEST" != "$EXPECTED" ]; then
-            echo "npm latest points to $LATEST instead of $EXPECTED"
-            exit 1
-          fi
-          if [ "$BIN" != "bin/opencode-goal.js" ] && [ "$BIN" != "./bin/opencode-goal.js" ]; then
-            echo "Published installer bin mismatch: $BIN"
-            exit 1
-          fi
-
+            } catch (error) { failure = error; await delay(10000) }
+          }
+          if (failure) throw failure
+          JS
           VERIFY_DIR="$(mktemp -d)"
           trap 'rm -rf "$VERIFY_DIR"' EXIT
-          pushd "$VERIFY_DIR" >/dev/null
-          INSTALLED_VERSION=""
-          for attempt in $(seq 1 30); do
-            if INSTALLED_VERSION="$(npm exec --yes --package="@bybrawe/opencode-goal@$EXPECTED" -- opencode-goal --version 2>installer-error.log)"; then
-              if [ "$INSTALLED_VERSION" = "$EXPECTED" ]; then
-                echo "Published installer verified from clean consumer directory on attempt $attempt: $INSTALLED_VERSION"
-                break
-              fi
-            fi
-            echo "Published installer not ready on attempt $attempt: $INSTALLED_VERSION"
-            cat installer-error.log || true
-            sleep 10
-          done
-          popd >/dev/null
-          if [ "$INSTALLED_VERSION" != "$EXPECTED" ]; then
-            echo "Published installer reported $INSTALLED_VERSION instead of $EXPECTED"
-            exit 1
-          fi
+          cd "$VERIFY_DIR"
+          test "$(npm exec --yes --package="@bybrawe/opencode-goal@$RELEASE_VERSION" -- opencode-goal --version)" = "$RELEASE_VERSION"
+          npm init -y >/dev/null
+          npm install --omit=dev --omit=peer --ignore-scripts --no-audit --no-fund "@bybrawe/opencode-goal@$RELEASE_VERSION"
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict'
+          const { default: plugin } = await import('@bybrawe/opencode-goal/server')
+          const { default: tui } = await import('@bybrawe/opencode-goal/tui')
+          const { GoalStatusRpc } = await import('@bybrawe/opencode-goal/rpc')
+          assert.equal(plugin.id, '@bybrawe/opencode-goal')
+          assert.equal(typeof plugin.setup, 'function')
+          assert.equal(typeof tui.setup, 'function')
+          assert.equal(GoalStatusRpc.id, 'opencode-goal-status')
+          console.log('PUBLISHED_NATIVE_CONSUMER_PASS')
+          JS

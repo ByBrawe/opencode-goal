@@ -1,112 +1,84 @@
 # Releasing OpenCode Goals
 
-This project separates **release readiness** from **publishing**. Pull-request CI proves an exact commit is packageable; npm publication is performed only by the repository's trusted-publishing workflow after the release version reaches `main`.
+Release readiness and publication are separate. Work remains on `main`; no repair
+or release branch is needed. Publish only an immutable commit which passes all
+required gates. A green older commit is not evidence for the release candidate.
 
 ## Required release gates
 
-Before a stable release reaches `main`, the exact pull-request head should have these workflows green:
+The exact main push must pass all of these before npm publication:
 
-- `CI`
-- `Actions Security Gate`
-- `Real Host Progress`
-- `Real Restart Recovery`
-- `Release Readiness`
-- `Experimental OpenCode 2 Host`
-- `Current OpenCode 2 Stable Host`
-- `OpenCode 2 Todo Materialization Diff`
-- `OpenCode 2 Unit Handoff`
+- CI
+- Actions Security Gate
+- Real Host Progress
+- Real Restart Recovery
+- Release Readiness
+- Experimental OpenCode 2 Host
+- Current OpenCode 2 Stable Host
+- OpenCode 2 Todo Materialization Diff
+- OpenCode 2 Unit Handoff
+- Native Goal Sidebar
 
-`CI` exercises the minimum supported OpenCode compatibility target, the current published OpenCode plugin SDK, and real OpenCode lifecycle/semantic/steering/Todo canaries.
+`scripts/native-release-gate.mjs` enforces this list. Missing, pending, skipped,
+failed, cancelled, wrong-commit, PR-only or fork runs never count as success. The
+publisher waits at most fifteen minutes, then refuses publication. Both previously
+PR-only current-stable and Todo-differential workflows now run on main as well.
 
-`Release Readiness` runs on Ubuntu and Windows with Node 20 and Node 24. It runs checks/tests/evals, builds the npm tarball, installs it into a clean production-only consumer without manually injecting runtime dependencies, imports the public API plus dedicated server/TUI entrypoints, and executes the packed installer artifact.
+CI retains V1 minimum/current compatibility and native lifecycle/semantic/steering
+coverage. Release Readiness checks Ubuntu/Windows with Node 20/24, unit tests,
+adversarial evaluation and a production-only installed tarball. Native Goal Sidebar
+checks actual OpenTUI rendering on both operating systems and two-location RPC on
+OpenCode 2.0.18. Unit Handoff tests 2.0.16 and 2.0.18 independently.
 
-`Experimental OpenCode 2 Host` is the historical workflow name for the pinned OpenCode 2.0.11 parity matrix. It exercises the exact-host server entry, lifecycle authority, autonomous ownership, control plane, telemetry/accounting, semantic completion, verifier boundaries, provider recovery, and related V2 canaries. The workflow name is retained so existing required-check configuration stays stable.
+## Package contract
 
-`Current OpenCode 2 Stable Host` separately proves that the default lifecycle/autonomous path still works on the current stable host pin. `OpenCode 2 Todo Materialization Diff` compares stock and Goal tool exposure on the same current host so a Goal regression cannot be confused with an upstream tool-surface change.
+The public root is intentionally a programmatic multi-export library barrel.
+OpenCode resolves the dedicated `./server` export, which contains the dual server
+facade and native setup. The `./tui`, `./v2`, explicit `./v1` and shared `./rpc`
+exports must remain packageable and independently importable as appropriate.
 
-`OpenCode 2 Unit Handoff` proves opt-in bounded per-unit rotation on current OpenCode 2.0.16: one durable Goal crosses three native sessions through the two-phase handoff and reaches ordinary host + semantic-verifier completion without resetting budget/evidence/usage.
+Runtime imports must be declared as production dependencies. Optional OpenTUI peers
+must match the supported host; importing the TUI facade must not eagerly load them.
+The installer bin must remain `bin/opencode-goal.js` and report package.json's exact
+version. Multi-config install/update must pin that version everywhere, preserve
+user-owned command files and options, and uninstall must preserve project Goal state.
 
-For installer releases, package smoke must verify all of these from the packed artifact:
+Local gates:
 
-```text
-@bybrawe/opencode-goal
-@bybrawe/opencode-goal/server
-@bybrawe/opencode-goal/tui
-@opencode-ai/plugin runtime dependency
-opencode-goal --version
-installer exact package pin
-OpenCode 1 managed commands/goal.md creation
-OpenCode 2 native plugins config / plugin-native command mode
---uninstall package registration removal
---uninstall managed command removal
-```
-
-The dedicated `./server` entrypoint is required because current OpenCode resolves that export before falling back to legacy root-module export scanning. The public root barrel intentionally exposes programmatic helpers and must not be used as the server plugin module.
-
-Local equivalent:
-
-```text
+```sh
 npm install
 npm run release:check
+npm run test:tui-native
 ```
 
-Machine-readable package smoke:
+## Trusted publication
 
-```text
-npm run package:smoke -- --json package-smoke-report.json
-```
+The current authorized release is 1.3.39, following npm latest 1.3.38. The publisher
+runs on an explicit workflow dispatch or a main update to its workflow/package
+manifest. Other versions are skipped until the release guard is deliberately changed.
 
-## Preparing a stable release
+The existing `publish-npm.yml` is the only OIDC publisher. It retains read-only
+contents, no persisted checkout credentials, no long-lived npm token and no git
+push. Actions read permission is used only to verify exact-commit checks. The
+immutable triggering SHA is checked out; publication is serialized and never
+cancelled by a newer publisher run. npm >=11.5.1 is required.
 
-1. Keep release work on a pull request until all required gates are green on the exact head commit.
-2. Align `package.json`, `CHANGELOG.md`, README/release documentation, benchmark pins when applicable, and `.github/workflows/publish-npm.yml`.
-3. Confirm every module imported by the compiled npm plugin at runtime is declared in production `dependencies`; do not rely on a peer/dev-only package being present in OpenCode's isolated plugin cache.
-4. Confirm `engines.opencode` declares the supported host range.
-5. Confirm `@bybrawe/opencode-goal/server` default-exports exactly one dual OpenCode plugin module with callable `server` and `setup` functions; V1 uses `server`, while stable V2 uses `setup` by default with explicit fail-closed environment kill switches.
-6. Confirm npm Trusted Publishing is authorized for this repository/workflow and package.
-7. Inspect package-smoke evidence and `npm pack --dry-run` output.
-8. For installer releases, verify install/update and `--uninstall` against an isolated config directory.
-9. Verify the installer does not overwrite a user-owned `commands/goal.md` and uninstall does not remove user-owned command files or project Goal state.
-10. If more than one supported global OpenCode config filename exists, verify install/update stages every config first and then pins the same exact Goal package version in all of them so a later-loaded config cannot shadow the plugin registration.
-11. Merge only the green exact head.
+An existing immutable npm version must have the same gitHead as the release source.
+A different gitHead is an error, not a successful no-op. Use a new version for new
+source. For an unpublished version the registry's latest must equal the declared
+predecessor, preventing accidental downgrades or out-of-order publication.
 
-## Trusted stable publication
+After exact-main gates, the publisher exercises the pinned Loop source with Goal
+on real OpenCode 2.0.18, plus read-only native status. npm publish also runs the
+existing prepublishOnly release:check; no product gate is removed.
 
-`.github/workflows/publish-npm.yml` is the only workflow allowed `id-token: write`. It uses pinned release actions, `contents: read`, and checkout with persisted credentials disabled.
+## Final verification
 
-The current one-shot stable guard is:
+After publication the authoritative registry must expose the exact version,
+matching gitHead, package exports, production dependencies, expected installer bin
+and latest tag. A clean consumer runs the public installer with --version and
+imports the published native server, TUI facade and shared RPC contract.
 
-```text
-1.3.38
-```
-
-Before `npm publish`, the workflow:
-
-1. runs the Actions security policy;
-2. verifies the trusted-publishing npm runtime;
-3. checks that `package.json` equals the expected one-shot version;
-4. checks the npm registry and skips publication if the exact version already exists while still running registry/installer verification;
-5. when publication is still needed, requires the predecessor release (`1.3.37`) to exist and remain authoritative as npm `latest` with the expected installer bin before allowing `1.3.38` to publish.
-
-Publication uses npm Trusted Publishing/OIDC under the `latest` tag; no long-lived npm token is stored in the workflow.
-
-## After publishing
-
-The workflow itself must verify all of these before the release is considered published:
-
-- the exact `1.3.38` package version is visible in the npm registry;
-- npm `latest` resolves to `1.3.38`;
-- `bin.opencode-goal` resolves to the expected `bin/opencode-goal.js` path;
-- a clean consumer can run `npm exec --yes --package=@bybrawe/opencode-goal@1.3.38 -- opencode-goal --version` and receives `1.3.38`.
-
-Then, from a clean config directory, run the public installer and verify:
-
-- the plugin entry is pinned to the published exact version in every supported global config file that already exists;
-- the published package exposes a valid dedicated `./server` entrypoint;
-- the package carries its required `@opencode-ai/plugin` runtime dependency;
-- on OpenCode 1, `commands/goal.md` is created and recognized by OpenCode command discovery; on OpenCode 2, the installer writes the native `plugins` entry and removes only the Goal-owned legacy command bridge;
-- `/goal` is visible after a full OpenCode restart;
-- `/goal status` and `/goal <objective>` are handled by the correct host surface: V1 plugin interception ahead of the managed bridge, or the plugin-native V2 `/goal` command;
-- `--uninstall` removes Goal-owned registration/command artifacts without deleting unrelated config or project Goal state.
-
-Do not claim a release is published merely because the merge or publish workflow started; the npm registry plus the clean-consumer installer check are the final publication source of truth.
+A started workflow, merge, tag or successful upload alone is not publication proof.
+Record the published version, source SHA, integrity and successful consumer check.
+See docs/releases/1.3.39.md for this release's product scope and limitations.

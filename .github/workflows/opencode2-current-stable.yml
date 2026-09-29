@@ -1,6 +1,8 @@
 name: Current OpenCode 2 Stable Host
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
   pull_request:
     paths:

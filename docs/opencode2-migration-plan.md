@@ -17,8 +17,8 @@ isolated; never initialize it as a side effect of native V2 loading.
 | --- | --- | --- | --- |
 | 0 | Inspect both main branches and official V2 contracts | Baselines and complete feature/capability matrix | Initial matrix below; per-option audit remains open |
 | 1 | Plugin lifetime, admission and reload safety | Negative regression followed by passing adapter and full suites | First Goal increment verified; remaining async paths still need audit |
-| 2 | Commands, tools, native options, installers and exported types | Native contract for every supported surface | In progress: server entry is native, TUI still needs porting |
-| 3 | Completion, usage/retries, compaction and per-unit handoff | Same semantics across native execution and restart | Existing coverage retained; adversarial expansion pending |
+| 2 | Commands, tools, native options, installers and exported types | Native contract for every supported surface | Native server, sidebar and read-only RPC implemented; per-option audit remains open |
+| 3 | Completion, usage/retries, compaction and per-unit handoff | Same semantics across native execution and restart | Handoff unload fences and full-contract three-session coverage added; further race audit remains open |
 | 4 | Joint Goal/Loop ownership and diagnostics | No second continuation owner or false completion | Expanded current-head real-host matrix pending |
 | 5 | Batch Windows/Linux and clean installed-package checks | Exact final heads pass before any publication | Full migration gate remains open |
 
@@ -32,12 +32,13 @@ isolated; never initialize it as a side effect of native V2 loading.
 | Completion and accounting | Native execution/telemetry/model-limit and semantic verifier modules | Expand stale-revision, Plan, foreground, limit and verifier-failure races |
 | Per-unit sessions | `unit-handoff.ts`, `unit-command.ts` and existing three-session canary | Audit cancellation and concurrent controls at each durable handoff phase |
 | Installer and package | Existing `plugins` configuration and production tarball checks | Cross-check object options, multiple configs, local/package duplication and uninstall |
-| Terminal sidebar | `src/tui/index.ts` still exports `tui(api)` and uses `api.slots.register/sidebar_content` | Port to the V2 TUI `setup(context)` and `context.ui.slot({ append: "sidebar.content" })` contract; do not claim current V2 sidebar parity |
-| Remote/worktree status | Existing sidebar reads project-local files | Resolve session location and a read-only server status path; never read a remote Goal from unrelated local files |
+| Terminal sidebar | `src/tui/index.ts` exposes native `setup(context)`; `src/tui/native.ts` uses `ui.slot` | Native OpenTUI rendering and reactive session switching tested; V1 entry remains lazy |
+| Remote/worktree status | Shared `./rpc` contract and session-bound server projection | Read-only native RPC validates directory/workspace; client has no filesystem fallback |
 
-The TUI gap is based on the current entry source and the official V2 CLI
-plugin contract, not on an inferred successful UI test. A server canary or a
-successful import of the legacy TUI export does not prove V2 sidebar support.
+The initial TUI gap is now implemented through the native CLI slot and RPC
+contracts. Rendering is tested with the real OpenTUI test renderer; server RPC
+is tested independently on OpenCode 2.0.18 in two locations. These are not a
+claim of a live interactive CLI end-to-end test or a cross-machine field test.
 
 ## First Goal increment: implemented and tested
 
@@ -61,9 +62,9 @@ synchronous resume exception. The one-shot write workflow removed itself.
 
 ## Next implementation order
 
-1. Native TUI entry and read-only status delivery, including remote server and
-   different-worktree behavior. Test slot registration, cleanup, corrupt storage
-   and no lifecycle mutation from presentation code.
+1. Keep the native sidebar and read-only RPC covered on Windows/Linux, including
+   actual rendering, cleanup, corrupt storage and wrong-location rejection.
+   See [native sidebar](opencode2-native-sidebar.md) for the implementation.
 2. Complete the command/option matrix and replace historical shape guessing
    with typed current V2 contracts where practical.
 3. Expand admission, handoff and retry cancellation tests, then run the two
@@ -73,6 +74,39 @@ synchronous resume exception. The one-shot write workflow removed itself.
 
 Do not migrate durable Goal storage merely because another API exists. Retain
 its tested locking, generation, recovery and evidence semantics.
+
+## Native sidebar increment
+
+The native sidebar reads the connected server through `opencode-goal-status`
+RPC. It passes the displayed session's directory/workspace, never the CLI's
+local working directory. The server verifies the session before using its
+read-only formatter. Missing RPC, corrupt storage and mismatched responses
+remain visible as unavailable. Presentation never changes Goal ownership.
+
+Nine permanent regressions cover isolation, read-only storage, cancellation,
+late results, event coalescing and timeouts. The Bun/OpenTUI render smoke checks
+visible text, reactive session changes and idempotent cleanup. The real native
+RPC canary checks two locations and proves that a client-supplied path cannot
+redirect a read, even when the host schema parser strips that extra field.
+
+The package exports `./rpc` and retains a lazy V1 TUI facade. Its V2 dependency
+starts at `@opencode/plugin@^2.0.18`; optional OpenTUI peers match the tested
+0.5.12 contract, and development UI versions are pinned for reproducibility.
+A permanent read-only Windows/Linux workflow retains the new checks.
+
+The current handoff lifetime correction is retained; native RPC and the
+full-contract three-session canary are also exercised together. Publication
+and the broad current-head matrix remain separately observable gates.
+
+Product commit: `64312391b5c7e9fb01a7dec6be1eecb2b08708aa`.
+The [implementation run](https://github.com/ByBrawe/opencode-goal/actions/runs/36503605272)
+passed native rendering, two-location RPC, three-session handoff, all 454 unit
+cases (452 passed, two platform skips), adversarial evaluation, production
+package smoke and the unchanged Actions security gate. The run's overall
+conclusion is failure because its runner token could not create the new
+workflow during git push. The same tested commit is promoted separately via
+the authorized repository connection, without changing the security gate.
+This evidence is not a claim that the subsequent main CI has finished.
 
 ## Joint constraints
 

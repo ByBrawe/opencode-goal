@@ -1,6 +1,6 @@
 {
   "name": "@bybrawe/opencode-goal",
-  "version": "1.3.41",
+  "version": "1.3.42",
   "description": "Native OpenCode 2 goals with host-verified completion, crash-safe per-unit sessions, a read-only sidebar, and explicit OpenCode 1 compatibility.",
   "type": "module",
   "main": "./dist/index.js",
@@ -47,6 +47,7 @@
     "docs/releases/1.3.39.md",
     "docs/releases/1.3.40.md",
     "docs/releases/1.3.41.md",
+    "docs/releases/1.3.42.md",
     "docs/releases/CHANGELOG-through-1.3.38.md"
   ],
   "repository": {

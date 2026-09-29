@@ -2,11 +2,25 @@
 
 All notable changes to **OpenCode Goals** are documented here.
 
+## 1.3.42 — 2026-09-30
+
+OpenCode 2 migration-guide conformance and public-context authority hardening release.
+
+- Treat `ctx.location.directory` as the only plugin-instance project location; `ctx.options` remains plugin configuration and can no longer masquerade as location authority during startup recovery or capability probes.
+- Keep per-session state resolution bound to public `session.get(...).location.directory`; missing session location still fails closed.
+- Use the public V2 `session.interrupt({ sessionID, continue: false })` request for semantic-verifier timeout cleanup as well as lifecycle interruption.
+- Retain native `plugins` installation, `Plugin.define({ id, setup })` entrypoints, command/tool/session hooks, abortable event subscriptions, explicit V1 compatibility subpaths, and host-owned compaction boundaries.
+- Add regressions proving plugin options cannot supply project location authority and that verifier interruption uses the public V2 contract.
+
+This patch preserves Goal identity, objective, constraints, revision, evidence, cumulative usage, budgets and same-ID handoff recovery.
+
+See [the 1.3.42 release notes](docs/releases/1.3.42.md).
+
 ## 1.3.41 — 2026-09-30
 
 OpenCode 2 public-session contract and location-safety hardening release.
 
-- Use the documented V2 `session.interrupt({ sessionID, continue: false })` request shape for lifecycle mutations and semantic-verifier timeout cleanup instead of the stale `resume` field.
+- Use the documented V2 `session.interrupt({ sessionID, continue: false })` request shape for lifecycle mutations instead of the stale `resume` field.
 - Resolve Goal state only from the target session returned by `session.get`; plugin-instance options are no longer accepted as proof of an arbitrary session's working directory.
 - Keep the V2 package root isolated from V1-only modules through the explicit `./api` and `./v1` subpaths introduced in 1.3.40.
 - Canonicalize project-root traversal before storage safety checks so Windows 8.3 aliases such as `RUNNER~1` do not falsely look outside the project while symlink/junction escapes remain rejected.

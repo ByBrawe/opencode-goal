@@ -10,6 +10,21 @@ import { accountAssistantUsage } from "../dist/runtime/accounting.js"
 import { closeObservedTurn } from "../dist/runtime/progress.js"
 import { observeTodoPlan, todoPlanIsCurrent } from "../dist/runtime/todo-plan.js"
 
+async function removeTree(root) {
+  let last
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    try {
+      await removeTree(root)
+      return
+    } catch (error) {
+      last = error
+      if (!["ENOTEMPTY", "EBUSY", "EPERM"].includes(error?.code)) throw error
+      await new Promise((resolve) => setTimeout(resolve, 25 * (attempt + 1)))
+    }
+  }
+  throw last
+}
+
 async function readOnlyGoal(root) {
   const dir = path.join(root, ".opencode", "goals")
   const files = await readdir(dir)
@@ -81,7 +96,7 @@ test("auto-stalled Goal keeps steering text intact until model resume is activat
     assert.equal(persisted.stalledTurns, 0)
     assert.equal(persisted.skipNextStallCheck, undefined)
   } finally {
-    await rm(root, { recursive: true, force: true })
+    await removeTree(root)
   }
 })
 
@@ -99,7 +114,7 @@ test("explicit user pause is not silently resumed by an unrelated work instructi
     assert.equal(persisted.status, "paused")
     assert.equal(persisted.stopReason, "paused by user")
   } finally {
-    await rm(root, { recursive: true, force: true })
+    await removeTree(root)
   }
 })
 

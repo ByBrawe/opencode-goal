@@ -21,7 +21,9 @@ const VERIFIER_RESULT_TOOL = "opencode_goal_verifier_result"
 const WRITE_TOOL = "write"
 const PROOF = "V2 UNIT HANDOFF VERIFIED"
 const UNIT_COMMAND = "node -e \"process.stdout.write(require('fs').readFileSync('unit.txt','utf8'))\""
-const CREATE_COMMAND = `ship three units --accept "README contains ${PROOF}" --contains "README.md::${PROOF}" --unit ${JSON.stringify(UNIT_COMMAND)} --fresh-session-per-unit --max-turns 20`
+const OBJECTIVE = "ship three units. " + "Preserve the complete user contract across native sessions. ".repeat(32) + "REQUIRED_OBJECTIVE_TAIL_7a31"
+const CONSTRAINT = "Do not publish packages or change unrelated files."
+const CREATE_COMMAND = `${OBJECTIVE} --constraint ${JSON.stringify(CONSTRAINT)} --accept "README contains ${PROOF}" --contains "README.md::${PROOF}" --unit ${JSON.stringify(UNIT_COMMAND)} --fresh-session-per-unit --max-turns 20`
 
 function appendLog(current, chunk, limit = 160_000) {
   return (current + String(chunk)).slice(-limit)
@@ -272,6 +274,8 @@ function startProvider(unitFile) {
     stats.requests.push({
       sequence,
       currentUserText: current.userText,
+      fullObjectiveVisible: (body.messages || []).some(message => contentText(message.content).includes(OBJECTIVE)),
+      constraintVisible: (body.messages || []).some(message => contentText(message.content).includes(CONSTRAINT)),
       tools,
       verifier,
       autonomous,
@@ -548,6 +552,7 @@ async function main() {
 
     const autonomousRequests = provider.stats.requests.filter((item) => item.autonomous)
     assert.ok(autonomousRequests.length >= 3, `three Goal-owned unit executions were not observed\n${await diagnostics()}`)
+    assert.equal(autonomousRequests.every(item => item.fullObjectiveVisible && item.constraintVisible), true, "full Goal contract missing from a native unit session model request")
     const firstAutonomous = autonomousRequests[0]
     assert.equal(firstAutonomous.tools.includes(CONTROL_TOOL), false, "direct lifecycle mutation tool leaked into Goal-owned work")
     assert.equal(firstAutonomous.tools.includes(READ_ONLY_TOOL), true)

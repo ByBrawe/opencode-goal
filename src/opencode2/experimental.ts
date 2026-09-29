@@ -1285,9 +1285,11 @@ export const OpenCode2GoalsExperimental = {
       directory: string,
       target: GoalState,
     ): Promise<void> => {
+      if (lifecycleAbort.signal.aborted) return
       try {
         const store = new GoalStore(directory, { onTransition: createGoalTransitionNotifier(directory) })
         const current = await store.load(target.sessionID)
+        if (lifecycleAbort.signal.aborted) return
         if (current?.id === target.id && current.status === "handoff_pending") {
           await store.clear(target.sessionID)
         }
@@ -1295,6 +1297,7 @@ export const OpenCode2GoalsExperimental = {
         // Best-effort rollback only. Source ownership stays authoritative until
         // its terminal handoff is durably persisted.
       }
+      if (lifecycleAbort.signal.aborted) return
       if (typeof ctx.session.delete === "function") {
         await Promise.resolve(ctx.session.delete({ sessionID: target.sessionID })).catch(() => undefined)
       }
@@ -1304,6 +1307,7 @@ export const OpenCode2GoalsExperimental = {
       directory: string,
       target: GoalState,
     ): Promise<GoalState> => {
+      if (lifecycleAbort.signal.aborted) throw new Error("Native Goal handoff is disposed")
       const handoff = target.unitRotation?.handoff
       const messageID = unitHandoffMessageID(target)
       if (!handoff || !messageID || typeof ctx.session.prompt !== "function") {
@@ -1326,6 +1330,9 @@ export const OpenCode2GoalsExperimental = {
           opencode_goal_unit_handoff: true,
         },
       })
+      // An already-started admission may settle after unload. Preserve the
+      // prepared record and inbox ID for a fresh instance; do not roll it back.
+      if (lifecycleAbort.signal.aborted) throw new Error("Native Goal handoff is disposed")
       const admittedID = firstString(record(admitted)?.id, nestedRecord(admitted, "data")?.id)
       if (admittedID && admittedID !== messageID) {
         throw new Error("OpenCode 2 unit handoff admission returned a different host message ID")
@@ -1340,7 +1347,7 @@ export const OpenCode2GoalsExperimental = {
       directory: string,
       target: GoalState,
     ): Promise<boolean> => {
-      if (handoffDispatching.has(target.sessionID)) return true
+      if (lifecycleAbort.signal.aborted || handoffDispatching.has(target.sessionID)) return true
       const handoff = target.unitRotation?.handoff
       const messageID = unitHandoffMessageID(target)
       if (!handoff || !messageID || typeof ctx.session.prompt !== "function") return false
@@ -1370,6 +1377,7 @@ export const OpenCode2GoalsExperimental = {
             opencode_goal_unit_handoff: true,
           },
         })
+        if (lifecycleAbort.signal.aborted) return true
         const resumedID = firstString(record(resumed)?.id, nestedRecord(resumed, "data")?.id)
         if (resumedID && resumedID !== messageID) {
           throw new Error("OpenCode 2 unit handoff resume returned a different host message ID")
@@ -1400,9 +1408,13 @@ export const OpenCode2GoalsExperimental = {
       sourceSnapshot: GoalState,
       targetSnapshot: GoalState,
     ): Promise<boolean> => {
+      // Returning handled after unload prevents the old owner falling back to
+      // another continuation. A new instance recovers these durable phases.
+      if (lifecycleAbort.signal.aborted) return true
       const store = new GoalStore(directory, { onTransition: createGoalTransitionNotifier(directory) })
       let source = await store.load(sourceSnapshot.sessionID)
       let target = await store.load(targetSnapshot.sessionID)
+      if (lifecycleAbort.signal.aborted) return true
       if (!source || !target || source.id !== target.id) return false
       const handoff = target.unitRotation?.handoff
       if (!handoff || handoff.fromSessionID !== source.sessionID) return false
@@ -1424,6 +1436,7 @@ export const OpenCode2GoalsExperimental = {
         try {
           target = await admitUnitHandoffPrompt(directory, target)
         } catch {
+          if (lifecycleAbort.signal.aborted) return true
           // Admission happens before source ownership is retired. Roll back the
           // prepared target completely so failure means no rotation.
           await discardPreparedUnitHandoff(directory, target)
@@ -1431,8 +1444,10 @@ export const OpenCode2GoalsExperimental = {
         }
       }
 
+      if (lifecycleAbort.signal.aborted) return true
       source = await store.load(source.sessionID)
       target = await store.load(target.sessionID)
+      if (lifecycleAbort.signal.aborted) return true
       if (!source || !target) return false
 
       const admittedHandoff = target.unitRotation?.handoff
@@ -1454,6 +1469,7 @@ export const OpenCode2GoalsExperimental = {
         const terminal = markUnitHandoffSourceTerminal(source, target)
         try {
           await store.save(terminal)
+          if (lifecycleAbort.signal.aborted) return true
           source = terminal
         } catch {
           await discardPreparedUnitHandoff(directory, target)
@@ -1467,6 +1483,7 @@ export const OpenCode2GoalsExperimental = {
 
       try {
         target = await store.load(target.sessionID)
+        if (lifecycleAbort.signal.aborted) return true
         if (!target) {
           scheduleUnitHandoffRecovery(directory, targetSnapshot.sessionID)
           return true
@@ -1474,6 +1491,7 @@ export const OpenCode2GoalsExperimental = {
         if (target.status === "handoff_pending") {
           const active = activateUnitHandoffTarget(target)
           await store.save(active)
+          if (lifecycleAbort.signal.aborted) return true
           target = active
         }
       } catch {
@@ -1497,16 +1515,20 @@ export const OpenCode2GoalsExperimental = {
       source: GoalState,
       nextUnit: string,
     ): Promise<boolean> => {
+      if (lifecycleAbort.signal.aborted) return true
       if (!source.unitRotation || !unitRotationNeeded(source, nextUnit)) return false
       const createSession = ctx.session.create
       if (typeof createSession !== "function" || typeof ctx.session.prompt !== "function") return false
 
       try {
         return await withUnitHandoffLease(directory, source.id, async () => {
+          if (lifecycleAbort.signal.aborted) return true
           const freshSource = await new GoalStore(directory).load(source.sessionID)
+          if (lifecycleAbort.signal.aborted) return true
           if (!freshSource || freshSource.id !== source.id || !unitRotationNeeded(freshSource, nextUnit)) return false
 
           let target = await findPreparedUnitHandoff(directory, freshSource, nextUnit)
+          if (lifecycleAbort.signal.aborted) return true
           if (!target) {
             let created: unknown
             try {
@@ -1526,6 +1548,7 @@ export const OpenCode2GoalsExperimental = {
             } catch {
               return false
             }
+            if (lifecycleAbort.signal.aborted) return true
             const targetSessionID = firstString(record(created)?.id, nestedRecord(created, "data")?.id)
             if (!targetSessionID || targetSessionID === freshSource.sessionID) return false
 
@@ -1533,6 +1556,7 @@ export const OpenCode2GoalsExperimental = {
             try {
               await new GoalStore(directory, { onTransition: createGoalTransitionNotifier(directory) }).save(target)
             } catch {
+              if (lifecycleAbort.signal.aborted) return true
               if (typeof ctx.session.delete === "function") {
                 await Promise.resolve(ctx.session.delete({ sessionID: targetSessionID })).catch(() => undefined)
               }
@@ -1543,10 +1567,12 @@ export const OpenCode2GoalsExperimental = {
           return await completeUnitHandoff(directory, freshSource, target)
         })
       } catch {
+        if (lifecycleAbort.signal.aborted) return true
         // Before the terminal source write, handoff failure means "no rotation":
         // let the caller continue in the existing active session. After the
         // terminal write, predecessor ownership must never be resurrected.
         const latest = await new GoalStore(directory).load(source.sessionID).catch(() => null)
+        if (lifecycleAbort.signal.aborted) return true
         if (latest?.status === "active" && latest.id === source.id && latest.revision === source.revision) {
           return false
         }
@@ -1566,15 +1592,19 @@ export const OpenCode2GoalsExperimental = {
         return
       }
       for (const target of goals) {
+        if (lifecycleAbort.signal.aborted) return
         const handoff = target.unitRotation?.handoff
         if (!handoff || handoff.phase === "dispatched") continue
         if (target.status !== "handoff_pending" && target.status !== "active") continue
         const source = goals.find((goal) => goal.sessionID === handoff.fromSessionID && goal.id === target.id)
           ?? await store.load(handoff.fromSessionID).catch(() => null)
+        if (lifecycleAbort.signal.aborted) return
         if (!source) continue
         await withUnitHandoffLease(directory, target.id, async () => {
+          if (lifecycleAbort.signal.aborted) return
           const freshSource = await store.load(source.sessionID)
           const freshTarget = await store.load(target.sessionID)
+          if (lifecycleAbort.signal.aborted) return
           if (!freshSource || !freshTarget) return
           await completeUnitHandoff(directory, freshSource, freshTarget)
         }).catch(() => undefined)

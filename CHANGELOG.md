@@ -6,7 +6,7 @@ All notable changes to **OpenCode Goals** are documented here.
 
 OpenCode 2 public-session contract and location-safety hardening release.
 
-- Use the documented V2 `session.interrupt({ sessionID, continue: false })` request shape for lifecycle mutations instead of the stale `resume` field.
+- Use the documented V2 `session.interrupt({ sessionID, continue: false })` request shape for lifecycle mutations and semantic-verifier timeout cleanup instead of the stale `resume` field.
 - Resolve Goal state only from the target session returned by `session.get`; plugin-instance options are no longer accepted as proof of an arbitrary session's working directory.
 - Keep the V2 package root isolated from V1-only modules through the explicit `./api` and `./v1` subpaths introduced in 1.3.40.
 - Canonicalize project-root traversal before storage safety checks so Windows 8.3 aliases such as `RUNNER~1` do not falsely look outside the project while symlink/junction escapes remain rejected.

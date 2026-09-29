@@ -29,6 +29,10 @@
     "./rpc": {
       "types": "./dist/status-rpc.d.ts",
       "import": "./dist/status-rpc.js"
+    },
+    "./api": {
+      "types": "./dist/api.d.ts",
+      "import": "./dist/api.js"
     }
   },
   "bin": {

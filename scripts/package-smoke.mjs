@@ -67,7 +67,7 @@ function assertPackageFiles(pack) {
   const files = new Set(pack.files.map((item) => String(item.path).replaceAll("\\", "/")))
   const required = [
     "package.json", "README.md", "CHANGELOG.md", "LICENSE", "bin/opencode-goal.js",
-    "dist/index.js", "dist/index.d.ts", "dist/server.js", "dist/server.d.ts",
+    "dist/index.js", "dist/index.d.ts", "dist/api.js", "dist/api.d.ts", "dist/server.js", "dist/server.d.ts",
     "dist/native.js", "dist/native.d.ts", "dist/legacy-loader.js", "dist/legacy-loader.d.ts", "dist/legacy-v1.js",
     "dist/install.js", "dist/tui/index.js", "dist/tui/index.d.ts", "dist/tui/native.js", "dist/status-rpc.js", "dist/status-rpc.d.ts",
   ]
@@ -112,6 +112,7 @@ async function main() {
     throw new Error(`${v2RuntimeDependency} must not be peer-only; published V2 plugins must carry a compatible plugin runtime dependency`)
   }
   if (!packageJSON.exports?.["./server"]?.import) throw new Error("package.json must expose the OpenCode ./server entrypoint")
+  if (packageJSON.exports?.["./api"]?.import !== "./dist/api.js") throw new Error("package.json must expose programmatic named APIs through ./api")
   if (packageJSON.exports?.["./v1"]?.import !== "./dist/legacy-loader.js") throw new Error("package.json must keep explicit V1 dispatch behind ./v1")
   if (!packageJSON.exports?.["./tui"]?.import) throw new Error("package.json must expose the target-exclusive ./tui entrypoint")
   if (packageJSON.bin?.["opencode-goal"] !== "bin/opencode-goal.js") throw new Error("package.json must expose the npm-canonical committed opencode-goal installer bin shim")
@@ -151,10 +152,11 @@ async function main() {
       if (mod.default?.id !== "@bybrawe/opencode-goal") throw new Error("root plugin id is missing or unstable");
       if (typeof mod.default?.setup !== "function") throw new Error("root OpenCode 2 setup export is missing");
       if (typeof mod.default?.server !== "function") throw new Error("root OpenCode 1 compatibility server export is missing");
-      if (typeof mod.createGoal !== "function") throw new Error("createGoal export is missing");
-      if (typeof mod.parseGoalCommand !== "function") throw new Error("parseGoalCommand export is missing");
-      if (typeof mod.GoalSequenceStore !== "function") throw new Error("GoalSequenceStore export is missing");
-      if (Object.keys(mod).length <= 1) throw new Error("public root API should remain a multi-export library barrel");
+      const api = await import("@bybrawe/opencode-goal/api");
+      if (typeof api.createGoal !== "function") throw new Error("createGoal API export is missing");
+      if (typeof api.parseGoalCommand !== "function") throw new Error("parseGoalCommand API export is missing");
+      if (typeof api.GoalSequenceStore !== "function") throw new Error("GoalSequenceStore API export is missing");
+      if (Object.keys(api).length <= 1) throw new Error("./api should remain the multi-export programmatic library barrel");
       const server = await import("@bybrawe/opencode-goal/server");
       if (JSON.stringify(Object.keys(server)) !== JSON.stringify(["default"])) throw new Error("server entrypoint must export only the plugin module");
       if (server.default?.id !== "@bybrawe/opencode-goal") throw new Error("server plugin id is incorrect");

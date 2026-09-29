@@ -1,20 +1,18 @@
-import type { PluginModule } from "@opencode-ai/plugin"
+import { Plugin } from "@opencode/plugin"
 import OpenCodeGoalPlugin from "./legacy-loader.js"
 import { setupNativeGoals } from "./opencode2/native-setup.js"
 
-const plugin = {
+const native = Plugin.define({
   id: "@bybrawe/opencode-goal",
-
-  // OpenCode 1.x server-plugin contract.
-  server: OpenCodeGoalPlugin,
-
-  // OpenCode 2.x promise-plugin contract. The implementation module keeps
-  // its historical name, but the V2 lifecycle/autonomous path is stable by
-  // default; its environment flags remain explicit fail-closed kill switches.
   setup: setupNativeGoals,
-} satisfies PluginModule & {
-  id: string
-  setup: typeof setupNativeGoals
+})
+
+const plugin = {
+  ...native,
+
+  // OpenCode 1.x compatibility remains an explicitly separate implementation.
+  // V2 reads id/setup and ignores server(); V1 1.18.29+ calls server().
+  server: OpenCodeGoalPlugin,
 }
 
 export default plugin

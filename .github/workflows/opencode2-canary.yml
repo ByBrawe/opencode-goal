@@ -6,24 +6,6 @@ on:
     - cron: "43 5 * * *"
   push:
     branches: [main]
-    paths:
-      - "src/opencode2/**"
-      - "src/server.ts"
-      - "scripts/opencode2-host-canary.mjs"
-      - "scripts/opencode2-server-entry-canary.mjs"
-      - "scripts/opencode2-promotion-capability-canary.mjs"
-      - "scripts/opencode2-direct-lifecycle-canary.mjs"
-      - "scripts/opencode2-autonomous-adapter-canary.mjs"
-      - "scripts/opencode2-control-plane-canary.mjs"
-      - "scripts/opencode2-semantic-completion-canary.mjs"
-      - "scripts/opencode2-telemetry-parity-canary.mjs"
-      - "scripts/opencode2-verifier-capability-canary.mjs"
-      - "scripts/opencode2-runtime-capability-canary.mjs"
-      - "scripts/opencode2-runtime-probe-plugin.mjs"
-      - "scripts/opencode2-telemetry-capability-canary.mjs"
-      - "scripts/run-opencode2-host-ci.mjs"
-      - ".github/workflows/opencode2-canary.yml"
-      - "package.json"
   pull_request:
     paths:
       - "src/opencode2/**"

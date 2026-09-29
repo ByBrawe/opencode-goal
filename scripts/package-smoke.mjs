@@ -180,6 +180,9 @@ async function main() {
       "--no-audit",
       "--no-fund",
       tarball,
+      "@opentui/core@0.5.12",
+      "@opentui/solid@0.5.12",
+      "solid-js@1.9.12",
     ], { cwd: consumer })
     const tuiProbe = String.raw`
       const tui = await import("@bybrawe/opencode-goal/tui");

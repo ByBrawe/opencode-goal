@@ -4,7 +4,8 @@ import { setupNativeGoals } from "./opencode2/native-setup.js"
 
 const native = Plugin.define({
   id: "@bybrawe/opencode-goal",
-  setup: setupNativeGoals,
+  setup: (context) =>
+    setupNativeGoals(context as unknown as Parameters<typeof setupNativeGoals>[0]),
 })
 
 const plugin = {

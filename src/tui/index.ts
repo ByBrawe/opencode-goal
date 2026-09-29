@@ -5,7 +5,7 @@ const native = Plugin.define({
   id: 'opencode-goal',
   async setup(context) {
     const { setupNativeGoalTui } = await import('./native.js')
-    return setupNativeGoalTui(context as GoalTuiContext)
+    return setupNativeGoalTui(context as unknown as GoalTuiContext)
   },
 })
 

@@ -24,6 +24,7 @@
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit && node --check scripts/native-entry-test.mjs",
     "test": "npm run build && node scripts/unit-tests.mjs",
+    "test:release": "node --test test/native-release-gate.test.mjs test/native-release-triggers.test.mjs",
     "eval": "npm run build && node scripts/eval-corpus.mjs",
     "package:smoke": "npm run build && node scripts/package-smoke.mjs",
     "release:check": "npm run check && npm test && npm run eval && npm run package:smoke",

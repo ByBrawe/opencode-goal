@@ -42,7 +42,7 @@ async function resolveSessionDirectory(ctx, sessionID) {
   }
   const data = record(session?.data)
   const location = record(session?.location) ?? record(data?.location)
-  const directory = firstString(location?.directory, session?.directory, data?.directory, ctx.options?.directory)
+  const directory = firstString(location?.directory, session?.directory, data?.directory)
   return directory ? path.resolve(directory) : undefined
 }
 

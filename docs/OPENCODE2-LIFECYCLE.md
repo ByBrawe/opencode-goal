@@ -43,5 +43,25 @@ subscriptions. Neither mechanism is a request to abort a native OpenCode
 model, tool or compaction execution. The combined main tree must pass its own
 regression, package and real-host checks.
 
+## Commit-bound validation checkpoints
+
+- Goal da4b1c1745e4fa76cf38f982c9582adf880fc7eb passed all four Release
+  Readiness jobs in run 36499501921: Windows and Ubuntu, Node 20 and 24,
+  including checks, unit tests, adversarial evaluation and installed tarballs.
+- Loop command/schedule candidate run 36500487517 passed its 31 new tests,
+  existing suites and package smoke on Windows and Ubuntu. Its real 2.0.18
+  canary used Goal da4b1c and verified both plugins, native commands and two
+  daemon turns in one session. These are deterministic local-provider tests,
+  not a live-model performance or long-run field benchmark.
+- Changes after da4b1c, including the handoff control-plane exclusion described
+  in OPENCODE2-CONTROL-STATE.md, require their own final-head checks. A prior
+  green run must not be presented as proof of a newer source tree.
+
+Keep the Goal companion commit pinned in Loop's normal native-v2-ci workflow.
+When either runtime changes, validate the combined pair and all generated
+bundles before recording release readiness. Do not replace newer source or
+bundles with a previously verified but stale candidate. Preserve concurrent
+work with a fast-forward-only promotion and revalidate any combined changes.
+
 Remaining feature parity, handoff/restart coverage and release acceptance stay
 tracked in OPENCODE2-MIGRATION.md rather than being inferred from issue closure.

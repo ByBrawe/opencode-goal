@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   publish:
-    name: Publish 1.3.40
+    name: Publish 1.3.41
     if: github.repository == 'ByBrawe/opencode-goal' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 35
@@ -26,11 +26,11 @@ jobs:
       contents: read
       actions: read
       id-token: write
-    # 1.3.40 may publish only after every required gate passes on this exact main SHA.
+    # 1.3.41 may publish only after every required gate passes on this exact main SHA.
     # Final candidate includes native root/API separation and Windows canonical-path safety.
     env:
-      RELEASE_VERSION: '1.3.40'
-      RELEASE_PREDECESSOR: '1.3.39'
+      RELEASE_VERSION: '1.3.41'
+      RELEASE_PREDECESSOR: '1.3.40'
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -91,7 +91,7 @@ jobs:
         if: steps.release.outputs.publish == 'true'
         with:
           repository: ByBrawe/opencode-loop
-          ref: d6cd3ab83fcb6ff9586952b3b5d3b0388853eea0
+          ref: 89c04b48ad45ae0c873b5629ec84ac5dc5fc5e2c
           path: companion-loop
           persist-credentials: false
       - name: Real native pair and read-only status before publication

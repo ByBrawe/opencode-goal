@@ -32,10 +32,11 @@ OpenCode 2.0.18. Unit Handoff tests 2.0.16 and 2.0.18 independently.
 
 ## Package contract
 
-The public root is intentionally a programmatic multi-export library barrel.
-OpenCode resolves the dedicated `./server` export, which contains the dual server
-facade and native setup. The `./tui`, `./v2`, explicit `./v1` and shared `./rpc`
-exports must remain packageable and independently importable as appropriate.
+The public package root is the OpenCode 2 `Plugin.define({ id, setup })` entrypoint.
+The same dual definition is exposed through `./server`; programmatic named APIs are
+isolated at `./api`, while `./v1` is the explicit lazy OpenCode 1 implementation.
+The `./tui`, `./v2`, `./rpc`, `./api` and `./v1` exports must remain packageable and
+independently importable as appropriate.
 
 Runtime imports must be declared as production dependencies. Optional OpenTUI peers must match the supported host. Server and native-only
 entrypoints are verified from a production cache with peers omitted; the TUI
@@ -54,7 +55,7 @@ npm run test:tui-native
 
 ## Trusted publication
 
-The current authorized release is 1.3.40, following npm latest 1.3.39. The publisher
+The current authorized release is 1.3.41, following npm latest 1.3.40. The publisher
 runs on an explicit workflow dispatch or a main update to its workflow/package
 manifest. Other versions are skipped until the release guard is deliberately changed.
 
@@ -82,4 +83,4 @@ imports the published native server/shared RPC without TUI peers, then imports t
 
 A started workflow, merge, tag or successful upload alone is not publication proof.
 Record the published version, source SHA, integrity and successful consumer check.
-See docs/releases/1.3.40.md for this release's product scope and limitations.
+See docs/releases/1.3.41.md for this release's product scope and limitations.

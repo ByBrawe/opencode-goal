@@ -2196,7 +2196,7 @@ export const OpenCode2GoalsExperimental = {
     }
 
     if (autonomousEnabled) {
-      const setupDirectory = firstString(ctx.location?.directory, ctx.options?.directory)
+      const setupDirectory = firstString(ctx.location?.directory)
       if (setupDirectory) {
         queueMicrotask(() => {
           void recoverUnitHandoffs(path.resolve(setupDirectory))

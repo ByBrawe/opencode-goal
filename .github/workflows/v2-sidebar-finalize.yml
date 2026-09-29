@@ -43,10 +43,13 @@ jobs:
             name = step['name'] || step['run'].lines.first.strip
             script = step['run']
             script = 'npm install --no-audit --no-fund' if script.strip == 'npm ci'
+            if name.start_with?('Add native slot rendering')
+              script = script.gsub("'^0.5.8'", "'0.5.8'")
+            end
             commit = name.start_with?('Commit only verified')
             if commit
               script = script.sub("git rm #{original}", "git rm #{original} #{current}\nnode scripts/actions-security-gate.mjs")
-              script = script.sub('package.json package-lock.json docs/', 'package.json scripts/package-smoke.mjs .github/workflows/native-sidebar.yml docs/')
+              script = script.sub('package.json package-lock.json docs/', 'package.json scripts/native-status-host-canary.mjs scripts/package-smoke.mjs .github/workflows/native-sidebar.yml docs/')
             end
             puts "::group::#{name}"
             raise "Failed: #{name}" unless system(commit ? { 'GH_TOKEN'=>token } : { 'GH_TOKEN'=>nil, 'GITHUB_TOKEN'=>nil }, 'bash', '-e', '-o', 'pipefail', '-c', script)
@@ -62,6 +65,21 @@ jobs:
               File.write('scripts/package-smoke.mjs', smoke)
             end
             if name.start_with?('Typecheck, native regressions')
+              canary = File.read('scripts/native-status-host-canary.mjs')
+              old = "  assert.equal(injected.ok, false, 'RPC must reject client-supplied filesystem paths')"
+              replacement = <<~'JS'.rstrip
+                // The native JSON-schema boundary may strip extra input fields.
+                // Whether rejected or sanitized, they must never redirect a read.
+                if (injected.ok) {
+                  assert.equal(injected.body.output.sessionID, ids[0])
+                  assert.equal(injected.body.output.directory, a)
+                  assert.ok(injected.body.output.text.includes('LOCAL STATUS A'))
+                  assert.ok(!injected.body.output.text.includes('REMOTE STATUS B'))
+                }
+              JS
+              raise 'RPC invariant anchor changed' unless canary.include?(old)
+              canary = canary.sub(old, replacement).sub('injectedPathRejected: true', 'injectedPathCannotRedirect: true')
+              File.write('scripts/native-status-host-canary.mjs', canary)
               puts '::group::Actual OpenCode 2 status RPC in two locations'
               host = File.join(ENV.fetch('RUNNER_TEMP'), 'goal-status-native-host')
               raise 'host install failed' unless system('npm', 'install', '--prefix', host, '--package-lock=false', '--no-audit', '--no-fund', '@opencode/cli@2.0.18')
@@ -69,7 +87,8 @@ jobs:
               puts '::endgroup::'
             end
             if name.start_with?('Document the native panel')
-              File.write('.github/workflows/native-sidebar.yml', <<~'YAML')
+              file = '.github/workflows/native-sidebar.yml'
+              File.write(file, <<~'YAML')
               name: Native Goal Sidebar
               on:
                 push:
@@ -80,11 +99,11 @@ jobs:
               permissions:
                 contents: read
               concurrency:
-                group: native-sidebar-${{ github.ref }}
+                group: native-sidebar-__GITHUB_REF__
                 cancel-in-progress: true
               jobs:
                 render:
-                  runs-on: ${{ matrix.os }}
+                  runs-on: __MATRIX_OS__
                   timeout-minutes: 15
                   strategy:
                     fail-fast: false
@@ -112,6 +131,9 @@ jobs:
                         npm install --prefix "$RUNNER_TEMP/native-host" --package-lock=false @opencode/cli@2.0.18
                         OPENCODE2_BINARY="$RUNNER_TEMP/native-host/node_modules/.bin/opencode2" node scripts/native-status-host-canary.mjs
               YAML
+              future = File.read(file).sub('__GITHUB_REF__', '$' + '{{ github.ref }}').sub('__MATRIX_OS__', '$' + '{{ matrix.os }}')
+              File.write(file, future)
+              YAML.safe_load(future, aliases: true)
             end
           end
           RUBY

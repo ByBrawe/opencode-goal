@@ -27,7 +27,7 @@ jobs:
       actions: read
       id-token: write
     # 1.3.42 may publish only after every required gate passes on this exact main SHA.
-    # Final candidate adds migration-guide location authority and semantic-verifier interrupt hardening on top of the published V2 package contract.
+    # Final candidate adds migration-guide location authority, semantic-verifier interrupt hardening, and Windows-safe release-test cleanup on top of the published V2 package contract.
     env:
       RELEASE_VERSION: '1.3.42'
       RELEASE_PREDECESSOR: '1.3.41'

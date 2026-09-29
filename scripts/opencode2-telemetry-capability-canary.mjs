@@ -267,7 +267,7 @@ export default {
         options: { codemode: false },
         codemode: false,
         execute: async (input, toolContext) => {
-          const root = ctx.options?.directory ?? process.cwd()
+          const root = ctx.location?.directory ?? process.cwd()
           await writeFile(path.join(root, "telemetry-progress.txt"), String(input?.value ?? ""), "utf8")
           await trace({ phase: "tool.execute", sessionID: toolContext?.sessionID, callID: toolContext?.callID, input })
           return { output: { message: "TELEMETRY_TOOL_OK" }, content: "TELEMETRY_TOOL_OK" }

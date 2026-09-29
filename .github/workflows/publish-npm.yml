@@ -146,13 +146,23 @@ jobs:
           npm install --omit=dev --omit=peer --ignore-scripts --no-audit --no-fund "@bybrawe/opencode-goal@$RELEASE_VERSION"
           node --input-type=module <<'JS'
           import assert from 'node:assert/strict'
+          const { default: root, OpenCodeGoalV1Plugin } = await import('@bybrawe/opencode-goal')
           const { default: plugin } = await import('@bybrawe/opencode-goal/server')
           const { default: native } = await import('@bybrawe/opencode-goal/v2')
+          const { default: v1 } = await import('@bybrawe/opencode-goal/v1')
+          const api = await import('@bybrawe/opencode-goal/api')
           const { GoalStatusRpc } = await import('@bybrawe/opencode-goal/rpc')
+          assert.equal(root, plugin)
           assert.equal(plugin.id, '@bybrawe/opencode-goal')
           assert.equal(typeof plugin.setup, 'function')
+          assert.equal(typeof plugin.server, 'function')
+          assert.equal(plugin.server, v1)
+          assert.equal(OpenCodeGoalV1Plugin, v1)
           assert.equal(native.id, '@bybrawe/opencode-goal')
           assert.equal(typeof native.setup, 'function')
+          assert.equal('server' in native, false)
+          assert.equal(typeof api.createGoal, 'function')
+          assert.equal(typeof api.parseGoalCommand, 'function')
           assert.equal(GoalStatusRpc.id, 'opencode-goal-status')
           console.log('PUBLISHED_NATIVE_SERVER_PASS')
           JS

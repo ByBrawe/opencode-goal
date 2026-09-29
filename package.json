@@ -23,8 +23,8 @@
       "import": "./dist/native.js"
     },
     "./v1": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "types": "./dist/legacy-loader.d.ts",
+      "import": "./dist/legacy-loader.js"
     },
     "./rpc": {
       "types": "./dist/status-rpc.d.ts",

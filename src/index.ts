@@ -1,4 +1,5 @@
-export { default } from "./legacy-loader.js"
+export { default } from "./server.js"
+export { default as OpenCodeGoalV1Plugin } from "./legacy-loader.js"
 
 export * from "./domain/types.js"
 export * from "./domain/goal.js"

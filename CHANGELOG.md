@@ -6,7 +6,7 @@ All notable changes to **OpenCode Goals** are documented here.
 
 Official OpenCode 2 plugin-definition and package-contract hardening release.
 
-- Define the public `./server` entrypoint with `@opencode/plugin` `Plugin.define({ id, setup })`, while retaining V1 `server()` as a separate compatibility implementation.
+- Define the package root and public `./server` entrypoint with `@opencode/plugin` `Plugin.define({ id, setup })`, while retaining V1 `server()` as a separate compatibility implementation and `./v1` as the explicit legacy function.
 - Define the public `./v2` native-only entry with the same official V2 contract instead of a hand-written lookalike object.
 - Define `./tui` with `@opencode/plugin/tui` `Plugin.define()`; keep the V1 TUI implementation lazy and separate.
 - Preserve the official V2 Context at public boundaries and adapt only the existing narrower internal Goal host interfaces behind those boundaries.

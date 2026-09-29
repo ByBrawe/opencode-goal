@@ -68,7 +68,7 @@ function assertPackageFiles(pack) {
   const required = [
     "package.json", "README.md", "CHANGELOG.md", "LICENSE", "bin/opencode-goal.js",
     "dist/index.js", "dist/index.d.ts", "dist/server.js", "dist/server.d.ts",
-    "dist/native.js", "dist/native.d.ts", "dist/legacy-loader.js", "dist/legacy-v1.js",
+    "dist/native.js", "dist/native.d.ts", "dist/legacy-loader.js", "dist/legacy-loader.d.ts", "dist/legacy-v1.js",
     "dist/install.js", "dist/tui/index.js", "dist/tui/index.d.ts", "dist/tui/native.js", "dist/status-rpc.js", "dist/status-rpc.d.ts",
   ]
   for (const file of required) {
@@ -112,6 +112,7 @@ async function main() {
     throw new Error(`${v2RuntimeDependency} must not be peer-only; published V2 plugins must carry a compatible plugin runtime dependency`)
   }
   if (!packageJSON.exports?.["./server"]?.import) throw new Error("package.json must expose the OpenCode ./server entrypoint")
+  if (packageJSON.exports?.["./v1"]?.import !== "./dist/legacy-loader.js") throw new Error("package.json must keep explicit V1 dispatch behind ./v1")
   if (!packageJSON.exports?.["./tui"]?.import) throw new Error("package.json must expose the target-exclusive ./tui entrypoint")
   if (packageJSON.bin?.["opencode-goal"] !== "bin/opencode-goal.js") throw new Error("package.json must expose the npm-canonical committed opencode-goal installer bin shim")
   if (!packageJSON.files?.includes("bin")) throw new Error("package.json files must include the committed installer bin directory")
@@ -147,7 +148,9 @@ async function main() {
       import path from "node:path";
       import { fileURLToPath } from "node:url";
       const mod = await import("@bybrawe/opencode-goal");
-      if (typeof mod.default !== "function") throw new Error("default public API plugin export is missing");
+      if (mod.default?.id !== "@bybrawe/opencode-goal") throw new Error("root plugin id is missing or unstable");
+      if (typeof mod.default?.setup !== "function") throw new Error("root OpenCode 2 setup export is missing");
+      if (typeof mod.default?.server !== "function") throw new Error("root OpenCode 1 compatibility server export is missing");
       if (typeof mod.createGoal !== "function") throw new Error("createGoal export is missing");
       if (typeof mod.parseGoalCommand !== "function") throw new Error("parseGoalCommand export is missing");
       if (typeof mod.GoalSequenceStore !== "function") throw new Error("GoalSequenceStore export is missing");
@@ -157,7 +160,10 @@ async function main() {
       if (server.default?.id !== "@bybrawe/opencode-goal") throw new Error("server plugin id is incorrect");
       if (typeof server.default?.server !== "function") throw new Error("server plugin export is missing");
       if (typeof server.default?.setup !== "function") throw new Error("OpenCode 2 setup export is missing");
-      if (server.default.server !== mod.default) throw new Error("server entrypoint does not delegate to the public plugin implementation");
+      if (server.default !== mod.default) throw new Error("root and ./server must expose the same dual plugin definition");
+      const legacy = await import("@bybrawe/opencode-goal/v1");
+      if (typeof legacy.default !== "function") throw new Error("explicit V1 plugin export is missing");
+      if (server.default.server !== legacy.default) throw new Error("dual plugin server() does not delegate to the explicit V1 implementation");
       const toolModule = await import("@opencode-ai/plugin/tool");
       if (typeof toolModule.tool !== "function") throw new Error("runtime OpenCode V1 tool dependency is missing");
       const v2Plugin = await import("@opencode/plugin");

@@ -15,10 +15,10 @@ const url = (relative) => pathToFileURL(path.join(packageRoot, relative)).href
 const legacyEntries = loop ? [url("src/v1.js"), url("src/source/v1.js")] : [url("dist/legacy-v1.js")]
 const blocked = loop
   ? [...legacyEntries, url("src/index.js"), url("src/source/legacy-v1.js")]
-  : [...legacyEntries, url("dist/index.js"), url("dist/opencode/plugin.js")]
-const entries = loop ? [pkg.name, `${pkg.name}/server`, `${pkg.name}/v2`] : [`${pkg.name}/server`, `${pkg.name}/v2`]
+  : [...legacyEntries, url("dist/opencode/plugin.js")]
+const entries = loop ? [pkg.name, `${pkg.name}/server`, `${pkg.name}/v2`] : [pkg.name, `${pkg.name}/server`, `${pkg.name}/v2`]
 if (loop) entries.push(url("src/source/server.js"))
-const serverEntries = loop ? [`${pkg.name}/server`, url("src/source/server.js")] : [`${pkg.name}/server`]
+const serverEntries = loop ? [`${pkg.name}/server`, url("src/source/server.js")] : [pkg.name, `${pkg.name}/server`]
 
 function probe(mode) {
   const stub = "globalThis.__legacyModuleLoads = (globalThis.__legacyModuleLoads || 0) + 1; export default async (...args) => { if (args[0]?.failure) throw args[0].failure; return { args }; }"
@@ -44,6 +44,7 @@ function probe(mode) {
       const { default: plugin } = await import(entry);
       assert.equal(typeof plugin.setup, "function", entry);
       assert.equal(typeof plugin.id, "string", entry);
+      if (!loop) assert.equal(plugin.id, "@bybrawe/opencode-goal", entry);
       if (${JSON.stringify(mode)} === "isolation") {
         assert.equal(globalThis.__legacyModuleLoads, undefined, "native import initialized legacy runtime");
         if (entry.endsWith("/v2")) assert.equal("server" in plugin, false, "native entry must not expose V1 dispatch");

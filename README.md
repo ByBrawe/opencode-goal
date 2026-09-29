@@ -70,7 +70,7 @@ Windows:
 %USERPROFILE%\.config\opencode\commands\goal.md   # OpenCode 1.x bridge only
 ```
 
-OpenCode loads the npm package through its dedicated `./server` entrypoint. The root export remains the public JavaScript API.
+OpenCode 2 loads the package root as the official `Plugin.define({ id, setup })` entrypoint; that same dual definition is also exposed through `./server` for host compatibility. Named JavaScript API exports remain available from the package root, while the explicit legacy V1 plugin function is isolated at `./v1`.
 
 OpenCode 2 uses the V2 lifecycle and autonomous coordinator by default. Native `plugins` entries may disable either layer with `{ "package": "@bybrawe/opencode-goal@<version>", "options": { "lifecycle": false, "autonomous": false } }`. The legacy `OPENCODE_GOAL_V2_DIRECT_LIFECYCLE` and `OPENCODE_GOAL_V2_AUTONOMOUS` environment variables remain higher-priority emergency kill switches: set either to `0`, `false`, `no`, or `off` to disable that V2 layer. Unknown explicit environment values fail closed. OpenCode 2-native prompt admission and tool-execution hooks are used directly where available, and long-running evidence/completion tools report progress through the host-native tool progress API.
 

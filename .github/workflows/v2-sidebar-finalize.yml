@@ -44,7 +44,7 @@ jobs:
             script = step['run']
             script = 'npm install --no-audit --no-fund' if script.strip == 'npm ci'
             if name.start_with?('Add native slot rendering')
-              script = script.gsub("'^0.5.8'", "'0.5.8'")
+              script = script.gsub("'^0.5.8'", "'0.5.12'").gsub('>=0.5.8 <0.6', '>=0.5.12 <0.6').gsub("'^1.9.0'", "'1.9.12'")
             end
             commit = name.start_with?('Commit only verified')
             if commit

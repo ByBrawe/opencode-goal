@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { createGoal } from "../dist/domain/goal.js"
@@ -15,6 +15,26 @@ function isUnsafePath(error) {
     && error.kind === "unsafe_path"
     && /symbolic link|junction|outside the project/.test(error.message)
 }
+
+
+test("ordinary storage remains safe when Windows realpath expands an 8.3 project-root alias", async (t) => {
+  if (process.platform !== "win32") return t.skip("Windows path-alias regression")
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-storage-alias-"))
+  try {
+    const canonical = await realpath(root)
+    if (canonical.toLowerCase() === path.resolve(root).toLowerCase()) {
+      return t.skip("runner did not expose a distinct 8.3/long-path alias")
+    }
+
+    const sessionID = "windows-alias-session"
+    const store = new GoalStore(root)
+    const goal = createGoal({ sessionID, objective: "persist inside the aliased project root" })
+    await store.save(goal)
+    assert.equal((await store.load(sessionID))?.id, goal.id)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
 
 test("live Goal storage refuses symlink or junction escape before any external write", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-storage-link-"))

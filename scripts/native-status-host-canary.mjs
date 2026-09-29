@@ -87,8 +87,15 @@ try {
   const wrong = await request(a, '/api/rpc/opencode-goal-status/read', { input: { sessionID: ids[1] } })
   assert.equal(wrong.ok, false, 'location A must not disclose or adopt the Goal from B')
   const injected = await request(a, '/api/rpc/opencode-goal-status/read', { input: { sessionID: ids[0], directory: b } })
-  assert.equal(injected.ok, false, 'RPC must reject client-supplied filesystem paths')
-  console.log(JSON.stringify({ ok: true, version, sessions: ids.length, nativeRPC: true, readOnly: true, foreignLocationRejected: true, injectedPathRejected: true }, null, 2))
+// The native JSON-schema boundary may strip extra input fields.
+// Whether rejected or sanitized, they must never redirect a read.
+if (injected.ok) {
+  assert.equal(injected.body.output.sessionID, ids[0])
+  assert.equal(injected.body.output.directory, a)
+  assert.ok(injected.body.output.text.includes('LOCAL STATUS A'))
+  assert.ok(!injected.body.output.text.includes('REMOTE STATUS B'))
+}
+  console.log(JSON.stringify({ ok: true, version, sessions: ids.length, nativeRPC: true, readOnly: true, foreignLocationRejected: true, injectedPathCannotRedirect: true }, null, 2))
 } finally {
   if (child && child.exitCode === null) {
     await new Promise(resolve => {

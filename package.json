@@ -25,6 +25,10 @@
     "./v1": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./rpc": {
+      "types": "./dist/status-rpc.d.ts",
+      "import": "./dist/status-rpc.js"
     }
   },
   "bin": {
@@ -63,7 +67,8 @@
     "canary:steering": "node --import ./scripts/host-canary-bootstrap.mjs scripts/host-steering-canary.mjs",
     "canary:progress": "node --import ./scripts/host-canary-bootstrap.mjs scripts/host-progress-canary.mjs",
     "canary:restart": "node --import ./scripts/host-canary-bootstrap.mjs --import ./scripts/host-restart-hard-crash.mjs scripts/host-restart-canary.mjs",
-    "pack:check": "npm pack --dry-run"
+    "pack:check": "npm pack --dry-run",
+    "test:tui-native": "bun --conditions=browser scripts/native-tui-render-smoke.mjs"
   },
   "keywords": [
     "opencode",
@@ -93,11 +98,30 @@
   },
   "dependencies": {
     "@opencode-ai/plugin": ">=1.4.0 <2",
-    "@opencode/plugin": "^2.0.4"
+    "@opencode/plugin": "^2.0.18"
   },
   "devDependencies": {
     "@opencode-ai/plugin": "1.18.9",
     "@types/node": "^22.0.0",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "@opentui/core": "0.5.12",
+    "@opentui/solid": "0.5.12",
+    "solid-js": "1.9.12"
+  },
+  "peerDependencies": {
+    "@opentui/core": ">=0.5.12 <0.6",
+    "@opentui/solid": ">=0.5.12 <0.6",
+    "solid-js": ">=1.9.0 <2"
+  },
+  "peerDependenciesMeta": {
+    "@opentui/core": {
+      "optional": true
+    },
+    "@opentui/solid": {
+      "optional": true
+    },
+    "solid-js": {
+      "optional": true
+    }
   }
 }

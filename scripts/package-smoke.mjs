@@ -10,7 +10,7 @@ const npmCLI = process.env.npm_execpath
 const runtimeDependency = "@opencode-ai/plugin"
 const runtimeDependencyRange = ">=1.4.0 <2"
 const v2RuntimeDependency = "@opencode/plugin"
-const v2RuntimeDependencyRange = "^2.0.4"
+const v2RuntimeDependencyRange = "^2.0.18"
 const minimumOpenCode = ">=1.4.0"
 const managedCommandMarker = "<!-- managed-by:@bybrawe/opencode-goal -->"
 
@@ -69,7 +69,7 @@ function assertPackageFiles(pack) {
     "package.json", "README.md", "CHANGELOG.md", "LICENSE", "bin/opencode-goal.js",
     "dist/index.js", "dist/index.d.ts", "dist/server.js", "dist/server.d.ts",
     "dist/native.js", "dist/native.d.ts", "dist/legacy-loader.js", "dist/legacy-v1.js",
-    "dist/install.js", "dist/tui/index.js", "dist/tui/index.d.ts",
+    "dist/install.js", "dist/tui/index.js", "dist/tui/index.d.ts", "dist/tui/native.js", "dist/status-rpc.js", "dist/status-rpc.d.ts",
   ]
   for (const file of required) {
     if (!files.has(file)) throw new Error(`publish tarball is missing required file: ${file}`)
@@ -163,7 +163,7 @@ async function main() {
       const v2Plugin = await import("@opencode/plugin");
       if (typeof v2Plugin.Plugin?.define !== "function") throw new Error("runtime OpenCode V2 plugin dependency is missing");
       const tui = await import("@bybrawe/opencode-goal/tui");
-      if (typeof tui.default?.tui !== "function") throw new Error("TUI plugin export is missing");
+      if (typeof tui.default?.setup !== "function") throw new Error("native TUI plugin setup export is missing"); const statusRPC = await import("@bybrawe/opencode-goal/rpc"); if (statusRPC.GoalStatusRpc?.id !== "opencode-goal-status") throw new Error("shared status RPC export is missing"); if (typeof tui.default?.tui !== "function") throw new Error("TUI plugin export is missing");
       if (tui.default?.id !== "opencode-goal") throw new Error("TUI plugin id is incorrect");
       const entryDir = path.dirname(fileURLToPath(import.meta.resolve("@bybrawe/opencode-goal")));
       if (!fs.existsSync(path.join(entryDir, "index.d.ts"))) throw new Error("published type declarations are missing");

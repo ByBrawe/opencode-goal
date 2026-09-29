@@ -115,7 +115,7 @@ export interface OpenCode2ExperimentalContext {
       delivery?: "steer" | "queue" | null
       resume?: boolean | null
     }): unknown | Promise<unknown>
-    interrupt?(input: { sessionID: string; resume?: boolean }): unknown | Promise<unknown>
+    interrupt?(input: { sessionID: string; continue?: boolean }): unknown | Promise<unknown>
   }
   tool: {
     transform(callback: (tools: any) => void | Promise<void>): unknown | Promise<unknown>
@@ -178,8 +178,10 @@ async function resolveSessionDirectory(ctx: OpenCode2ExperimentalContext, sessio
   const sessionRecord = record(session)
   const data = nestedRecord(session, "data")
   const location = nestedRecord(session, "location") ?? nestedRecord(data, "location")
-  const optionDirectory = firstString(ctx.options?.directory)
-  const directory = firstString(location?.directory, sessionRecord?.directory, data?.directory, optionDirectory)
+  // The plugin instance location/options are not proof of this session's
+  // location. OpenCode 2 plugins can observe sessions outside the location
+  // where they were loaded, so fail closed unless session.get resolves it.
+  const directory = firstString(location?.directory, sessionRecord?.directory, data?.directory)
   if (!directory) {
     throw new Error("OpenCode Goals V2 adapter could not resolve the session location.directory; no Goal state was read or written.")
   }

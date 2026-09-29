@@ -1,0 +1,604 @@
+name: Native V2 Goal sidebar implementation
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/v2-native-sidebar-pass.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: goal-native-sidebar-pass
+  cancel-in-progress: false
+jobs:
+  verify:
+    if: github.repository == 'ByBrawe/opencode-goal' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: '1.4.2'
+      - run: npm ci
+      - name: Demonstrate the missing native TUI entry before porting
+        shell: bash
+        run: |
+          npm run build
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict'
+          import plugin from './dist/tui/index.js'
+          assert.equal(typeof plugin.tui, 'function')
+          assert.equal(plugin.setup, undefined, 'baseline changed: review the existing native TUI before replacing it')
+          console.log('Confirmed: current TUI exposes only the V1 entry; native setup is missing.')
+          JS
+      - name: Add the shared RPC definition and a server-only status projection
+        shell: bash
+        run: |
+          cat > src/status-rpc.ts <<'TS'
+          import { Rpc } from '@opencode/plugin/rpc'
+          
+          // Shared, implementation-free contract. No filesystem or Goal lifecycle
+          // code is loaded by a remote client importing this module.
+          export const GoalStatusRpc = Rpc.define({
+            id: 'opencode-goal-status',
+            methods: {
+              read: {
+                input: {
+                  type: 'object', additionalProperties: false,
+                  properties: { sessionID: { type: 'string', minLength: 1, maxLength: 256 } },
+                  required: ['sessionID'],
+                },
+                output: {
+                  type: 'object', additionalProperties: false,
+                  properties: {
+                    schemaVersion: { type: 'integer', const: 1 },
+                    sessionID: { type: 'string' }, directory: { type: 'string' },
+                    text: { type: 'string', maxLength: 4096 },
+                  },
+                  required: ['schemaVersion', 'sessionID', 'directory', 'text'],
+                },
+              },
+            },
+            events: {},
+          })
+          TS
+          cat > src/opencode2/status-rpc.ts <<'TS'
+          import path from 'node:path'
+          import { GoalStatusRpc } from '../status-rpc.js'
+          import { formatGoalSidebar } from '../tui/format.js'
+          
+          export type GoalStatusHost = {
+            location?: { directory?: string; workspaceID?: string }
+            session: { get(input: { sessionID: string }): Promise<unknown> }
+            rpc?: { register(definition: unknown, implementation: Record<string, (input: unknown, context: { signal?: AbortSignal }) => Promise<unknown>>): Promise<{ dispose(): unknown }> }
+          }
+          
+          const unavailable = () => new Error('Goal status is unavailable for this session location.')
+          const record = (value: unknown): Record<string, any> | undefined => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : undefined
+          
+          export async function registerGoalStatusRpc(ctx: GoalStatusHost): Promise<() => Promise<void>> {
+            // Historical prototype hosts remain usable for lifecycle tests;
+            // their missing RPC is not emulated by client-local filesystem reads.
+            if (typeof ctx.rpc?.register !== 'function') return async () => {}
+            const directory = ctx.location?.directory
+            if (!directory || !path.isAbsolute(directory) || typeof ctx.session?.get !== 'function') throw unavailable()
+            let closed = false
+            let disposal: Promise<void> | undefined
+            const registration = await ctx.rpc.register(GoalStatusRpc, {
+              read: async (input, context) => {
+                const request = record(input)
+                const sessionID = request?.sessionID
+                if (!request || Object.keys(request).some((key) => key !== 'sessionID') || typeof sessionID !== 'string' || !sessionID || sessionID.length > 256) throw unavailable()
+                if (closed || context.signal?.aborted) throw unavailable()
+                const session = record(await ctx.session.get({ sessionID }))
+                if (closed || context.signal?.aborted || session?.id !== sessionID) throw unavailable()
+                const location = record(session?.location)
+                const actual = location?.directory
+                if (typeof actual !== 'string' || !path.isAbsolute(actual) || path.relative(path.resolve(directory), path.resolve(actual)) !== '') throw unavailable()
+                if ((location?.workspaceID ?? '') !== (ctx.location?.workspaceID ?? '')) throw unavailable()
+                // Only this server instance reads its own verified location.
+                // The formatter neither saves state nor takes continuation ownership.
+                let text: string
+                try { text = formatGoalSidebar(actual, sessionID) }
+                catch { text = 'OpenCode Goals\n! Goal storage unavailable' }
+                text = text.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '').slice(0, 4096)
+                return { schemaVersion: 1, sessionID, directory: actual, text }
+              },
+            })
+            return () => {
+              if (disposal) return disposal
+              closed = true
+              disposal = Promise.resolve().then(async () => { await registration.dispose() })
+              return disposal
+            }
+          }
+          TS
+          cat > src/opencode2/native-setup.ts <<'TS'
+          import core from './experimental.js'
+          import { registerGoalStatusRpc, type GoalStatusHost } from './status-rpc.js'
+          
+          // Presentation adds no lifecycle/continuation path. Both shipped V2
+          // entries delegate to the same tested Goal implementation.
+          export async function setupNativeGoals(ctx: Parameters<typeof core.setup>[0]): Promise<() => Promise<void>> {
+            const stopStatus = await registerGoalStatusRpc(ctx as unknown as GoalStatusHost)
+            let stopCore: (() => Promise<void>) | undefined
+            try { stopCore = await core.setup(ctx) }
+            catch (error) { await stopStatus().catch(() => {}); throw error }
+            let disposal: Promise<void> | undefined
+            return () => {
+              if (disposal) return disposal
+              // Revoke the read handler immediately; release both even if one fails.
+              const status = stopStatus()
+              disposal = Promise.resolve().then(async () => {
+                const results = await Promise.allSettled([status, Promise.resolve().then(() => stopCore!())])
+                const failures = results.flatMap((item) => item.status === 'rejected' ? [item.reason] : [])
+                if (failures.length) throw new AggregateError(failures, 'Native Goal cleanup failed')
+              })
+              return disposal
+            }
+          }
+          TS
+      - name: Add cancellation-safe remote sidebar data controller
+        shell: bash
+        run: |
+          cat > src/tui/status-controller.ts <<'TS'
+          export type GoalStatusLocation = { directory: string; workspaceID?: string }
+          export type GoalStatusRead = (input: { sessionID: string }, options: { location: GoalStatusLocation; signal: AbortSignal }) => Promise<unknown>
+          const UNAVAILABLE = 'OpenCode Goals\n! Server Goal status unavailable'
+          
+          // No local filesystem imports: this controller is equally safe against
+          // local and remote servers. One request per mounted panel, not per event.
+          export function createGoalStatusController(options: { read: GoalStatusRead; publish(text: string): void; pollMs?: number; timeoutMs?: number }) {
+            const pollMs = Math.max(250, options.pollMs ?? 2000)
+            const timeoutMs = Math.max(10, options.timeoutMs ?? 5000)
+            let selected: { key: string; sessionID: string; location: GoalStatusLocation } | undefined
+            let version = 0, closed = false, dirty = false
+            let timer: ReturnType<typeof setTimeout> | undefined
+            let active: { version: number; abort: AbortController; task: Promise<void> } | undefined
+            const clear = () => { clearTimeout(timer); timer = undefined }
+            const show = (text: string) => { if (!closed) options.publish(text) }
+            
+            function refresh(): Promise<void> {
+              if (closed || !selected) return Promise.resolve()
+              if (active?.version === version) { dirty = true; return active.task }
+              clear()
+              const snapshot = selected, generation = version, abort = new AbortController()
+              let deadline: ReturnType<typeof setTimeout> | undefined
+              let rejectAbort: (() => void) | undefined
+              const cancelled = new Promise<never>((_resolve, reject) => {
+                rejectAbort = () => reject(new Error('Goal status request cancelled'))
+                abort.signal.addEventListener('abort', rejectAbort, { once: true })
+              })
+              const task = Promise.resolve().then(async () => {
+                // select/dispose may run before this microtask starts.
+                if (closed || generation !== version) abort.abort()
+                deadline = setTimeout(() => abort.abort(), timeoutMs)
+                deadline.unref?.()
+                try {
+                  const payload = await Promise.race([
+                    Promise.resolve().then(() => {
+                      if (abort.signal.aborted) throw new Error('Goal status request cancelled')
+                      return options.read({ sessionID: snapshot.sessionID }, { location: snapshot.location, signal: abort.signal })
+                    }), cancelled,
+                  ])
+                  if (closed || generation !== version || abort.signal.aborted) return
+                  const value = payload as { schemaVersion?: unknown; sessionID?: unknown; directory?: unknown; text?: unknown } | null
+                  if (!value || value.schemaVersion !== 1 || value.sessionID !== snapshot.sessionID || value.directory !== snapshot.location.directory || typeof value.text !== 'string' || value.text.length > 4096) throw new Error('Mismatched Goal status response')
+                  show(value.text.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, ''))
+                } catch {
+                  if (!closed && generation === version) show(UNAVAILABLE)
+                } finally {
+                  clearTimeout(deadline)
+                  if (rejectAbort) abort.signal.removeEventListener('abort', rejectAbort)
+                  if (active?.version === generation) active = undefined
+                  if (!closed && generation === version) {
+                    timer = setTimeout(() => { timer = undefined; void refresh() }, dirty ? 100 : pollMs)
+                    timer.unref?.()
+                    dirty = false
+                  }
+                }
+              })
+              active = { version: generation, abort, task }
+              return task
+            }
+            
+            function select(sessionID: unknown, location: unknown): Promise<void> {
+              if (closed) return Promise.resolve()
+              const candidate = location as Partial<GoalStatusLocation> | undefined
+              const valid = typeof sessionID === 'string' && sessionID.length > 0 && sessionID.length <= 256 && typeof candidate?.directory === 'string' && candidate.directory.length > 0 && (candidate.workspaceID === undefined || typeof candidate.workspaceID === 'string')
+              const next = valid ? { sessionID: sessionID as string, location: { directory: candidate!.directory!, ...(candidate!.workspaceID !== undefined ? { workspaceID: candidate!.workspaceID } : {}) }, key: JSON.stringify([sessionID, candidate!.directory, candidate!.workspaceID]) } : undefined
+              if (next && next.key === selected?.key) return active?.task ?? Promise.resolve()
+              version++
+              active?.abort.abort()
+              active = undefined
+              clear()
+              dirty = false
+              selected = next
+              show(next ? 'OpenCode Goals\nLoading server status...' : 'OpenCode Goals\n! Session location unavailable')
+              return refresh()
+            }
+            
+            function invalidate(sessionID?: string) {
+              if (!selected || (sessionID && sessionID !== selected.sessionID)) return
+              // Busy streams cannot create a parallel RPC or reset request timeout.
+              if (active?.version === version) { dirty = true; return }
+              if (!timer) { timer = setTimeout(() => { timer = undefined; void refresh() }, 100); timer.unref?.() }
+            }
+            function dispose() {
+              if (closed) return
+              closed = true
+              version++
+              clear()
+              active?.abort.abort()
+              active = undefined
+              selected = undefined
+            }
+            return { select, refresh, invalidate, dispose }
+          }
+          TS
+      - name: Add native slot rendering without eager V1 or UI dependency loading
+        shell: bash
+        run: |
+          cp src/tui/index.ts src/tui/legacy-v1.ts
+          cat > src/tui/native.ts <<'TS'
+          import { createElement, insert, setProp } from '@opentui/solid'
+          import { createEffect, createSignal, onCleanup } from 'solid-js'
+          import { GoalStatusRpc } from '../status-rpc.js'
+          import { createGoalStatusController, type GoalStatusRead } from './status-controller.js'
+          
+          // Structural public V2 surface; no dependency on private CLI services.
+          export type GoalTuiContext = {
+            client: { rpc(definition: typeof GoalStatusRpc): { read: GoalStatusRead } }
+            data: {
+              session: { get(sessionID: string): { location?: unknown } | undefined }
+              listen(callback: (event: { details: { type?: string; data?: { sessionID?: string; session?: { id?: string }; id?: string } } }) => void): () => void
+            }
+            theme: { text: { base: unknown } }
+            ui: { slot(definition: { append: 'sidebar.content'; render(props: { sessionID: string }): unknown }): () => void }
+          }
+          
+          export function setupNativeGoalTui(context: GoalTuiContext): () => void {
+            if (typeof context.ui?.slot !== 'function' || typeof context.client?.rpc !== 'function' || typeof context.data?.session?.get !== 'function' || typeof context.data?.listen !== 'function') throw new Error('Goal sidebar requires the OpenCode 2 native CLI slot, data and RPC APIs.')
+            const status = context.client.rpc(GoalStatusRpc)
+            const cleanups = new Set<() => void>()
+            let closed = false
+            const unregister = context.ui.slot({
+              append: 'sidebar.content',
+              render: (props) => {
+                if (closed) return null
+                // These are the same public render primitives used by compiled
+                // OpenTUI JSX, so published JS needs no runtime JSX compiler.
+                const element = createElement('text')
+                setProp(element, 'fg', context.theme.text.base)
+                const [text, setText] = createSignal('OpenCode Goals\nLoading server status...')
+                insert(element, text)
+                const controller = createGoalStatusController({
+                  read: (input, options) => status.read(input, options),
+                  publish: setText,
+                })
+                const stop = context.data.listen(({ details }) => {
+                  if (details.type === 'server.connected') { controller.invalidate(); return }
+                  const sessionID = details.data?.sessionID ?? details.data?.session?.id ?? (details.type === 'session.deleted' ? details.data?.id : undefined)
+                  if (sessionID) controller.invalidate(sessionID)
+                })
+                let released = false
+                const release = () => {
+                  if (released) return
+                  released = true
+                  controller.dispose()
+                  stop()
+                  cleanups.delete(release)
+                }
+                cleanups.add(release)
+                onCleanup(release)
+                createEffect(() => {
+                  const sessionID = props.sessionID
+                  const session = context.data.session.get(sessionID)
+                  // Never substitute the CLI process's local directory for a
+                  // remote, missing or differently located session.
+                  void controller.select(sessionID, session?.location)
+                })
+                return element
+              },
+            })
+            return () => {
+              if (closed) return
+              closed = true
+              const errors: unknown[] = []
+              for (const release of [...cleanups]) { try { release() } catch (error) { errors.push(error) } }
+              try { unregister() } catch (error) { errors.push(error) }
+              if (errors.length) throw new AggregateError(errors, 'Goal sidebar cleanup failed')
+            }
+          }
+          TS
+          cat > src/tui/index.ts <<'TS'
+          import type { GoalTuiContext } from './native.js'
+          
+          // Importing the published TUI entry is safe in a production-only Node
+          // consumer. UI peers and the legacy filesystem view are both lazy.
+          const plugin = {
+            id: 'opencode-goal',
+            async setup(context: GoalTuiContext) {
+              const { setupNativeGoalTui } = await import('./native.js')
+              return setupNativeGoalTui(context)
+            },
+            async tui(...args: Parameters<typeof import('./legacy-v1.js').default.tui>) {
+              const { default: legacy } = await import('./legacy-v1.js')
+              return legacy.tui(...args)
+            },
+          }
+          export default plugin
+          TS
+          node --input-type=module <<'JS'
+          import fs from 'node:fs'
+          function replace(file, before, after) {
+            const value = fs.readFileSync(file, 'utf8')
+            if (!value.includes(before)) throw new Error(`Expected source boundary missing in ${file}`)
+            fs.writeFileSync(file, value.replaceAll(before, after))
+          }
+          replace('src/server.ts', 'import OpenCode2GoalsExperimental from "./opencode2/experimental.js"', 'import { setupNativeGoals } from "./opencode2/native-setup.js"')
+          replace('src/server.ts', 'OpenCode2GoalsExperimental.setup', 'setupNativeGoals')
+          replace('src/native.ts', 'import OpenCode2GoalsPlugin from "./opencode2/experimental.js"', 'import { setupNativeGoals } from "./opencode2/native-setup.js"')
+          replace('src/native.ts', 'OpenCode2GoalsPlugin.setup', 'setupNativeGoals')
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'))
+          pkg.exports['./rpc'] = { types: './dist/status-rpc.d.ts', import: './dist/status-rpc.js' }
+          pkg.peerDependencies = { ...pkg.peerDependencies, '@opentui/core': '>=0.5.8 <0.6', '@opentui/solid': '>=0.5.8 <0.6', 'solid-js': '>=1.9.0 <2' }
+          pkg.peerDependenciesMeta = { ...pkg.peerDependenciesMeta, '@opentui/core': { optional: true }, '@opentui/solid': { optional: true }, 'solid-js': { optional: true } }
+          Object.assign(pkg.devDependencies, { '@opentui/core': '^0.5.8', '@opentui/solid': '^0.5.8', 'solid-js': '^1.9.0' })
+          pkg.scripts['test:tui-native'] = 'bun --conditions=browser scripts/native-tui-render-smoke.mjs'
+          fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n')
+          JS
+          npm install --no-audit --no-fund
+      - name: Add RPC and remote-response regressions
+        shell: bash
+        run: |
+          cat > test/tui-native-status.test.mjs <<'TEST'
+          import test from 'node:test'
+          import assert from 'node:assert/strict'
+          import { mkdtemp, rm, readFile, writeFile, readdir, mkdir, symlink } from 'node:fs/promises'
+          import { createHash } from 'node:crypto'
+          import path from 'node:path'
+          import os from 'node:os'
+          import { registerGoalStatusRpc } from '../dist/opencode2/status-rpc.js'
+          import { createGoalStatusController } from '../dist/tui/status-controller.js'
+          import tui from '../dist/tui/index.js'
+          
+          const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no }); return { promise, resolve, reject } }
+          const response = (sessionID, directory, text) => ({ schemaVersion: 1, sessionID, directory, text })
+          test('published Goal TUI exposes native setup while retaining lazy V1 compatibility', () => {
+            assert.equal(typeof tui.setup, 'function')
+            assert.equal(typeof tui.tui, 'function')
+          })
+          test('server status is session-location bound, read-only, and revoked at cleanup', async () => {
+            const root = await mkdtemp(path.join(os.tmpdir(), 'goal-rpc-'))
+            let implementation, releases = 0
+            let session = { id: 'ses_status', location: { directory: root } }
+            const close = await registerGoalStatusRpc({
+              location: { directory: root }, session: { get: async () => session },
+              rpc: { register: async (definition, handlers) => { assert.equal(definition.id, 'opencode-goal-status'); implementation = handlers; return { dispose() { releases++ } } } },
+            })
+            try {
+              const before = await readdir(root)
+              assert.match((await implementation.read({ sessionID: 'ses_status' }, {})).text, /No live Goal/)
+              assert.deepEqual(await readdir(root), before, 'status must not create control-plane files')
+              for (const changed of [null, { id: 'wrong', location: { directory: root } }, { id: 'ses_status' }, { id: 'ses_status', location: { directory: path.dirname(root) } }, { id: 'ses_status', location: { directory: root, workspaceID: 'foreign' } }]) {
+                session = changed
+                await assert.rejects(implementation.read({ sessionID: 'ses_status' }, {}), /unavailable/)
+              }
+              session = { id: 'ses_status', location: { directory: root } }
+              await assert.rejects(implementation.read({ sessionID: 'ses_status', directory: '/injected' }, {}), /unavailable/)
+              const first = close()
+              assert.strictEqual(close(), first)
+              await first
+              await assert.rejects(implementation.read({ sessionID: 'ses_status' }, {}), /unavailable/)
+              assert.equal(releases, 1)
+            } finally { await close(); await rm(root, { recursive: true, force: true }) }
+          })
+          test('corrupt Goal storage is visible and never repaired by status RPC', async () => {
+            const root = await mkdtemp(path.join(os.tmpdir(), 'goal-rpc-corrupt-'))
+            const sessionID = 'ses_corrupt'
+            const filename = path.join(root, '.opencode', 'goals', createHash('sha256').update(sessionID).digest('hex').slice(0, 32) + '.json')
+            await mkdir(path.dirname(filename), { recursive: true })
+            await writeFile(filename, '{broken')
+            let read
+            const close = await registerGoalStatusRpc({ location: { directory: root }, session: { get: async () => ({ id: sessionID, location: { directory: root } }) }, rpc: { register: async (_definition, implementation) => { read = implementation.read; return { dispose() {} } } } })
+            try {
+              assert.match((await read({ sessionID }, {})).text, /storage unavailable/)
+              assert.equal(await readFile(filename, 'utf8'), '{broken')
+            } finally { await close(); await rm(root, { recursive: true, force: true }) }
+          })
+          test('unload during native session lookup rejects the stale RPC result', async () => {
+            const root = await mkdtemp(path.join(os.tmpdir(), 'goal-rpc-unload-'))
+            const lookup = deferred()
+            let read
+            const close = await registerGoalStatusRpc({ location: { directory: root }, session: { get: () => lookup.promise }, rpc: { register: async (_definition, implementation) => { read = implementation.read; return { dispose() {} } } } })
+            try {
+              const pending = read({ sessionID: 'ses_late' }, {})
+              const rejected = assert.rejects(pending, /unavailable/)
+              await close()
+              lookup.resolve({ id: 'ses_late', location: { directory: root } })
+              await rejected
+            } finally { await close(); await rm(root, { recursive: true, force: true }) }
+          })
+          test('remote UI sends actual session location and rejects out-of-order responses', async () => {
+            const calls = [], shown = []
+            const controller = createGoalStatusController({ pollMs: 60000, read(input, options) { const pending = deferred(); calls.push({ input, options, pending }); return pending.promise }, publish: (text) => shown.push(text) })
+            try {
+              const old = controller.select('ses_old', { directory: 'C:\\remote\\old', workspaceID: 'one' })
+              await Promise.resolve(); await Promise.resolve()
+              const next = controller.select('ses_new', { directory: '/remote/new', workspaceID: 'two' })
+              await Promise.resolve(); await Promise.resolve()
+              assert.deepEqual(calls[1].options.location, { directory: '/remote/new', workspaceID: 'two' })
+              assert.equal(calls[0].options.signal.aborted, true)
+              calls[1].pending.resolve(response('ses_new', '/remote/new', 'NEW'))
+              await next
+              calls[0].pending.resolve(response('ses_old', 'C:\\remote\\old', 'OLD'))
+              await old
+              assert.equal(shown.at(-1), 'NEW')
+              assert.ok(!shown.includes('OLD'))
+            } finally { controller.dispose() }
+          })
+          test('missing remote location never falls back to local disk or calls RPC', async () => {
+            let calls = 0, text
+            const controller = createGoalStatusController({ read: async () => { calls++; throw new Error('unexpected') }, publish: (value) => { text = value } })
+            try { await controller.select('ses_missing', undefined); assert.equal(calls, 0); assert.match(text, /location unavailable/) }
+            finally { controller.dispose() }
+          })
+          test('busy events coalesce while a status request is pending', async () => {
+            const pending = deferred(); let calls = 0
+            const controller = createGoalStatusController({ pollMs: 60000, read: () => { calls++; return pending.promise }, publish() {} })
+            try {
+              const task = controller.select('ses_busy', { directory: '/remote' })
+              await Promise.resolve(); await Promise.resolve()
+              for (let i = 0; i < 100; i++) controller.invalidate('ses_busy')
+              assert.equal(calls, 1)
+              pending.resolve(response('ses_busy', '/remote', 'OK'))
+              await task
+            } finally { controller.dispose() }
+          })
+          test('timeout and mismatched status are visibly unavailable, never no-live-Goal', async () => {
+            let text
+            const controller = createGoalStatusController({ timeoutMs: 20, pollMs: 60000, read: () => new Promise(() => {}), publish: (value) => { text = value } })
+            const keepAlive = setTimeout(() => {}, 200)
+            try { await controller.select('ses_timeout', { directory: '/remote' }); assert.match(text, /Server Goal status unavailable/); assert.doesNotMatch(text, /No live Goal/) }
+            finally { clearTimeout(keepAlive); controller.dispose() }
+            const mismatch = createGoalStatusController({ read: async () => response('wrong', '/remote', 'DO NOT SHOW'), publish: (value) => { text = value } })
+            try { await mismatch.select('ses_right', { directory: '/remote' }); assert.match(text, /unavailable/); assert.doesNotMatch(text, /DO NOT SHOW/) }
+            finally { mismatch.dispose() }
+          })
+          test('disposed sidebar cannot issue a late request or publish a late result', async () => {
+            let calls = 0; const shown = []
+            const controller = createGoalStatusController({ read: async () => { calls++; return response('ses_late', '/remote', 'LATE') }, publish: (text) => shown.push(text) })
+            const pending = controller.select('ses_late', { directory: '/remote' })
+            controller.dispose()
+            await pending
+            assert.equal(calls, 0)
+            assert.ok(!shown.includes('LATE'))
+          })
+          TEST
+          cat > scripts/native-tui-render-smoke.mjs <<'TEST'
+          import assert from 'node:assert/strict'
+          import { testRender } from '@opentui/solid'
+          import { createSignal } from 'solid-js'
+          import plugin from '../dist/tui/index.js'
+          
+          let contribution, listener, requests = [], unregisters = 0, unsubscribes = 0
+          const [sessionID, selectSession] = createSignal('ses_one')
+          const context = {
+            client: { rpc: () => ({ read: async (input, options) => {
+              requests.push({ input, options })
+              return { schemaVersion: 1, sessionID: input.sessionID, directory: options.location.directory, text: `OpenCode Goals\nACTIVE ${input.sessionID}` }
+            } }) },
+            theme: { text: { base: '#ffffff' } },
+            data: {
+              session: { get: (id) => ({ id, location: { directory: `/remote/${id}`, workspaceID: id } }) },
+              listen: (callback) => { listener = callback; return () => { unsubscribes++ } },
+            },
+            ui: { slot(definition) { assert.equal(definition.append, 'sidebar.content'); contribution = definition; return () => { unregisters++ } } },
+          }
+          const close = await plugin.setup(context)
+          const view = await testRender(() => contribution.render({ get sessionID() { return sessionID() } }), { width: 60, height: 12 })
+          try {
+            await new Promise((resolve) => setTimeout(resolve, 100))
+            await view.renderOnce()
+            assert.match(view.captureCharFrame(), /ACTIVE ses_one/)
+            selectSession('ses_two')
+            await new Promise((resolve) => setTimeout(resolve, 100))
+            await view.renderOnce()
+            assert.match(view.captureCharFrame(), /ACTIVE ses_two/)
+            assert.doesNotMatch(view.captureCharFrame(), /ACTIVE ses_one/)
+            assert.equal(requests.at(-1).options.location.directory, '/remote/ses_two')
+            close(); close()
+            const count = requests.length
+            listener({ details: { type: 'server.connected' } })
+            await new Promise((resolve) => setTimeout(resolve, 150))
+            assert.equal(requests.length, count)
+            assert.equal(unregisters, 1)
+            assert.equal(unsubscribes, 1)
+            console.log('Native V2 slot renders and switches remote sessions; cleanup is idempotent: PASS')
+          } finally { close(); view.renderer.destroy() }
+          TEST
+      - name: Typecheck, native regressions and actual terminal rendering
+        shell: bash
+        run: |
+          npm run check
+          npm run build
+          node --test test/tui-native-status.test.mjs
+          npm run test:tui-native
+      - name: Complete unit, adversarial and clean package gates
+        shell: bash
+        run: |
+          npm test > "$RUNNER_TEMP/goal-test.log" 2>&1 || { tail -180 "$RUNNER_TEMP/goal-test.log"; exit 1; }
+          tail -25 "$RUNNER_TEMP/goal-test.log"
+          npm run eval > "$RUNNER_TEMP/goal-eval.log" 2>&1 || { tail -80 "$RUNNER_TEMP/goal-eval.log"; exit 1; }
+          tail -25 "$RUNNER_TEMP/goal-eval.log"
+          npm run package:smoke
+      - name: Document the native panel and keep the overall migration gate explicit
+        shell: bash
+        run: |
+          cat > docs/opencode2-native-sidebar.md <<'DOC'
+          # Native OpenCode 2 Goal sidebar
+          
+          The package ./tui entry now exposes native setup(context) and appends
+          an OpenTUI text component to sidebar.content. Its old tui(api) entry
+          remains lazy and isolated for explicitly supported V1 hosts.
+          
+          The V2 panel never reads the CLI machine's Goal files. It calls the
+          connected server's opencode-goal-status/read RPC with the displayed
+          session's location, including workspaceID. The server checks the
+          session identity and its directory/workspace against its own instance
+          before formatting the read-only Goal and queue view. A missing RPC,
+          disconnected server, missing session location or mismatched response
+          is shown as unavailable, not as a fabricated empty Goal.
+          
+          Status includes Goal state, proven requirements, objective preview,
+          cumulative turns/tokens and queued objectives. This is presentation,
+          not a new planner, proof source, lifecycle tool or continuation owner.
+          Corrupt/symlinked storage stays unavailable and is never repaired.
+          
+          Requests are serialized and bounded to five seconds. Visible panels
+          refresh every two seconds; busy native events coalesce. Switching a
+          session or unloading cancels the old request, clears timers/listeners,
+          and fences late responses. Terminal control characters are stripped.
+          UI peers are optional for server-only users and resolved by the native
+          TUI host when rendering; importing ./tui alone does not load them.
+          
+          Tests cover the published entry, read-only and cross-location RPC,
+          corrupt storage, unload during lookup, remote request routing, stale
+          responses, coalescing, timeouts and cleanup. A separate Bun/OpenTUI
+          render smoke asserts actual visible text and reactive session changes.
+          Full two-repository/current-head host validation and npm publication
+          remain separate gates; this document does not claim a release.
+          
+          References:
+          - https://opencode.ai/v2/docs/build/plugins/cli/
+          - https://opencode.ai/v2/docs/build/plugins/rpc/
+          - https://opencode.ai/v2/docs/build/client
+          DOC
+      - name: Commit only verified changes to unchanged main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED=$(git rev-parse HEAD)
+          ACTUAL=$(git ls-remote https://github.com/ByBrawe/opencode-goal.git refs/heads/main | cut -f1)
+          test "$EXPECTED" = "$ACTUAL"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src test/tui-native-status.test.mjs scripts/native-tui-render-smoke.mjs package.json package-lock.json docs/opencode2-native-sidebar.md
+          git rm .github/workflows/v2-native-sidebar-pass.yml
+          git commit -m 'feat: add native V2 Goal sidebar backed by session-scoped read-only RPC'
+          ASKPASS="$RUNNER_TEMP/goal-sidebar-askpass.sh"
+          printf '#!/bin/sh\ncase "$1" in *Username*) echo x-access-token ;; *) echo "$GH_TOKEN" ;; esac\n' > "$ASKPASS"
+          chmod 700 "$ASKPASS"
+          GIT_ASKPASS="$ASKPASS" GIT_TERMINAL_PROMPT=0 git push origin HEAD:refs/heads/main
+          rm "$ASKPASS"
+          echo "Verified native Goal sidebar head: $(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"

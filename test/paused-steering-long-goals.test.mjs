@@ -14,7 +14,7 @@ async function removeTree(root) {
   let last
   for (let attempt = 0; attempt < 8; attempt += 1) {
     try {
-      await removeTree(root)
+      await rm(root, { recursive: true, force: true })
       return
     } catch (error) {
       last = error

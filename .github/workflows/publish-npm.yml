@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   publish:
-    name: Publish 1.3.39
+    name: Publish 1.3.40
     if: github.repository == 'ByBrawe/opencode-goal' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 35
@@ -27,8 +27,8 @@ jobs:
       actions: read
       id-token: write
     env:
-      RELEASE_VERSION: '1.3.39'
-      RELEASE_PREDECESSOR: '1.3.38'
+      RELEASE_VERSION: '1.3.40'
+      RELEASE_PREDECESSOR: '1.3.39'
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -89,7 +89,7 @@ jobs:
         if: steps.release.outputs.publish == 'true'
         with:
           repository: ByBrawe/opencode-loop
-          ref: 7832808f6807d324bda88dbb3827d7c4ef16b432
+          ref: d6cd3ab83fcb6ff9586952b3b5d3b0388853eea0
           path: companion-loop
           persist-credentials: false
       - name: Real native pair and read-only status before publication
@@ -146,11 +146,22 @@ jobs:
           node --input-type=module <<'JS'
           import assert from 'node:assert/strict'
           const { default: plugin } = await import('@bybrawe/opencode-goal/server')
-          const { default: tui } = await import('@bybrawe/opencode-goal/tui')
+          const { default: native } = await import('@bybrawe/opencode-goal/v2')
           const { GoalStatusRpc } = await import('@bybrawe/opencode-goal/rpc')
           assert.equal(plugin.id, '@bybrawe/opencode-goal')
           assert.equal(typeof plugin.setup, 'function')
-          assert.equal(typeof tui.setup, 'function')
+          assert.equal(native.id, '@bybrawe/opencode-goal')
+          assert.equal(typeof native.setup, 'function')
           assert.equal(GoalStatusRpc.id, 'opencode-goal-status')
-          console.log('PUBLISHED_NATIVE_CONSUMER_PASS')
+          console.log('PUBLISHED_NATIVE_SERVER_PASS')
+          JS
+          npm install --omit=dev --ignore-scripts --no-audit --no-fund \
+            "@bybrawe/opencode-goal@$RELEASE_VERSION" \
+            "@opentui/core@0.5.12" "@opentui/solid@0.5.12" "solid-js@1.9.12"
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict'
+          const { default: tui } = await import('@bybrawe/opencode-goal/tui')
+          assert.equal(tui.id, 'opencode-goal')
+          assert.equal(typeof tui.setup, 'function')
+          console.log('PUBLISHED_NATIVE_TUI_PASS')
           JS

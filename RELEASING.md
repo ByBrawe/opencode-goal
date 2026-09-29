@@ -37,8 +37,9 @@ OpenCode resolves the dedicated `./server` export, which contains the dual serve
 facade and native setup. The `./tui`, `./v2`, explicit `./v1` and shared `./rpc`
 exports must remain packageable and independently importable as appropriate.
 
-Runtime imports must be declared as production dependencies. Optional OpenTUI peers
-must match the supported host; importing the TUI facade must not eagerly load them.
+Runtime imports must be declared as production dependencies. Optional OpenTUI peers must match the supported host. Server and native-only
+entrypoints are verified from a production cache with peers omitted; the TUI
+entrypoint is verified separately with the supported OpenTUI/Solid host peer set.
 The installer bin must remain `bin/opencode-goal.js` and report package.json's exact
 version. Multi-config install/update must pin that version everywhere, preserve
 user-owned command files and options, and uninstall must preserve project Goal state.
@@ -53,7 +54,7 @@ npm run test:tui-native
 
 ## Trusted publication
 
-The current authorized release is 1.3.39, following npm latest 1.3.38. The publisher
+The current authorized release is 1.3.40, following npm latest 1.3.39. The publisher
 runs on an explicit workflow dispatch or a main update to its workflow/package
 manifest. Other versions are skipped until the release guard is deliberately changed.
 
@@ -77,8 +78,8 @@ existing prepublishOnly release:check; no product gate is removed.
 After publication the authoritative registry must expose the exact version,
 matching gitHead, package exports, production dependencies, expected installer bin
 and latest tag. A clean consumer runs the public installer with --version and
-imports the published native server, TUI facade and shared RPC contract.
+imports the published native server/shared RPC without TUI peers, then imports the TUI with the supported host peer set.
 
 A started workflow, merge, tag or successful upload alone is not publication proof.
 Record the published version, source SHA, integrity and successful consumer check.
-See docs/releases/1.3.39.md for this release's product scope and limitations.
+See docs/releases/1.3.40.md for this release's product scope and limitations.

@@ -2,6 +2,21 @@
 
 All notable changes to **OpenCode Goals** are documented here.
 
+## 1.3.40 — 2026-09-29
+
+Official OpenCode 2 plugin-definition and package-contract hardening release.
+
+- Define the public `./server` entrypoint with `@opencode/plugin` `Plugin.define({ id, setup })`, while retaining V1 `server()` as a separate compatibility implementation.
+- Define the public `./v2` native-only entry with the same official V2 contract instead of a hand-written lookalike object.
+- Define `./tui` with `@opencode/plugin/tui` `Plugin.define()`; keep the V1 TUI implementation lazy and separate.
+- Preserve the official V2 Context at public boundaries and adapt only the existing narrower internal Goal host interfaces behind those boundaries.
+- Verify server/RPC from a production install with peer dependencies omitted, then verify the TUI separately with the supported OpenTUI/Solid host peer set.
+- Exercise the exact current Loop V2 companion source on OpenCode 2.0.18 before trusted npm publication.
+
+Goal identity, contract, revision, evidence, handoff recovery and cumulative budgets are unchanged from 1.3.39.
+
+See [the 1.3.40 release notes](docs/releases/1.3.40.md).
+
 ## 1.3.39 — 2026-09-29
 
 Native OpenCode 2 presentation and lifecycle hardening release.

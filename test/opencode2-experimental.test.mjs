@@ -1521,6 +1521,29 @@ test("authorized capability applies create pause resume edit and clear with one 
   }
 })
 
+test("V2 setup never treats plugin options.directory as the plugin location", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-options-location-"))
+  const originalList = GoalStore.prototype.list
+  let listCalls = 0
+  let cleanup
+  try {
+    GoalStore.prototype.list = async function (...args) {
+      listCalls += 1
+      return originalList.apply(this, args)
+    }
+    const host = fakeV2EventContext(root)
+    host.ctx.options.directory = root
+    cleanup = await OpenCode2GoalsExperimental.setup(host.ctx)
+    await new Promise((resolve) => setImmediate(resolve))
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(listCalls, 0, "ctx.options.directory is plugin configuration, not V2 location authority")
+  } finally {
+    GoalStore.prototype.list = originalList
+    await cleanup?.().catch(() => {})
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test("V2 read-only adapter fails closed when the session workspace cannot be resolved", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-location-"))
   try {

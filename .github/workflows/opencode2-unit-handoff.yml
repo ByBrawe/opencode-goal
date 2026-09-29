@@ -4,13 +4,6 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths:
-      - "src/domain/**"
-      - "src/opencode/**"
-      - "src/opencode2/**"
-      - "src/persistence/**"
-      - "scripts/opencode2-unit-handoff-canary.mjs"
-      - ".github/workflows/opencode2-unit-handoff.yml"
   pull_request:
     paths:
       - "src/domain/goal.ts"
@@ -21,6 +14,7 @@ on:
       - "src/persistence/store.ts"
       - "scripts/opencode2-unit-handoff-canary.mjs"
       - ".github/workflows/opencode2-unit-handoff.yml"
+      - "package.json"
 
 permissions:
   contents: read

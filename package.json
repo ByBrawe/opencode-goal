@@ -37,7 +37,7 @@
     "pack:check": "npm pack --dry-run",
     "test:tui-native": "bun --conditions=browser scripts/native-tui-render-smoke.mjs"
   },
-  "keywords": ["opencode", "opencode-plugin", "opencode-goal", "opencode-goals", "goal-plugin", "goal-mode", "persistent-goals", "autonomous-agent", "ai-coding-agent", "coding-agent", "multi-turn", "long-running-agent", "completion-verification", "host-verified", "restart-recovery", "slash-command", "codex-style", "agent", "plugin"],
+  "keywords": ["opencode", "opencode2", "opencode-plugin", "opencode-goal", "opencode-goals", "goal-plugin", "goal-mode", "persistent-goals", "autonomous-agent", "ai-coding-agent", "coding-agent", "multi-turn", "long-running-agent", "completion-verification", "host-verified", "restart-recovery", "slash-command", "codex-style", "agent", "plugin"],
   "license": "MIT",
   "engines": { "node": ">=20", "opencode": ">=1.4.0" },
   "dependencies": { "@opencode-ai/plugin": ">=1.4.0 <2", "@opencode/plugin": "^2.0.18" },

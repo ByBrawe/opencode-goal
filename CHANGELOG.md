@@ -2,7 +2,7 @@
 
 All notable changes to **OpenCode Goals** are documented here.
 
-## 1.3.39 - 2026-09-29
+## 1.3.39 — 2026-09-29
 
 Native OpenCode 2 presentation and lifecycle hardening release.
 

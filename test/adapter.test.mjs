@@ -362,6 +362,6 @@ test("active goal owns compaction context and generic auto-continue", async () =
     await hooks["experimental.compaction.autocontinue"]({ sessionID: "session-1" }, auto)
     assert.equal(auto.enabled, false)
   } finally {
-    await rm(root, { recursive: true, force: true })
+    await rm(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 50 })
   }
 })

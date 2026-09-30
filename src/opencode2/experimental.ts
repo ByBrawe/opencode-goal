@@ -73,6 +73,7 @@ export const OPENCODE2_EXPERIMENTAL_PLUGIN_ID = "bybrawe.open-code-goals.v2-expe
 
 const V2_CONTROL_TOOL = "opencode_goals_v2_control"
 const V2_GET_TOOL = "opencode_goals_v2_get"
+export const OPENCODE2_MODEL_RESUME_TOOL = "opencode_goal_resume"
 export const OPENCODE2_DIRECT_LIFECYCLE_ENV = "OPENCODE_GOAL_V2_DIRECT_LIFECYCLE"
 export const OPENCODE2_AUTONOMOUS_ENV = "OPENCODE_GOAL_V2_AUTONOMOUS"
 const OPENCODE2_INFRA_RETRY_POLL_MS = 5_000
@@ -261,6 +262,22 @@ function appendSystemContext(event: any, text: string): void {
 
 function removeControlTool(event: any): void {
   if (event?.tools && typeof event.tools === "object") delete event.tools[V2_CONTROL_TOOL]
+}
+
+function removeModelResumeTool(event: any): void {
+  if (event?.tools && typeof event.tools === "object") delete event.tools[OPENCODE2_MODEL_RESUME_TOOL]
+}
+
+function waitingUserResumeInstruction(goal: GoalState): string {
+  return [
+    "OpenCode Goal state: the persisted Goal is waiting for user input.",
+    `Goal: ${goal.id} revision ${goal.revision}.`,
+    `Wait reason: ${goal.stopReason ?? "not specified"}`,
+    "Interpret the latest user's meaning in whatever language they used.",
+    `If the user supplied the requested input/action or clearly asks to continue this waiting Goal, call ${OPENCODE2_MODEL_RESUME_TOOL} exactly once.`,
+    "If they are only asking for status/explanation or discussing unrelated work, do not call the resume tool.",
+    "After an accepted resume call, end this routing turn without project mutations. The Goal remains waiting until this foreground execution succeeds; the native coordinator then owns the continuation.",
+  ].join("\n")
 }
 
 function toolResponse(message: string, goal: GoalState | null = null) {
@@ -1049,6 +1066,7 @@ export const OpenCode2GoalsExperimental = {
     const autonomousDispatching = new Set<string>()
     const handoffDispatching = new Set<string>()
     const handoffRetryTimers = new Map<string, ReturnType<typeof setTimeout>>()
+    const pendingModelResume = new Map<string, { goalID: string; revision: number; generation: number }>()
     const lifecycleEnabled = directLifecycleEnabled(ctx)
     const autonomousEnabled = lifecycleEnabled && autonomousEnabledByConfig(ctx)
     const semanticVerifier = createOpenCode2SemanticVerifierRuntime(
@@ -1075,6 +1093,7 @@ export const OpenCode2GoalsExperimental = {
         autonomousRuntime.pendingPromptBySession.clear()
         autonomousRuntime.executionOwnerBySession.clear()
         autonomousRuntime.kickoffBySession.clear()
+        pendingModelResume.clear()
         telemetryRuntime.currentBySession.clear()
         toolProgressRuntime.shellPending.clear()
         for (const timer of hostLimitRetryTimers.values()) clearTimeout(timer)
@@ -1098,6 +1117,50 @@ export const OpenCode2GoalsExperimental = {
       const store = new GoalStore(directory, { onTransition: createGoalTransitionNotifier(directory) })
       const goal = await store.load(sessionID)
       return { directory, store, goal }
+    }
+
+    const handleModelResumeContext = async (event: any): Promise<boolean> => {
+      const sessionID = sessionIDFromEvent(event)
+      if (!sessionID || isReadOnlyAgent(event?.agent)) {
+        removeModelResumeTool(event)
+        return false
+      }
+      try {
+        const { goal } = await coordinatorGoal(sessionID)
+        if (!goal || goal.status !== "waiting_user") {
+          removeModelResumeTool(event)
+          return false
+        }
+        if (!event?.tools || typeof event.tools !== "object" || !event.tools[OPENCODE2_MODEL_RESUME_TOOL]) return false
+        appendSystemContext(event, waitingUserResumeInstruction(goal))
+        return true
+      } catch {
+        removeModelResumeTool(event)
+        return false
+      }
+    }
+
+    const settleModelResume = async (
+      sessionID: string,
+      generation: number,
+      succeeded: boolean,
+    ): Promise<GoalState | undefined> => {
+      const pending = pendingModelResume.get(sessionID)
+      if (!pending || pending.generation !== generation) return undefined
+      pendingModelResume.delete(sessionID)
+      if (!succeeded || lifecycleAbort.signal.aborted) return undefined
+      try {
+        const { store, goal } = await coordinatorGoal(sessionID)
+        if (!goal || goal.status !== "waiting_user" || goal.id !== pending.goalID || goal.revision !== pending.revision) return undefined
+        const resumed = {
+          ...resumeGoal(goal),
+          skipNextStallCheck: true,
+        }
+        await store.save(resumed)
+        return resumed
+      } catch {
+        return undefined
+      }
     }
 
     const applySuccessfulToolProgress = async (sessionID: string, callID: string) => {
@@ -1774,6 +1837,7 @@ export const OpenCode2GoalsExperimental = {
               clearOpenCode2HostLimitSession(hostLimitRuntime, sessionID)
               cancelHostLimitRetry(sessionID)
               workTools.clearSession(sessionID)
+              pendingModelResume.delete(sessionID)
               autonomousDispatching.delete(sessionID)
               continue
             }
@@ -1833,6 +1897,18 @@ export const OpenCode2GoalsExperimental = {
             if (boundary.kind !== "execution-terminal" || boundary.generation === undefined) continue
             const generation = boundary.generation
             const succeeded = type === "session.execution.succeeded"
+
+            const modelResumedGoal = await settleModelResume(sessionID, generation, succeeded)
+            if (modelResumedGoal) {
+              clearOpenCode2GoalOwnership(autonomousRuntime, sessionID)
+              await scheduleAutonomousContinuation(
+                sessionID,
+                modelResumedGoal,
+                continuationPrompt(modelResumedGoal),
+                "resume",
+              )
+              continue
+            }
 
             if (!succeeded) {
               const kickoff = consumeOpenCode2GoalKickoff(autonomousRuntime, sessionID, generation)
@@ -2027,6 +2103,30 @@ export const OpenCode2GoalsExperimental = {
 
       if (autonomousEnabled) {
         addExperimentalTool(tools, OPENCODE2_VERIFIER_RESULT_TOOL, semanticVerifier.resultTool)
+        addExperimentalTool(tools, OPENCODE2_MODEL_RESUME_TOOL, {
+          description: "Resume a persisted waiting_user Goal only when the latest user supplied the requested input/action or clearly asked to continue. This tool records intent; state changes only after the current foreground execution succeeds.",
+          input: { type: "object", properties: {}, additionalProperties: false },
+          output: controlOutputSchema,
+          execute: async (_input: unknown, toolContext: OpenCode2ExperimentalToolContext) => {
+            const sessionID = firstString(toolContext?.sessionID)
+            if (!sessionID) return toolResponse("Goal resume rejected: no sessionID was supplied.")
+            const generation = runtime.activeExecutionGenerationBySession.get(sessionID)
+            if (!generation) return toolResponse("Goal resume rejected: no active foreground execution boundary exists.")
+
+            const { goal } = await coordinatorGoal(sessionID)
+            if (!goal) return toolResponse("Goal resume not needed: no persisted Goal exists.")
+            if (goal.status === "active") return toolResponse("Goal resume not needed: the Goal is already active.", goal)
+            if (goal.status !== "waiting_user") {
+              return toolResponse(`Goal resume rejected: current Goal status is ${goal.status}; only waiting_user answers can auto-resume.`, goal)
+            }
+
+            pendingModelResume.set(sessionID, { goalID: goal.id, revision: goal.revision, generation })
+            return toolResponse(
+              "Goal resume accepted from the user's answer. End this routing turn without project mutations; the Goal remains waiting_user until this foreground execution succeeds.",
+              goal,
+            )
+          },
+        })
         for (const [name, definition] of Object.entries(workTools.definitions)) {
           addExperimentalTool(tools, name, definition)
         }
@@ -2165,7 +2265,12 @@ export const OpenCode2GoalsExperimental = {
         }
 
         await injectPersistedContext(event, true)
-        if (autonomousEnabled) workTools.handleContext(event)
+        if (autonomousEnabled) {
+          await handleModelResumeContext(event)
+          workTools.handleContext(event)
+        } else {
+          removeModelResumeTool(event)
+        }
       })
     } catch {
       // Exact OpenCode 2.0.11 exposes context. If it is absent, lifecycle
@@ -2176,6 +2281,7 @@ export const OpenCode2GoalsExperimental = {
       await ctx.session.hook("request", async (event: any) => {
         if (semanticVerifier.handleContext(event)) return
         await injectPersistedContext(event, false)
+        removeModelResumeTool(event)
       })
     } catch {
       // Historical prototypes used request. It remains presentation-only and
@@ -2188,6 +2294,7 @@ export const OpenCode2GoalsExperimental = {
         // mutation authority. Persisted Goal context is read-only here.
         if (semanticVerifier.handleContext(event)) return
         await injectPersistedContext(event, false)
+        removeModelResumeTool(event)
         if (autonomousEnabled) workTools.hideFrom(event)
       })
     } catch {

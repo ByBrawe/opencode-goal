@@ -14,8 +14,11 @@ const OPENCODE_BINARY = process.env.OPENCODE2_BINARY || "opencode2"
 const USERNAME = "opencode"
 const PASSWORD = "opencode-goal-v2-current-stable"
 const CONTROL_TOOL = "opencode_goals_v2_control"
-const COMMAND = "prove current V2 stable lifecycle --max-turns 1"
-const REQUIRED_WORK_TOOLS = ["opencode_goal_progress", "opencode_goal_complete", "opencode_goal_evidence_file", "opencode_goal_blocked", "opencode_goal_wait_for_user"]
+const RESUME_TOOL = "opencode_goal_resume"
+const WAIT_TOOL = "opencode_goal_wait_for_user"
+const COMMAND = "prove current V2 stable lifecycle --max-turns 4"
+const USER_ANSWER = "approval granted — continue the waiting Goal"
+const REQUIRED_WORK_TOOLS = ["opencode_goal_progress", "opencode_goal_complete", "opencode_goal_evidence_file", "opencode_goal_blocked", WAIT_TOOL]
 
 function appendLog(current, chunk, limit = 120_000) {
   return (current + String(chunk)).slice(-limit)
@@ -189,7 +192,7 @@ function streamText(res, sequence, text) {
 }
 
 function startProvider() {
-  const stats = { requests: [] }
+  const stats = { requests: [], waitToolCalls: 0, resumeToolCalls: 0, waitingSettled: false, resumeRouted: false, postResumeAutonomous: false }
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1")
     if (req.method === "GET" && url.pathname.endsWith("/models")) {
@@ -211,10 +214,28 @@ function startProvider() {
     const turn = latestTurn(body)
     const autonomous = turn.userText.includes("Continue working toward the active OpenCode goal.")
     const controlConsumed = /single-use capability is consumed/i.test(turn.turnText)
-    stats.requests.push({ sequence, tools, autonomous, userText: turn.userText, turnText: turn.turnText })
+    const sawWaitResult = /Goal is waiting for user input/i.test(turn.turnText)
+    const sawResumeResult = /Goal resume accepted from the user's answer/i.test(turn.turnText)
+    const userAnswer = turn.userText.includes(USER_ANSWER)
+    stats.requests.push({ sequence, tools, autonomous, userAnswer, sawWaitResult, sawResumeResult, userText: turn.userText, turnText: turn.turnText })
 
     if (tools.includes(CONTROL_TOOL) && turn.userText.includes(COMMAND) && !controlConsumed) {
       streamTool(res, sequence, CONTROL_TOOL, { command: COMMAND })
+      return
+    }
+
+    if (userAnswer) {
+      assert.ok(tools.includes(RESUME_TOOL), `waiting_user answer did not expose ${RESUME_TOOL}: ${JSON.stringify(tools)}`)
+      for (const tool of REQUIRED_WORK_TOOLS) {
+        assert.equal(tools.includes(tool), false, `foreground answer must not inherit Goal-owned work tool ${tool}`)
+      }
+      if (!sawResumeResult) {
+        stats.resumeToolCalls += 1
+        streamTool(res, sequence, RESUME_TOOL, {})
+        return
+      }
+      stats.resumeRouted = true
+      streamText(res, sequence, "WAITING_USER_RESUME_ROUTED")
       return
     }
 
@@ -225,11 +246,19 @@ function startProvider() {
           `current OpenCode 2 Goal execution did not expose ${tool}: ${JSON.stringify(tools)}`,
         )
       }
-      assert.equal(
-        tools.includes(CONTROL_TOOL),
-        false,
-        "consumed direct lifecycle authority must not leak into autonomous Goal work",
-      )
+      assert.equal(tools.includes(CONTROL_TOOL), false, "consumed direct lifecycle authority must not leak into autonomous Goal work")
+      assert.equal(tools.includes(RESUME_TOOL), false, "semantic resume tool must be hidden from active Goal-owned work")
+
+      if (stats.waitToolCalls === 0 && !sawWaitResult) {
+        stats.waitToolCalls += 1
+        streamTool(res, sequence, WAIT_TOOL, {
+          reason: "release requires explicit user approval",
+          needed: "user confirms the release may continue",
+        })
+        return
+      }
+      if (sawWaitResult) stats.waitingSettled = true
+      if (stats.resumeRouted) stats.postResumeAutonomous = true
       streamText(res, sequence, "CURRENT_V2_STABLE_AUTONOMOUS_SETTLED")
       return
     }
@@ -384,21 +413,47 @@ async function main() {
     assert.ok(result.ok, `Goal command failed: ${result.status} ${result.text}\n${diagnostics()}`)
 
     await waitFor(
-      () => provider.stats.requests.some((item) => item.autonomous),
-      "current V2 default autonomous Goal execution",
+      () => provider.stats.waitingSettled,
+      "current V2 waiting_user Goal boundary",
       diagnostics,
       90_000,
     )
 
+    const autonomousBeforeAnswer = provider.stats.requests.filter((item) => item.autonomous)
+    assert.ok(autonomousBeforeAnswer.length >= 2, "wait tool call and its settled continuation must both reach the provider")
+    for (const tool of REQUIRED_WORK_TOOLS) assert.ok(autonomousBeforeAnswer[0].tools.includes(tool))
+    assert.equal(autonomousBeforeAnswer[0].tools.includes(CONTROL_TOOL), false)
+    assert.equal(provider.stats.waitToolCalls, 1)
+
+    const requestsBeforeAnswer = provider.stats.requests.length
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    assert.equal(provider.stats.requests.length, requestsBeforeAnswer, "waiting_user Goal must not spend another autonomous turn before the user answers")
+
+    const answered = await request(`/api/session/${encodeURIComponent(sessionID)}/prompt`, {
+      method: "POST",
+      body: JSON.stringify({ text: USER_ANSWER, delivery: "steer", resume: true }),
+    }, 120_000)
+    assert.ok(answered.ok, `waiting_user answer failed: ${answered.status} ${answered.text}\n${diagnostics()}`)
+
+    await waitFor(() => provider.stats.resumeRouted, "semantic waiting_user resume routing turn", diagnostics, 60_000)
+    await waitFor(() => provider.stats.postResumeAutonomous, "native Goal continuation after waiting_user resume", diagnostics, 90_000)
+    assert.equal(provider.stats.resumeToolCalls, 1, "one waiting episode must consume exactly one semantic resume tool call")
+
     const autonomous = provider.stats.requests.filter((item) => item.autonomous)
-    assert.ok(autonomous.length >= 1)
-    for (const tool of REQUIRED_WORK_TOOLS) assert.ok(autonomous[0].tools.includes(tool))
-    assert.equal(autonomous[0].tools.includes(CONTROL_TOOL), false)
+    assert.ok(autonomous.length >= 3, "resume must create a fresh Goal-owned autonomous turn")
+    const answerRequest = provider.stats.requests.find((item) => item.userAnswer && !item.sawResumeResult)
+    assert.ok(answerRequest?.tools.includes(RESUME_TOOL), "foreground answer did not receive the resume tool")
+    for (const tool of REQUIRED_WORK_TOOLS) assert.equal(answerRequest.tools.includes(tool), false)
 
     console.log(JSON.stringify({
       ok: true,
       version,
       sessionID,
+      waitingUserResume: {
+        waitToolCalls: provider.stats.waitToolCalls,
+        resumeToolCalls: provider.stats.resumeToolCalls,
+        postResumeAutonomous: provider.stats.postResumeAutonomous,
+      },
       firstAutonomousTools: autonomous[0].tools,
       providerRequests: provider.stats.requests,
     }, null, 2))

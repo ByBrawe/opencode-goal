@@ -12,7 +12,7 @@ import OpenCode2GoalsExperimental, {
   observeOpenCode2AuthorityBoundary,
 } from "../dist/opencode2/experimental.js"
 import { createOpenCode2CompactionBoundaryRuntime } from "../dist/opencode2/compaction-boundary.js"
-import { createGoal } from "../dist/domain/goal.js"
+import { createGoal, waitForUserGoal } from "../dist/domain/goal.js"
 import {
   createUnitHandoffTarget,
   observeInitialGoalUnit,
@@ -204,6 +204,7 @@ function requestTools() {
   return {
     opencode_goals_v2_control: { description: "stale control" },
     opencode_goals_v2_get: { description: "get" },
+    opencode_goal_resume: { description: "resume waiting Goal" },
     read: { description: "read" },
   }
 }
@@ -1683,6 +1684,138 @@ test("V2 synchronous native resume rejection follows bounded failure recovery", 
         assert.equal(host.prompts.filter((input) => input.metadata?.opencode_goal_v2_autonomous === true).length, 1)
       } finally { await cleanup() }
     })
+  } finally {
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+  }
+})
+
+
+test("V2 waiting_user answer resumes only after its foreground routing execution succeeds", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "goal-v2-waiting-user-resume-"))
+  try {
+    const host = fakeV2EventContext(root)
+    const sessionID = "v2-waiting-user-resume"
+    const store = new GoalStore(root)
+    const active = createGoal({ sessionID, objective: "finish after user approval" })
+    await store.save(active)
+    const cleanup = await OpenCode2GoalsExperimental.setup(host.ctx)
+    try {
+      const ordinary = await runHook(host, "context", {
+        sessionID,
+        messageID: "ordinary-active-user",
+        text: "status please",
+      })
+      assert.equal(ordinary.tools.opencode_goal_resume, undefined, "active Goal must not expose semantic resume")
+
+      const waiting = waitForUserGoal(active, {
+        reason: "release requires explicit approval",
+        needed: "confirm the release may continue",
+      })
+      await store.save(waiting)
+
+      await host.emitEvent({ type: "session.execution.started", data: { sessionID } })
+      const routing = await runHook(host, "context", {
+        sessionID,
+        messageID: "user-answer",
+        text: "approved, continue the release",
+      })
+      assert.ok(routing.tools.opencode_goal_resume, "waiting_user foreground answer must expose semantic resume")
+      assert.match(JSON.stringify(routing.system), /waiting for user input/i)
+      assert.match(JSON.stringify(routing.system), /opencode_goal_resume/)
+
+      const resumeTool = host.tools.get("opencode_goal_resume")?.definition
+      assert.equal(typeof resumeTool?.execute, "function")
+      const accepted = await resumeTool.execute({}, {
+        sessionID,
+        messageID: "assistant-routing",
+        agent: "build",
+      })
+      assert.match(accepted.content, /resume accepted/i)
+      assert.equal((await store.load(sessionID)).status, "waiting_user", "tool call must not activate project work mid-turn")
+
+      await host.emitEvent({ type: "session.execution.succeeded", data: { sessionID } })
+      const resumed = await waitForValue(async () => {
+        const goal = await store.load(sessionID)
+        return goal?.status === "active" ? goal : undefined
+      }, "waiting_user Goal to become active at the successful foreground boundary")
+      assert.equal(resumed.skipNextStallCheck, true)
+
+      const admission = await waitForValue(
+        () => host.prompts.find((item) => item.resume === false && item.metadata?.opencode_goal_v2_source === "resume"),
+        "one native Goal continuation after semantic resume",
+      )
+      assert.ok(admission.returnedID)
+      await waitForValue(
+        () => host.prompts.find((item) => item.resume === true && item.returnedID === admission.returnedID),
+        "native semantic-resume delivery",
+      )
+      assert.equal(
+        host.prompts.filter((item) => item.resume === false && item.metadata?.opencode_goal_v2_source === "resume").length,
+        1,
+        "one waiting episode may admit only one resume continuation",
+      )
+
+      await host.emitEvent({ type: "session.execution.succeeded", data: { sessionID } })
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      assert.equal(
+        host.prompts.filter((item) => item.resume === false && item.metadata?.opencode_goal_v2_source === "resume").length,
+        1,
+        "replayed terminal events must not double-dispatch semantic resume",
+      )
+    } finally {
+      await cleanup()
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+  }
+})
+
+test("V2 semantic resume fails closed on failed routing execution or changed waiting episode", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "goal-v2-waiting-user-resume-fail-"))
+  try {
+    const host = fakeV2EventContext(root)
+    const sessionID = "v2-waiting-user-resume-fail"
+    const store = new GoalStore(root)
+    const waiting = waitForUserGoal(
+      createGoal({ sessionID, objective: "wait safely" }),
+      { reason: "need user input" },
+    )
+    await store.save(waiting)
+    const cleanup = await OpenCode2GoalsExperimental.setup(host.ctx)
+    try {
+      const resumeTool = host.tools.get("opencode_goal_resume")?.definition
+      await host.emitEvent({ type: "session.execution.started", data: { sessionID } })
+      await runHook(host, "context", {
+        sessionID,
+        messageID: "answer-one",
+        text: "continue",
+      })
+      const first = await resumeTool.execute({}, { sessionID, agent: "build" })
+      assert.match(first.content, /resume accepted/i)
+      await host.emitEvent({
+        type: "session.execution.failed",
+        data: { sessionID, error: { message: "routing provider failed" } },
+      })
+      assert.equal((await store.load(sessionID)).status, "waiting_user")
+      assert.equal(host.prompts.some((item) => item.metadata?.opencode_goal_v2_source === "resume"), false)
+
+      await host.emitEvent({ type: "session.execution.started", data: { sessionID } })
+      await runHook(host, "context", {
+        sessionID,
+        messageID: "answer-two",
+        text: "continue again",
+      })
+      const second = await resumeTool.execute({}, { sessionID, agent: "build" })
+      assert.match(second.content, /resume accepted/i)
+      const changed = { ...(await store.load(sessionID)), revision: waiting.revision + 1 }
+      await store.save(changed)
+      await host.emitEvent({ type: "session.execution.succeeded", data: { sessionID } })
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      assert.equal((await store.load(sessionID)).status, "waiting_user", "changed Goal revision must invalidate pending semantic resume")
+      assert.equal(host.prompts.some((item) => item.metadata?.opencode_goal_v2_source === "resume"), false)
+    } finally {
+      await cleanup()
+    }
   } finally {
     await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   }

@@ -11,6 +11,7 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const serverFile = path.join(root, "dist", "server.js")
 const OPENCODE_BINARY = process.env.OPENCODE2_BINARY || "opencode2"
+const EXPECTED_OPENCODE_VERSION = process.env.OPENCODE2_EXPECTED_VERSION || "2.0.16"
 const USERNAME = "opencode"
 const PASSWORD = "opencode-goal-v2-current-stable"
 const CONTROL_TOOL = "opencode_goals_v2_control"
@@ -361,7 +362,7 @@ async function main() {
       env,
       encoding: "utf8",
     })).trim()
-    assert.ok(version.includes("2.0.16"), `expected OpenCode 2.0.16, got ${version}`)
+    assert.ok(version.includes(EXPECTED_OPENCODE_VERSION), `expected OpenCode version containing ${EXPECTED_OPENCODE_VERSION}, got ${version}`)
 
     const port = await reservePort()
     child = spawn(OPENCODE_BINARY, ["serve", "--hostname", "127.0.0.1", "--port", String(port)], {

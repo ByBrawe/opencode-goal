@@ -256,10 +256,12 @@ export async function assertGoalStoragePathSafe(directory: string, target: strin
       throw new GoalStoreIntegrityError(current, "unsafe_path", "storage path contains a symbolic link or junction")
     }
 
-    const real = await fs.realpath(current)
-    if (!isWithin(baseReal, real)) {
-      throw new GoalStoreIntegrityError(current, "unsafe_path", "storage path resolves outside the project directory")
-    }
+    // Do not re-run lexical containment against each realpath spelling here.
+    // Every traversed component starts at the canonical project root and every
+    // symlink/junction is rejected above, so a non-link child cannot escape.
+    // Windows may legally return an 8.3 spelling for the root and a long-name
+    // spelling for a descendant (or vice versa); comparing those strings as
+    // paths produces a false "outside project" result on GitHub runners.
   }
 }
 

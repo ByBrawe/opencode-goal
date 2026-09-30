@@ -1125,6 +1125,19 @@ export const OpenCode2GoalsExperimental = {
         removeModelResumeTool(event)
         return false
       }
+
+      const lastUserMessageID = eventLastUserMessageID(event)
+      if (lastUserMessageID) {
+        const key = directCapabilityKey(sessionID, lastUserMessageID)
+        const owner = autonomousRuntime.executionOwnerBySession.get(sessionID)
+        const goalOwned = owner?.messageID === lastUserMessageID
+        const directOwned = runtime.capabilities.has(key) || runtime.armedBySession.get(sessionID) === key
+        if (goalOwned || directOwned) {
+          removeModelResumeTool(event)
+          return false
+        }
+      }
+
       try {
         const { goal } = await coordinatorGoal(sessionID)
         if (!goal || goal.status !== "waiting_user") {

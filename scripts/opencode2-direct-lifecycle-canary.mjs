@@ -14,6 +14,7 @@ const serverFile = path.join(root, "dist", "server.js")
 const SERVER_USERNAME = "opencode"
 const SERVER_PASSWORD = "opencode-goal-v2-direct-lifecycle"
 const OPENCODE_BINARY = process.env.OPENCODE2_BINARY || "opencode2"
+const EXPECTED_OPENCODE_VERSION = process.env.OPENCODE2_EXPECTED_VERSION || "2.0.11"
 const CONTROL_TOOL = "opencode_goals_v2_control"
 const READ_ONLY_TOOL = "opencode_goals_v2_get"
 const CREATE_COMMAND = 'ship v2 capability --accept "preview persists" --constraint "no spoof mutation" --max-turns 7'
@@ -460,7 +461,10 @@ async function main() {
       encoding: "utf8",
       windowsHide: true,
     })).trim()
-    assert.ok(version.includes("2.0.11"), `expected exact OpenCode 2.0.11, got: ${version}`)
+    assert.ok(
+      version.includes(EXPECTED_OPENCODE_VERSION),
+      `expected OpenCode version containing ${EXPECTED_OPENCODE_VERSION}, got: ${version}`,
+    )
 
     const port = await reservePort()
     server = spawn(OPENCODE_BINARY, ["serve", "--hostname", "127.0.0.1", "--port", String(port)], {
@@ -493,7 +497,7 @@ async function main() {
       return { ok: response.ok, status: response.status, body, text }
     }
 
-    // Exact 2.0.11 can expose the root command endpoint before project-local
+    // OpenCode 2 can expose the root command endpoint before project-local
     // plugin discovery finishes. The plugin-aware /api surface is the readiness
     // authority for direct Goal commands.
     await waitFor(async () => {
@@ -501,7 +505,7 @@ async function main() {
       if (!response?.ok) return false
       apiPrefix = "/api"
       return true
-    }, "OpenCode 2.0.11 plugin-aware command API", diagnostics, 30_000)
+    }, "OpenCode 2 plugin-aware command API", diagnostics, 30_000)
 
     await waitFor(async () => {
       const response = await request(`${apiPrefix}/command`, { method: "GET" }, 5_000)

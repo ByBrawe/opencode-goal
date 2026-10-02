@@ -2,6 +2,20 @@
 
 All notable changes to **OpenCode Goals** are documented here.
 
+## 1.3.43 — 2026-10-02
+
+OpenCode 2 configuration canonicalization and deterministic SDK release.
+
+- Persist OpenCode 2's native plural `plugins` configuration without leaving a parallel legacy `plugin` block when valid legacy plugin specifications are present.
+- Mirror OpenCode 2.0.21 normalization semantics: legacy strings remain strings and valid `[package, options]` tuples become native `{ package, options }` entries, preserving their order ahead of existing native registrations.
+- Preserve malformed/unrecognized legacy plugin entries instead of deleting them, and keep unrelated provider/model configuration untouched.
+- Pin the OpenCode 2 plugin runtime dependency to exact `@opencode/plugin@2.0.18` so npm's moving dependency graph cannot silently change the published runtime or release build.
+- Add regressions for mixed legacy/native plugin configuration, JSONC comments and string values, multi-config installs, object options, idempotence and user-owned command preservation.
+
+Goal identity, objective, constraints, revision, evidence, cumulative usage, budgets and handoff recovery are unchanged.
+
+See [the 1.3.43 release notes](docs/releases/1.3.43.md).
+
 ## 1.3.42 — 2026-09-30
 
 OpenCode 2 migration-guide conformance and public-context authority hardening release.

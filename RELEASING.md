@@ -44,6 +44,9 @@ entrypoint is verified separately with the supported OpenTUI/Solid host peer set
 The installer bin must remain `bin/opencode-goal.js` and report package.json's exact
 version. Multi-config install/update must pin that version everywhere, preserve
 user-owned command files and options, and uninstall must preserve project Goal state.
+Native V2 install also persists OpenCode's canonical plural `plugins` representation:
+valid legacy `plugin` entries are normalized into that list, while malformed entries
+and unrelated provider/model settings remain untouched.
 
 Local gates:
 
@@ -55,7 +58,7 @@ npm run test:tui-native
 
 ## Trusted publication
 
-The current authorized release is 1.3.42, following npm latest 1.3.41. The publisher
+The current authorized release is 1.3.43, following npm latest 1.3.42. The publisher
 runs on an explicit workflow dispatch or a main update to its workflow/package
 manifest. Other versions are skipped until the release guard is deliberately changed.
 
@@ -83,4 +86,4 @@ imports the published native server/shared RPC without TUI peers, then imports t
 
 A started workflow, merge, tag or successful upload alone is not publication proof.
 Record the published version, source SHA, integrity and successful consumer check.
-See docs/releases/1.3.42.md for this release's product scope and limitations.
+See docs/releases/1.3.43.md for this release's product scope and limitations.

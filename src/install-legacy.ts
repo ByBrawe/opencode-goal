@@ -315,6 +315,54 @@ function findRootClose(source: string, start: number): number {
   }
 }
 
+function removeRootProperty(source: string, propertyName: string): { content: string; changed: boolean } {
+  let index = skipTrivia(source, 0)
+  if (source[index] !== "{") throw new Error("OpenCode config must contain one root object")
+  index += 1
+  let previousComma: number | undefined
+
+  while (true) {
+    index = skipTrivia(source, index)
+    if (source[index] === "}") return { content: source, changed: false }
+
+    const keyStart = index
+    const key = readJsonString(source, keyStart)
+    index = skipTrivia(source, key.end)
+    if (source[index] !== ":") throw new Error(`expected ':' after config property ${key.value}`)
+    const valueStart = skipTrivia(source, index + 1)
+    const valueEnd = skipJsonValue(source, valueStart)
+    const afterValue = skipTrivia(source, valueEnd)
+    const hadComma = source[afterValue] === ","
+
+    if (key.value === propertyName) {
+      if (hadComma) {
+        return {
+          content: `${source.slice(0, keyStart)}${source.slice(afterValue + 1)}`,
+          changed: true,
+        }
+      }
+      if (previousComma !== undefined) {
+        return {
+          content: `${source.slice(0, previousComma)}${source.slice(valueEnd)}`,
+          changed: true,
+        }
+      }
+      return {
+        content: `${source.slice(0, keyStart)}${source.slice(valueEnd)}`,
+        changed: true,
+      }
+    }
+
+    if (hadComma) {
+      previousComma = afterValue
+      index = afterValue + 1
+      continue
+    }
+    if (source[afterValue] === "}") return { content: source, changed: false }
+    throw new Error(`expected ',' or '}' after config property ${key.value}`)
+  }
+}
+
 function configuredPluginSpec(value: unknown): string | undefined {
   if (typeof value === "string") return value.trim()
   if (Array.isArray(value)) return typeof value[0] === "string" ? value[0].trim() : undefined
@@ -388,6 +436,25 @@ function withoutGoalPlugins(values: unknown[] = []): unknown[] {
   return values.filter((value) => !isPackageSpec(value) && !isKnownLocalGoalSpec(value))
 }
 
+function migrateLegacyPluginEntry(value: unknown): unknown | undefined {
+  // OpenCode 2.0.21 normalizes legacy plugin strings unchanged and legacy
+  // [package, options] tuples into native { package, options } entries before
+  // merging them ahead of the native plugins list. Persist the same canonical
+  // representation so users do not accumulate parallel plugin/plugins blocks.
+  if (typeof value === "string") return value
+  if (Array.isArray(value)) {
+    if (value.length !== 2 || typeof value[0] !== "string" || !value[1] || typeof value[1] !== "object" || Array.isArray(value[1])) {
+      return undefined
+    }
+    return { package: value[0], options: value[1] }
+  }
+  if (value && typeof value === "object" && !Array.isArray(value) && typeof (value as { package?: unknown }).package === "string") {
+    return value
+  }
+  return undefined
+}
+
+
 function rewritePluginConfig(source: string, mode: "install" | "uninstall"): { content: string; changed: boolean } {
   const targetKey: "plugin" | "plugins" = nativeGoalCommandMode ? "plugins" : "plugin"
   const legacyKey: "plugin" | "plugins" = nativeGoalCommandMode ? "plugin" : "plugins"
@@ -430,14 +497,29 @@ function rewritePluginConfig(source: string, mode: "install" | "uninstall"): { c
   }
 
   // Remove Goal-owned registrations from the inactive config dialect first.
-  // Preserve every unrelated plugin entry byte-for-byte through the JSONC
-  // property rewriter; V2 installation must not silently migrate third-party
-  // V1 plugins, and V1 installation must not erase a user's V2 plugin list.
+  // On native V2 install, also persist OpenCode 2.0.21's own compatibility
+  // normalization: valid legacy plugin entries become native plugins entries
+  // in the same order. Invalid/unrecognized legacy values are left untouched.
   let content = source
   let changed = false
+  const migratedLegacy: unknown[] = []
   if (initialLegacy) {
     const cleanedLegacy = withoutGoalPlugins(initialLegacy)
-    if (cleanedLegacy.length !== initialLegacy.length) {
+    if (nativeGoalCommandMode && mode === "install") {
+      const retainedLegacy: unknown[] = []
+      for (const entry of cleanedLegacy) {
+        const migrated = migrateLegacyPluginEntry(entry)
+        if (migrated === undefined) retainedLegacy.push(entry)
+        else migratedLegacy.push(migrated)
+      }
+      if (retainedLegacy.length !== initialLegacy.length) {
+        const updated = retainedLegacy.length
+          ? rewritePluginArrayProperty(content, legacyKey, retainedLegacy, false)
+          : removeRootProperty(content, legacyKey)
+        content = updated.content
+        changed ||= updated.changed
+      }
+    } else if (cleanedLegacy.length !== initialLegacy.length) {
       const updated = rewritePluginArrayProperty(content, legacyKey, cleanedLegacy, false)
       content = updated.content
       changed ||= updated.changed
@@ -448,7 +530,7 @@ function rewritePluginConfig(source: string, mode: "install" | "uninstall"): { c
   const current = parseJsonc(content) as Record<string, unknown>
   const currentTarget = pluginArray(current, targetKey) ?? []
   const cleanedTarget = withoutGoalPlugins(currentTarget)
-  const nextTarget = mode === "install" ? [...cleanedTarget, pinned] : cleanedTarget
+  const nextTarget = mode === "install" ? [...migratedLegacy, ...cleanedTarget, pinned] : cleanedTarget
   const shouldCreateTarget = mode === "install"
   const updatedTarget = rewritePluginArrayProperty(content, targetKey, nextTarget, shouldCreateTarget)
   content = updatedTarget.content

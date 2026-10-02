@@ -91,7 +91,7 @@ jobs:
         if: steps.release.outputs.publish == 'true'
         with:
           repository: ByBrawe/opencode-loop
-          ref: 2ffccd3616dbedef2d28d4894f1903b4fa83d7a8
+          ref: 89e9407a32187dbfc07770ba2d78ceef09087b6c
           path: companion-loop
           persist-credentials: false
       - name: Real native pair and read-only status before publication

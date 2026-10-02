@@ -13,7 +13,7 @@ type SessionContextInput = Parameters<OfficialContext["session"]["context"]>[0]
 /**
  * Compile-time tripwires for the pinned OpenCode 2 SDK surface used by the
  * native adapter. This module is intentionally not imported at runtime; tsc
- * includes it through src/**/*.ts.
+ * includes it through the TypeScript source include configured in tsconfig.json.
  */
 export type OpenCode2InterruptAcceptsSessionIdentity = Expect<
   { sessionID: string } extends SessionInterruptInput ? true : false

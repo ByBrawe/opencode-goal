@@ -37,7 +37,7 @@ test("explicit native and legacy install modes override the environment target",
   assert.equal(result.status, 0, result.stderr)
   const parsed = JSON.parse(await readFile(path.join(config, "opencode.json"), "utf8"))
   assert.deepEqual(parsed.plugins, [spec])
-  assert.deepEqual(parsed.plugin, [])
+  assert.equal("plugin" in parsed, false)
   assert.equal(await exists(path.join(config, "commands/goal.md")), false)
 }))
 
@@ -72,7 +72,9 @@ test("native update preserves object options, JSONC comments and custom goal com
   assert.equal(result.status, 0, result.stderr)
   const updated = await readFile(path.join(config, "opencode.jsonc"), "utf8")
   assert.match(updated, /retain root comment/)
-  assert.ok(updated.includes(JSON.stringify({ ...own, package: spec })), updated)
+  const parsed = JSON.parse(updated.replace(/\/\/.*$/gm, "").replace(/,\s*([}\]])/g, "$1"))
+  assert.equal("plugin" in parsed, false)
+  assert.deepEqual(parsed.plugins, ["other-v1", "other-v2", { ...own, package: spec }])
   assert.equal(await readFile(path.join(config, "commands/goal.md"), "utf8"), "custom goal command\n")
   assert.equal(run(config, [], { OPENCODE_GOAL_HOST_VERSION: "2.0.18" }).status, 0)
   assert.equal(await readFile(path.join(config, "opencode.jsonc"), "utf8"), updated)
@@ -108,11 +110,39 @@ test("official V1 tuple migrates to native options and stays a tuple on explicit
   result = run(config, ["--native-v2"])
   assert.equal(result.status, 0, result.stderr)
   const migrated = JSON.parse(await readFile(file, "utf8"))
-  assert.deepEqual(migrated.plugin, [other])
-  assert.deepEqual(migrated.plugins, [{ package: spec, options }])
+  assert.equal("plugin" in migrated, false)
+  assert.deepEqual(migrated.plugins, [{ package: "other-plugin", options: { keep: true } }, { package: spec, options }])
   const before = await readFile(file, "utf8")
   assert.equal(run(config).status, 0)
   assert.equal(await readFile(file, "utf8"), before)
+}))
+
+test("native install collapses valid legacy plugin list into one canonical plugins property", () => fixture(async (config) => {
+  await mkdir(config, { recursive: true })
+  const file = path.join(config, "opencode.json")
+  const provider = { google: { models: { demo: { name: "Demo" } } } }
+  await writeFile(file, JSON.stringify({
+    $schema: "https://opencode.ai/config.json",
+    plugin: [
+      "opencode-antigravity-auth@beta",
+      "@tarquinen/opencode-dcp@latest",
+      "opencode-power-pack@git+https://github.com/waybarrios/opencode-power-pack.git",
+    ],
+    provider,
+    model: "",
+  }, null, 2))
+  const result = run(config, ["--native-v2"])
+  assert.equal(result.status, 0, result.stderr)
+  const parsed = JSON.parse(await readFile(file, "utf8"))
+  assert.equal("plugin" in parsed, false)
+  assert.deepEqual(parsed.plugins, [
+    "opencode-antigravity-auth@beta",
+    "@tarquinen/opencode-dcp@latest",
+    "opencode-power-pack@git+https://github.com/waybarrios/opencode-power-pack.git",
+    spec,
+  ])
+  assert.deepEqual(parsed.provider, provider, "Goal installer must not rewrite unrelated provider configuration")
+  assert.equal(parsed.model, "", "Goal installer must not rewrite unrelated model configuration")
 }))
 
 test("malformed tuples and mixed tuple/object conflicts fail before rewriting; uninstall removes them", () => fixture(async (config) => {

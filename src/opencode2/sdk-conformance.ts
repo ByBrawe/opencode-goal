@@ -23,12 +23,15 @@ export type OpenCode2InterruptHasNoLegacyContinueFlag = Expect<
   Equal<"continue" extends keyof SessionInterruptInput ? true : false, false>
 >
 
-export type OpenCode2PromptKeepsAdmissionControls = Expect<
-  SessionPromptInput extends {
-    sessionID: string
-    resume?: boolean | null
-    delivery?: "steer" | "queue" | null
-  } ? true : false
+type GoalPromptAdmission = {
+  sessionID: string
+  text: string
+  resume?: boolean
+  delivery?: "steer" | "queue"
+}
+
+export type OpenCode2PromptAcceptsGoalAdmission = Expect<
+  GoalPromptAdmission extends SessionPromptInput ? true : false
 >
 
 export type OpenCode2SessionContextIsSessionScoped = Expect<

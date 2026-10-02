@@ -120,13 +120,13 @@ $ARGUMENTS
   }
 })
 
-test("OpenCode 2 installer migrates only Goal-owned registrations to native plugins without touching unrelated V1 entries", async () => {
+test("OpenCode 2 installer canonicalizes valid legacy registrations into native plugins", async () => {
   const temp = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-installer-v2-config-dialect-"))
   const configDir = path.join(temp, "config")
   try {
     await mkdir(configDir, { recursive: true })
     await writeFile(path.join(configDir, "opencode.jsonc"), `{
-  // Keep legacy V1 registrations that do not belong to Goal.
+  // Preserve this comment while canonicalizing legacy plugin registrations.
   "plugin": [
     "legacy-v1-plugin",
     "@bybrawe/opencode-goal@1.0.0",
@@ -142,10 +142,11 @@ test("OpenCode 2 installer migrates only Goal-owned registrations to native plug
     assert.equal(result.code, 0, result.stderr)
 
     const source = await readFile(path.join(configDir, "opencode.jsonc"), "utf8")
-    assert.match(source, /Keep legacy V1 registrations/)
-    const config = JSON.parse(source.replace(/\/\/.*$/gm, "").replace(/,\s*([}\]])/g, "$1"))
-    assert.deepEqual(config.plugin, ["legacy-v1-plugin"])
+    assert.match(source, /Preserve this comment while canonicalizing legacy plugin registrations/)
+    const config = JSON.parse(source.replace(/^\s*\/\/.*$/gm, "").replace(/,\s*([}\]])/g, "$1"))
+    assert.equal("plugin" in config, false)
     assert.deepEqual(config.plugins, [
+      "legacy-v1-plugin",
       { package: "native-v2-plugin", options: { enabled: true } },
       packageSpec,
     ])

@@ -2,6 +2,20 @@
 
 All notable changes to **OpenCode Goals** are documented here.
 
+## 1.3.44 — 2026-10-02
+
+OpenCode 2.0.22 SDK-contract and autonomous ownership recovery patch.
+
+- Fix #261 by recovering a lost in-memory Goal execution owner only when public `session.context({ sessionID })` proves the latest persisted user message is the exact Goal-owned autonomous prompt for the same Goal id and revision.
+- Fail closed when a newer ordinary user message exists, and deduplicate settled execution generations so a replayed terminal cannot dispatch a second continuation.
+- Use the stable OpenCode 2 `session.interrupt({ sessionID })` contract without the legacy `continue` flag and add compile-time SDK conformance tripwires for interrupt, prompt and session-context inputs.
+- Pin the production OpenCode 2 SDK/runtime dependency to exact `@opencode/plugin@2.0.22` and validate the native direct lifecycle against the latest OpenCode 2 host.
+- Align optional OpenTUI peers and release/package smoke fixtures to 0.5.14, matching the 2.0.22 SDK peer graph without bypassing npm peer resolution.
+
+Goal state schema, objective/constraint semantics, evidence, budgets, sequence ownership and V1 compatibility are unchanged.
+
+See [the 1.3.44 release notes](docs/releases/1.3.44.md).
+
 ## 1.3.43 — 2026-10-02
 
 OpenCode 2 configuration canonicalization and deterministic SDK release.

@@ -94,6 +94,7 @@ export interface OpenCode2ExperimentalContext {
   }
   session: {
     get(input: { sessionID: string }): unknown | Promise<unknown>
+    context?(input: { sessionID: string }): unknown | Promise<unknown>
     create?(input: {
       id?: string
       title?: string
@@ -371,6 +372,7 @@ export interface OpenCode2DirectLifecycleRuntime {
   armedBySession: Map<string, string>
   executionGenerationBySession: Map<string, number>
   activeExecutionGenerationBySession: Map<string, number>
+  settledGoalExecutionGenerationBySession: Map<string, number>
 }
 
 export function createOpenCode2DirectLifecycleRuntime(): OpenCode2DirectLifecycleRuntime {
@@ -379,6 +381,7 @@ export function createOpenCode2DirectLifecycleRuntime(): OpenCode2DirectLifecycl
     armedBySession: new Map(),
     executionGenerationBySession: new Map(),
     activeExecutionGenerationBySession: new Map(),
+    settledGoalExecutionGenerationBySession: new Map(),
   }
 }
 
@@ -453,6 +456,54 @@ function eventLastUserMessageID(event: any): string | undefined {
   return undefined
 }
 
+function sessionContextMessages(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value
+  const item = record(value)
+  if (Array.isArray(item?.data)) return item.data
+  if (Array.isArray(item?.messages)) return item.messages
+  return []
+}
+
+function sessionMessageRole(value: unknown): string | undefined {
+  const item = record(value)
+  return firstString(
+    item?.role,
+    nestedRecord(value, "info")?.role,
+    nestedRecord(value, "data")?.role,
+  )
+}
+
+function sessionMessageID(value: unknown): string | undefined {
+  const item = record(value)
+  return firstString(
+    item?.id,
+    nestedRecord(value, "info")?.id,
+    nestedRecord(value, "data")?.id,
+  )
+}
+
+function sessionMessageMetadata(value: unknown): UnknownRecord | undefined {
+  const item = record(value)
+  return record(item?.metadata)
+    ?? record(nestedRecord(value, "info")?.metadata)
+    ?? record(nestedRecord(value, "data")?.metadata)
+}
+
+function persistedContinuationSource(value: unknown): OpenCode2GoalContinuationSource {
+  const source = firstString(value)
+  if (
+    source === "execution"
+    || source === "compaction"
+    || source === "restart"
+    || source === "recovery"
+    || source === "kickoff"
+    || source === "sequence"
+    || source === "handoff"
+    || source === "resume"
+  ) return source
+  return "recovery"
+}
+
 function deleteSessionCapabilities(runtime: OpenCode2DirectLifecycleRuntime, sessionID: string, exceptKey?: string): void {
   for (const [key, capability] of runtime.capabilities) {
     if (capability.sessionID === sessionID && key !== exceptKey) runtime.capabilities.delete(key)
@@ -507,6 +558,7 @@ export function observeOpenCode2LifecycleBoundary(
     deleteSessionCapabilities(runtime, sessionID)
     runtime.executionGenerationBySession.delete(sessionID)
     runtime.activeExecutionGenerationBySession.delete(sessionID)
+    runtime.settledGoalExecutionGenerationBySession.delete(sessionID)
     return "session-deleted"
   }
 
@@ -1089,6 +1141,7 @@ export const OpenCode2GoalsExperimental = {
         runtime.armedBySession.clear()
         runtime.executionGenerationBySession.clear()
         runtime.activeExecutionGenerationBySession.clear()
+        runtime.settledGoalExecutionGenerationBySession.clear()
         compactionRuntime.sessions.clear()
         autonomousRuntime.pendingPromptBySession.clear()
         autonomousRuntime.executionOwnerBySession.clear()
@@ -1174,6 +1227,51 @@ export const OpenCode2GoalsExperimental = {
       } catch {
         return undefined
       }
+    }
+
+    const recoverPersistedGoalExecutionOwner = async (
+      sessionID: string,
+      generation: number,
+      goal: GoalState,
+    ) => {
+      if (typeof ctx.session.context !== "function" || lifecycleAbort.signal.aborted) return undefined
+
+      let context: unknown
+      try {
+        context = await ctx.session.context({ sessionID })
+      } catch {
+        return undefined
+      }
+      if (lifecycleAbort.signal.aborted) return undefined
+
+      const messages = sessionContextMessages(context)
+      for (let index = messages.length - 1; index >= 0; index -= 1) {
+        const message = messages[index]
+        if (sessionMessageRole(message)?.toLowerCase() !== "user") continue
+
+        const metadata = sessionMessageMetadata(message)
+        if (metadata?.opencode_goal_v2_autonomous !== true) return undefined
+
+        const goalID = firstString(metadata.opencode_goal_id)
+        const revision = metadata.opencode_goal_revision
+        const messageID = sessionMessageID(message)
+        if (
+          !messageID
+          || goalID !== goal.id
+          || typeof revision !== "number"
+          || !Number.isSafeInteger(revision)
+          || revision !== goal.revision
+        ) return undefined
+
+        return {
+          messageID,
+          goalID,
+          revision,
+          source: persistedContinuationSource(metadata.opencode_goal_v2_source),
+          generation,
+        }
+      }
+      return undefined
     }
 
     const applySuccessfulToolProgress = async (sessionID: string, callID: string) => {
@@ -1973,12 +2071,16 @@ export const OpenCode2GoalsExperimental = {
                 continue
               }
 
+              if (runtime.settledGoalExecutionGenerationBySession.get(sessionID) === generation) continue
+
               const owner = consumeOpenCode2GoalExecution(autonomousRuntime, sessionID, generation)
+                ?? await recoverPersistedGoalExecutionOwner(sessionID, generation, goal)
               if (
                 !owner
                 || owner.goalID !== goal.id
                 || owner.revision !== goal.revision
               ) continue
+              runtime.settledGoalExecutionGenerationBySession.set(sessionID, generation)
 
               let observedGoal = goal
               if (completedTelemetry) {

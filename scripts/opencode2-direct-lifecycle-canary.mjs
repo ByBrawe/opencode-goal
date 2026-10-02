@@ -628,34 +628,6 @@ async function main() {
       return response
     }
 
-    const sessionStatus = async () => {
-      const response = await request(`${apiPrefix}/session/status`, { method: "GET" }, 5_000)
-      if (!response.ok) return { ok: false, status: undefined }
-      const statuses = response.body?.data ?? response.body
-      if (!statuses || typeof statuses !== "object" || Array.isArray(statuses)) {
-        return { ok: false, status: undefined }
-      }
-      return {
-        ok: true,
-        status: Object.prototype.hasOwnProperty.call(statuses, sessionID)
-          ? statuses[sessionID]
-          : undefined,
-      }
-    }
-    const waitForSessionIdle = (description) => waitFor(
-      async () => {
-        const snapshot = await sessionStatus()
-        if (!snapshot.ok) return false
-        // OpenCode's public status list stores only non-idle sessions. Setting
-        // idle publishes the terminal event and deletes the session from the
-        // map, so a missing entry in a valid status response is also idle.
-        return snapshot.status === undefined || snapshot.status?.type === "idle"
-      },
-      description,
-      diagnostics,
-      30_000,
-    )
-
     const requestsFor = (needle) => provider.stats.requests.filter((item) => item.currentUserText.includes(needle))
     const assertAuthorizedTurn = (needle) => {
       const requests = requestsFor(needle)
@@ -791,21 +763,6 @@ async function main() {
     assert.ok(provider.stats.requests.slice(replayBefore).every((item) => item.tools.includes(READ_ONLY_TOOL)), "post-mismatch request lost read-only Goal inspection")
     assert.equal(JSON.stringify(await readGoal(workspace, sessionID)), beforeMismatch)
 
-    const beforeHistory = JSON.stringify(await readGoal(workspace, sessionID))
-    const requestsBeforeHistory = provider.stats.requests.length
-    const history = await command("history")
-    assert.ok(history.ok, `read-only history failed unexpectedly\n${await diagnostics()}`)
-    await waitFor(() => provider.stats.requests.length > requestsBeforeHistory, "history provider request", diagnostics)
-    assert.equal(JSON.stringify(await readGoal(workspace, sessionID)), beforeHistory, "read-only history changed Goal persistence")
-    const historyRequests = provider.stats.requests.slice(requestsBeforeHistory)
-    assert.ok(historyRequests.every((item) => !item.hasControlTool), "read-only history exposed mutating control")
-    assert.ok(historyRequests.every((item) => item.tools.includes(READ_ONLY_TOOL)), "read-only history lost Goal inspection")
-    // OpenCode can return the command HTTP response while the model turn is
-    // still settling. Do not enqueue the next direct lifecycle command until
-    // the public host status reports idle, either explicitly or by removing the
-    // session from its non-idle status map.
-    await waitForSessionIdle("history command terminal idle")
-
     const goalID = edited.id
     await command(CLEAR_COMMAND)
     await waitFor(async () => (await readGoal(workspace, sessionID)) === null, "capability clear", diagnostics)
@@ -825,6 +782,24 @@ async function main() {
     )
     assert.equal(archive.reason, "cleared")
     assert.equal(archive.goal.objective, "ship v2 capability revised")
+
+    // Keep read-only history as the final host interaction. OpenCode may keep
+    // the model turn generated from a read-only command busy after its HTTP
+    // response; no lifecycle mutation should be sequenced behind that turn.
+    const archiveBeforeHistory = JSON.stringify(archive)
+    const requestsBeforeHistory = provider.stats.requests.length
+    const history = await command("history")
+    assert.ok(history.ok, `read-only history failed unexpectedly\n${await diagnostics()}`)
+    await waitFor(() => provider.stats.requests.length > requestsBeforeHistory, "history provider request", diagnostics)
+    assert.equal(await readGoal(workspace, sessionID), null, "read-only history recreated cleared Goal persistence")
+    assert.equal(
+      JSON.stringify(await readArchive(workspace, sessionID, goalID)),
+      archiveBeforeHistory,
+      "read-only history changed archived Goal persistence",
+    )
+    const historyRequests = provider.stats.requests.slice(requestsBeforeHistory)
+    assert.ok(historyRequests.every((item) => !item.hasControlTool), "read-only history exposed mutating control")
+    assert.ok(historyRequests.every((item) => item.tools.includes(READ_ONLY_TOOL)), "read-only history lost Goal inspection")
 
     assert.equal(server.exitCode, null, `OpenCode 2 server exited during lifecycle canary\n${await diagnostics()}`)
 

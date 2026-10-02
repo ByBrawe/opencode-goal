@@ -11,6 +11,7 @@ OpenCode 2.0.22 SDK-contract and autonomous ownership recovery patch.
 - Use the stable OpenCode 2 `session.interrupt({ sessionID })` contract without the legacy `continue` flag and add compile-time SDK conformance tripwires for interrupt, prompt and session-context inputs.
 - Pin the production OpenCode 2 SDK/runtime dependency to exact `@opencode/plugin@2.0.22` and validate the native direct lifecycle against the latest OpenCode 2 host.
 - Align optional OpenTUI peers and release/package smoke fixtures to 0.5.14, matching the 2.0.22 SDK peer graph without bypassing npm peer resolution.
+- On Windows, wait for `taskkill /T /F` process-tree termination to finish propagating before a timed-out/overflowed Goal unit rejects, preventing pipe-detached descendants from mutating files after the terminal result.
 
 Goal state schema, objective/constraint semantics, evidence, budgets, sequence ownership and V1 compatibility are unchanged.
 

@@ -34,11 +34,21 @@ export async function runUnitIdentityCommand(
       termination = new Promise<void>((done) => {
         if (process.platform === "win32") {
           const fallback = () => { try { child.kill() } catch {} }
+          let finished = false
+          // taskkill /T /F can exit before the terminated tree's final filesystem
+          // I/O has drained. Do not reject the Goal unit until that propagation
+          // window closes, otherwise a pipe-detached descendant can mutate state
+          // after the command has already reported its terminal failure.
+          const finish = () => {
+            if (finished) return
+            finished = true
+            setTimeout(done, 300)
+          }
           try {
             const killer = spawn("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" })
-            killer.once("error", () => { fallback(); done() })
-            killer.once("close", (code) => { if (code !== 0) fallback(); done() })
-          } catch { fallback(); done() }
+            killer.once("error", () => { fallback(); finish() })
+            killer.once("close", (code) => { if (code !== 0) fallback(); finish() })
+          } catch { fallback(); finish() }
         } else {
           try { process.kill(-pid, "SIGTERM") } catch { try { child.kill("SIGTERM") } catch {} }
           // Pipe-detached descendants may outlive the shell's close event.

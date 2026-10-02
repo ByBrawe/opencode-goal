@@ -72,7 +72,7 @@ test("native update preserves object options, JSONC comments and custom goal com
   assert.equal(result.status, 0, result.stderr)
   const updated = await readFile(path.join(config, "opencode.jsonc"), "utf8")
   assert.match(updated, /retain root comment/)
-  const parsed = JSON.parse(updated.replace(/\/\/.*$/gm, "").replace(/,\s*([}\]])/g, "$1"))
+  const parsed = JSON.parse(updated.replace(/^\s*\/\/.*$/gm, "").replace(/,\s*([}\]])/g, "$1"))
   assert.equal("plugin" in parsed, false)
   assert.deepEqual(parsed.plugins, ["other-v1", "other-v2", { ...own, package: spec }])
   assert.equal(await readFile(path.join(config, "commands/goal.md"), "utf8"), "custom goal command\n")

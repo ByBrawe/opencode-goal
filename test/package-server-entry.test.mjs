@@ -14,7 +14,7 @@ test("package root is the OpenCode 2 plugin while API and V1 compatibility stay 
   assert.equal(packageJSON.exports?.["./v2"]?.import, "./dist/native.js")
   assert.equal(packageJSON.exports?.["./api"]?.import, "./dist/api.js")
   assert.equal(packageJSON.exports?.["./v1"]?.import, "./dist/legacy-loader.js")
-  assert.equal(packageJSON.dependencies?.["@opencode/plugin"], "2.0.18")
+  assert.equal(packageJSON.dependencies?.["@opencode/plugin"], "2.0.22")
   assert.equal(packageJSON.dependencies?.["@opencode-ai/plugin"], ">=1.4.0 <2")
 
   const rootModule = await dist("index.js")

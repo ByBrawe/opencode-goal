@@ -105,8 +105,9 @@ test("OpenCode 2 multi-config install uses native plugins everywhere and preserv
     assert.match(result.stdout, /across 2 OpenCode config files/)
 
     const json = JSON.parse(await readFile(path.join(configDir, "opencode.json"), "utf8"))
-    assert.deepEqual(json.plugin, ["legacy-v1-plugin"])
+    assert.equal("plugin" in json, false)
     assert.deepEqual(json.plugins, [
+      "legacy-v1-plugin",
       { package: "native-v2-plugin", options: { enabled: true } },
       packageSpec,
     ])

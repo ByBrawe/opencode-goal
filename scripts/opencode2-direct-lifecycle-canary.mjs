@@ -628,6 +628,20 @@ async function main() {
       return response
     }
 
+    const sessionStatus = async () => {
+      const response = await request(`${apiPrefix}/session/status`, { method: "GET" }, 5_000)
+      if (!response.ok) return undefined
+      const statuses = response.body?.data ?? response.body
+      if (!statuses || typeof statuses !== "object" || Array.isArray(statuses)) return undefined
+      return statuses[sessionID]
+    }
+    const waitForSessionIdle = (description) => waitFor(
+      async () => (await sessionStatus())?.type === "idle",
+      description,
+      diagnostics,
+      30_000,
+    )
+
     const requestsFor = (needle) => provider.stats.requests.filter((item) => item.currentUserText.includes(needle))
     const assertAuthorizedTurn = (needle) => {
       const requests = requestsFor(needle)
@@ -772,6 +786,10 @@ async function main() {
     const historyRequests = provider.stats.requests.slice(requestsBeforeHistory)
     assert.ok(historyRequests.every((item) => !item.hasControlTool), "read-only history exposed mutating control")
     assert.ok(historyRequests.every((item) => item.tools.includes(READ_ONLY_TOOL)), "read-only history lost Goal inspection")
+    // OpenCode 2.0.22 can return the command HTTP response while the model turn
+    // is still settling. Do not enqueue the next direct lifecycle command until
+    // the public host status reports the session terminal boundary.
+    await waitForSessionIdle("history command terminal idle")
 
     const goalID = edited.id
     await command(CLEAR_COMMAND)

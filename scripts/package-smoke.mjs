@@ -10,7 +10,7 @@ const npmCLI = process.env.npm_execpath
 const runtimeDependency = "@opencode-ai/plugin"
 const runtimeDependencyRange = ">=1.4.0 <2"
 const v2RuntimeDependency = "@opencode/plugin"
-const v2RuntimeDependencyRange = "^2.0.18"
+const v2RuntimeDependencyRange = "2.0.18"
 const minimumOpenCode = ">=1.4.0"
 const managedCommandMarker = "<!-- managed-by:@bybrawe/opencode-goal -->"
 

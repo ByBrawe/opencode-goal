@@ -117,7 +117,7 @@ export interface OpenCode2ExperimentalContext {
       delivery?: "steer" | "queue" | null
       resume?: boolean | null
     }): unknown | Promise<unknown>
-    interrupt?(input: { sessionID: string; continue?: boolean }): unknown | Promise<unknown>
+    interrupt?(input: { sessionID: string }): unknown | Promise<unknown>
   }
   tool: {
     transform(callback: (tools: any) => void | Promise<void>): unknown | Promise<unknown>
@@ -650,7 +650,7 @@ async function interruptBeforeDirectMutation(
   if (typeof ctx.session.interrupt !== "function") {
     throw new Error(`OpenCode Goals V2 direct lifecycle requires session.interrupt() before /goal ${action} can run.`)
   }
-  await ctx.session.interrupt({ sessionID, continue: false })
+  await ctx.session.interrupt({ sessionID })
 }
 
 async function promptDirectReadOnly(

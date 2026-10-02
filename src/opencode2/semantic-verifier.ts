@@ -35,7 +35,7 @@ export interface OpenCode2VerifierSessionAPI {
   }): unknown | Promise<unknown>
   wait?(input: { sessionID: string }): unknown | Promise<unknown>
   delete?(input: { sessionID: string }): unknown | Promise<unknown>
-  interrupt?(input: { sessionID: string; continue?: boolean }): unknown | Promise<unknown>
+  interrupt?(input: { sessionID: string }): unknown | Promise<unknown>
 }
 
 interface PendingAudit {
@@ -161,7 +161,7 @@ async function bestEffortWithin(action: (() => Promise<unknown>) | undefined, ti
 async function abortVerifier(session: OpenCode2VerifierSessionAPI, childID: string): Promise<void> {
   await bestEffortWithin(
     typeof session.interrupt === "function"
-      ? () => Promise.resolve(session.interrupt!({ sessionID: childID, continue: false }))
+      ? () => Promise.resolve(session.interrupt!({ sessionID: childID }))
       : undefined,
   )
 }

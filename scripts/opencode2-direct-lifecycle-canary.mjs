@@ -630,13 +630,27 @@ async function main() {
 
     const sessionStatus = async () => {
       const response = await request(`${apiPrefix}/session/status`, { method: "GET" }, 5_000)
-      if (!response.ok) return undefined
+      if (!response.ok) return { ok: false, status: undefined }
       const statuses = response.body?.data ?? response.body
-      if (!statuses || typeof statuses !== "object" || Array.isArray(statuses)) return undefined
-      return statuses[sessionID]
+      if (!statuses || typeof statuses !== "object" || Array.isArray(statuses)) {
+        return { ok: false, status: undefined }
+      }
+      return {
+        ok: true,
+        status: Object.prototype.hasOwnProperty.call(statuses, sessionID)
+          ? statuses[sessionID]
+          : undefined,
+      }
     }
     const waitForSessionIdle = (description) => waitFor(
-      async () => (await sessionStatus())?.type === "idle",
+      async () => {
+        const snapshot = await sessionStatus()
+        if (!snapshot.ok) return false
+        // OpenCode's public status list stores only non-idle sessions. Setting
+        // idle publishes the terminal event and deletes the session from the
+        // map, so a missing entry in a valid status response is also idle.
+        return snapshot.status === undefined || snapshot.status?.type === "idle"
+      },
       description,
       diagnostics,
       30_000,
@@ -786,9 +800,10 @@ async function main() {
     const historyRequests = provider.stats.requests.slice(requestsBeforeHistory)
     assert.ok(historyRequests.every((item) => !item.hasControlTool), "read-only history exposed mutating control")
     assert.ok(historyRequests.every((item) => item.tools.includes(READ_ONLY_TOOL)), "read-only history lost Goal inspection")
-    // OpenCode 2.0.22 can return the command HTTP response while the model turn
-    // is still settling. Do not enqueue the next direct lifecycle command until
-    // the public host status reports the session terminal boundary.
+    // OpenCode can return the command HTTP response while the model turn is
+    // still settling. Do not enqueue the next direct lifecycle command until
+    // the public host status reports idle, either explicitly or by removing the
+    // session from its non-idle status map.
     await waitForSessionIdle("history command terminal idle")
 
     const goalID = edited.id

@@ -480,6 +480,7 @@ function canonicalGoalCommand(parsed: ReturnType<typeof parseGoalCommand>): stri
       file: item.file,
       ...(item.contains === undefined ? {} : { contains: item.contains }),
     })),
+    completionMode: parsed.completionMode ?? null,
     notifyCommand: parsed.notifyCommand ?? null,
     unitCommand: parsed.unitCommand ?? null,
     freshSessionPerUnit: parsed.freshSessionPerUnit ?? false,
@@ -810,6 +811,7 @@ async function applyAuthorizedGoalMutation(
     goal = createGoal({
       sessionID,
       objective: parsed.objective,
+      ...(parsed.completionMode ? { completionMode: parsed.completionMode } : {}),
       acceptance: parsed.acceptance,
       constraints: parsed.constraints,
       checks: parsed.checks,
@@ -837,6 +839,7 @@ async function applyAuthorizedGoalMutation(
 
   goal = editGoal(goal, {
     objective: parsed.objective,
+    ...(parsed.completionMode ? { completionMode: parsed.completionMode } : {}),
     ...(parsed.acceptance.length ? { acceptance: parsed.acceptance } : {}),
     ...(parsed.constraints.length ? { constraints: parsed.constraints } : {}),
     ...(parsed.checks.length ? { checks: parsed.checks } : {}),

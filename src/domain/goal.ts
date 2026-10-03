@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto"
 import { currentGoalRuntimeFingerprint } from "../runtime/fingerprint.js"
-import type { FileRequirementInput, GoalBudget, GoalExecutionContext, GoalRequirement, GoalRequirementSource, GoalState, GoalUnitRotation, VerificationKind } from "./types.js"
+import type { FileRequirementInput, GoalBudget, GoalCompletionMode, GoalExecutionContext, GoalRequirement, GoalRequirementSource, GoalState, GoalUnitRotation, VerificationKind } from "./types.js"
 
 const DEFAULT_BUDGET: GoalBudget = {
   maxTurns: 0,
@@ -51,6 +51,7 @@ function existingConstraints(goal: GoalState): string[] {
 export function createGoal(input: {
   sessionID: string
   objective: string
+  completionMode?: GoalCompletionMode
   acceptance?: string[]
   constraints?: string[]
   checks?: string[]
@@ -93,6 +94,7 @@ export function createGoal(input: {
     id: randomUUID(),
     sessionID: input.sessionID,
     objective,
+    completionMode: input.completionMode ?? "verified",
     constraints,
     revision: 1,
     status: "active",
@@ -126,6 +128,7 @@ export function createGoal(input: {
 
 export function editGoal(goal: GoalState, input: {
   objective: string
+  completionMode?: GoalCompletionMode
   acceptance?: string[]
   constraints?: string[]
   checks?: string[]
@@ -143,6 +146,7 @@ export function editGoal(goal: GoalState, input: {
   const next = createGoal({
     sessionID: goal.sessionID,
     objective: input.objective,
+    completionMode: input.completionMode ?? goal.completionMode ?? "verified",
     acceptance: input.acceptance ?? existingAcceptance(goal),
     constraints: input.constraints ?? existingConstraints(goal),
     checks: input.checks ?? goal.checks,

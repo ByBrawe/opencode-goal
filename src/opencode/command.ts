@@ -1,4 +1,4 @@
-import type { FileRequirementInput } from "../domain/types.js"
+import type { FileRequirementInput, GoalCompletionMode } from "../domain/types.js"
 
 export interface ParsedGoalCommand {
   action: "create" | "status" | "contract" | "audit" | "pause" | "resume" | "clear" | "edit" | "budget" | "history" | "history_prune" | "restore" | "doctor" | "list" | "add" | "queue" | "queue_remove" | "queue_move" | "queue_clear" | "next"
@@ -7,6 +7,7 @@ export interface ParsedGoalCommand {
   constraints: string[]
   checks: string[]
   files: FileRequirementInput[]
+  completionMode?: GoalCompletionMode
   notifyCommand?: string
   unitCommand?: string
   freshSessionPerUnit?: boolean
@@ -191,6 +192,7 @@ export function parseGoalCommand(input: string): ParsedGoalCommand {
   const checks: string[] = []
   const files: FileRequirementInput[] = []
   const objective: string[] = []
+  let completionMode: GoalCompletionMode | undefined
   let maxTurns: number | undefined
   let maxTokens: number | undefined
   let maxRuntimeMs: number | undefined
@@ -213,6 +215,16 @@ export function parseGoalCommand(input: string): ParsedGoalCommand {
       continue
     }
     if (current === "--fresh-session-per-unit") { freshSessionPerUnit = true; continue }
+    if (current === "--continuous" || current === "--infinite") {
+      if (completionMode === "verified") throw new Error("--continuous/--infinite conflicts with --verified")
+      completionMode = "continuous"
+      continue
+    }
+    if (current === "--verified") {
+      if (completionMode === "continuous") throw new Error("--verified conflicts with --continuous/--infinite")
+      completionMode = "verified"
+      continue
+    }
     if (current === "--file" && next) { files.push({ file: next }); i += 1; continue }
     if (current === "--contains" && next) { files.push(parseContainsContract(next)); i += 1; continue }
     if (current === "--max-turns") { maxTurns = parseLimit(current, next, true); i += 1; continue }
@@ -223,7 +235,7 @@ export function parseGoalCommand(input: string): ParsedGoalCommand {
     objective.push(current)
   }
 
-  if (action === "budget" && (objective.length || acceptance.length || constraints.length || checks.length || files.length || notifyCommand !== undefined || unitCommand !== undefined || freshSessionPerUnit)) {
+  if (action === "budget" && (objective.length || acceptance.length || constraints.length || checks.length || files.length || completionMode !== undefined || notifyCommand !== undefined || unitCommand !== undefined || freshSessionPerUnit)) {
     throw new Error("/goal budget accepts only --max-turns, --max-tokens, --max-minutes, and --max-cost")
   }
   if ((action === "add") && (unitCommand !== undefined || freshSessionPerUnit)) {
@@ -243,6 +255,7 @@ export function parseGoalCommand(input: string): ParsedGoalCommand {
   }
 
   const parsed: ParsedGoalCommand = { action, objective: objective.join(" ").trim(), acceptance, constraints, checks, files }
+  if (completionMode !== undefined) parsed.completionMode = completionMode
   if (maxTurns !== undefined) parsed.maxTurns = maxTurns
   if (maxTokens !== undefined) parsed.maxTokens = maxTokens
   if (maxRuntimeMs !== undefined) parsed.maxRuntimeMs = maxRuntimeMs

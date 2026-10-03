@@ -52,6 +52,7 @@ function validGoal(value: unknown, sessionID: string): value is {
   id: string
   objective: string
   status: string
+  completionMode?: "verified" | "continuous"
   requirements: Array<{ required?: boolean; status?: string }>
   usage?: { turns?: number; tokens?: number }
   budget?: { maxTurns?: number; maxTokens?: number }
@@ -83,7 +84,8 @@ export function formatGoalSidebar(root: string, sessionID: string): string {
   } else {
     const required = goal.requirements.filter((item) => item.required !== false)
     const proven = required.filter((item) => item.status === "proven").length
-    lines.push(`${goal.status.toUpperCase()} · ${proven}/${required.length} proven`)
+    const mode = goal.completionMode === "continuous" ? "CONTINUOUS" : `${proven}/${required.length} proven`
+    lines.push(`${goal.status.toUpperCase()} · ${mode}`)
     lines.push(truncate(goal.objective))
     const turns = goal.usage?.turns ?? 0
     const maxTurns = goal.budget?.maxTurns || "∞"

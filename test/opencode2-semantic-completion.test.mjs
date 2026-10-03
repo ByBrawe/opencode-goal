@@ -105,6 +105,43 @@ test("V2 completion reaches completed only through host checks/files plus indepe
   }
 })
 
+
+
+test("V2 continuous mode rejects completion before checks or semantic verification", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-v2-continuous-completion-"))
+  try {
+    const sessionID = "v2-continuous-completion"
+    const store = new GoalStore(root)
+    const goal = createGoal({ sessionID, objective: "keep processing indefinitely", completionMode: "continuous", now: 100 })
+    await store.save(goal)
+
+    const autonomousRuntime = createOpenCode2AutonomousRuntime()
+    own(autonomousRuntime, sessionID, goal)
+    let verifierCalls = 0
+    const work = createOpenCode2GoalWorkTools({
+      autonomousRuntime,
+      resolveDirectory: async () => root,
+      semanticVerifier: {
+        async verify() {
+          verifierCalls += 1
+          throw new Error("continuous mode must not invoke verifier")
+        },
+      },
+    })
+    const nativeStatuses = []
+    const result = await work.definitions.opencode_goal_complete.execute(
+      { summary: "done" },
+      { sessionID, progress: async ({ status }) => nativeStatuses.push(status) },
+    )
+    assert.match(result.content, /Completion disabled: this Goal is continuous/)
+    assert.equal(verifierCalls, 0)
+    assert.deepEqual(nativeStatuses, [])
+    assert.equal((await store.load(sessionID)).status, "active")
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test("V2 completion pauses fail-closed when independent verifier infrastructure is unavailable", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-v2-completion-outage-"))
   try {

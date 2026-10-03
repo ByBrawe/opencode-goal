@@ -117,6 +117,7 @@ export function installGoalSequence(input: PluginInput, hooks: PluginHooks): voi
         constraints: parsed.constraints,
         checks: parsed.checks,
         files: parsed.files,
+        ...(parsed.completionMode ? { completionMode: parsed.completionMode } : {}),
         ...(parsed.notifyCommand ? { notifyCommand: parsed.notifyCommand } : {}),
         budget: budgetPatch(parsed),
       })

@@ -160,6 +160,7 @@ export async function applyOpenCode2ControlPlaneMutation(
       constraints: parsed.constraints,
       checks: parsed.checks,
       files: parsed.files,
+      ...(parsed.completionMode ? { completionMode: parsed.completionMode } : {}),
       ...(parsed.notifyCommand ? { notifyCommand: parsed.notifyCommand } : {}),
       budget: budgetPatch(parsed),
     })

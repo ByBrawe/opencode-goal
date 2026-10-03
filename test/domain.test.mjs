@@ -150,3 +150,21 @@ test("goal edit preserves success criteria and constraints when flags are omitte
   assert.ok(edited.requirements.some((item) => item.source === "constraint" && /do not add dependencies/.test(item.text)))
   assert.ok(edited.requirements.some((item) => item.source === "check" && item.command === "npm test"))
 })
+
+
+test("continuous mode disables completion while preserving safety state and can be switched back to verified", () => {
+  const continuous = createGoal({ sessionID: "continuous", objective: "keep processing work", completionMode: "continuous" })
+  assert.equal(continuous.completionMode, "continuous")
+  const audit = auditCompletion(continuous)
+  assert.equal(audit.ok, false)
+  assert.deepEqual(audit.missingRequirementIDs, [])
+  assert.match(audit.reasons.join("\n"), /continuous Goal mode disables automatic completion/)
+  const attempted = completeGoal(continuous, "should not finish")
+  assert.equal(attempted.goal.status, "active")
+
+  const preserved = editGoal(continuous, { objective: "keep processing revised work" })
+  assert.equal(preserved.completionMode, "continuous")
+  const verified = editGoal(preserved, { objective: "finish revised work", completionMode: "verified" })
+  assert.equal(verified.completionMode, "verified")
+  assert.match(auditCompletion(verified).reasons.join("\n"), /requirement is not proven/)
+})

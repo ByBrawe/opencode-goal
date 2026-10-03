@@ -37,3 +37,15 @@ test("compaction context keeps work-plane activity separate from the persisted G
   assert.match(context, /tool activity may silently replace the user's objective/)
   assert.match(context, /current trusted evidence for every required item/)
 })
+
+
+test("continuous prompt and compaction context explicitly disable automatic completion", () => {
+  const continuous = { ...goal, completionMode: "continuous" }
+  const prompt = continuationPrompt(continuous)
+  assert.match(prompt, /<goal_mode>\ncontinuous\n<\/goal_mode>|Completion mode: continuous/)
+  assert.match(prompt, /CONTINUOUS MODE: automatic Goal completion is disabled/)
+  assert.match(prompt, /Never call opencode_goal_complete/)
+  const context = compactionContext(continuous)
+  assert.match(context, /Completion mode: continuous/)
+  assert.match(context, /Automatic completion is disabled in continuous mode/)
+})

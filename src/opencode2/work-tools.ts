@@ -270,6 +270,9 @@ export function createOpenCode2GoalWorkTools(input: {
         const snapshot = snapshotResult.goal
         const owner = snapshotResult.owner
         const directory = snapshotResult.directory
+        if ((snapshot.completionMode ?? "verified") === "continuous") {
+          return response("Completion disabled: this Goal is continuous. Keep working until the user pauses/clears it or a safety boundary stops it; use /goal edit <objective> --verified to re-enable verified completion.", snapshot)
+        }
 
         await nativeProgress(context, "Running Goal host checks")
         let evaluated = await runConfiguredChecks(snapshot, directory)

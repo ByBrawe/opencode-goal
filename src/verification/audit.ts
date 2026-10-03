@@ -13,6 +13,14 @@ function latestVerificationEvidence(goal: GoalState): EvidenceRecord[] {
 }
 
 export function auditCompletion(goal: GoalState): CompletionAudit {
+  if ((goal.completionMode ?? "verified") === "continuous") {
+    return {
+      ok: false,
+      reasons: ["continuous Goal mode disables automatic completion; use /goal edit <objective> --verified to re-enable verified completion, or /goal pause / /goal clear to stop the run"],
+      missingRequirementIDs: [],
+    }
+  }
+
   const reasons: string[] = []
   const missingRequirementIDs: string[] = []
 

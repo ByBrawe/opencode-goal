@@ -31,6 +31,11 @@ test("TUI Goal sidebar is read-only and fails visible on unsafe or corrupt stora
     assert.match(shown, /ACTIVE · 1\/1 proven/)
     assert.match(shown, /Queue · 2/)
     assert.match(shown, /second queued goal/)
+
+    const continuousSession = "sidebar-continuous"
+    await goals.save(createGoal({ sessionID: continuousSession, objective: "watch forever", completionMode: "continuous" }))
+    assert.match(formatGoalSidebar(root, continuousSession), /ACTIVE · CONTINUOUS/)
+
     assert.deepEqual(await goals.load(sessionID), beforeGoal)
     assert.deepEqual(await sequences.load(sessionID), beforeQueue)
 

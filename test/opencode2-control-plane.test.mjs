@@ -122,7 +122,7 @@ test("V2 control mutations preserve V1 budget, archive, restore, and sequence se
     result = await applyOpenCode2ControlPlaneMutation(
       root,
       queueSession,
-      parseGoalCommand('add second queued --check "npm test"'),
+      parseGoalCommand('add second queued --continuous --check "npm test"'),
     )
     assert.ok(result)
 
@@ -148,6 +148,7 @@ test("V2 control mutations preserve V1 budget, archive, restore, and sequence se
     assert.ok(result)
     assert.equal(result.goal.objective, "second queued")
     assert.equal(result.goal.status, "active")
+    assert.equal(result.goal.completionMode, "continuous")
     assert.equal(result.kickoff, true)
     state = await sequence.load(queueSession)
     assert.equal(state.items.length, 1)

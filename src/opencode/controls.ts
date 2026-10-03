@@ -38,7 +38,7 @@ export function formatDetailedGoalStatus(goal: GoalState | null): string {
   const req = goal.requirements.map((item, i) => `${i + 1}. [${item.status}] ${item.text}`).join("\n")
   const stop = goal.stopReason ? `\nStop reason: ${goal.stopReason}` : ""
   const unit = goal.unitRotation ? `\n${formatGoalUnitRotation(goal)}` : ""
-  return `Goal: ${goal.objective}\nStatus: ${goal.status}\nRevision: ${goal.revision}\nBudget: ${formatGoalBudget(goal)}\nModel context: ${formatModelContext(goal)}${unit}${stop}\nRequirements:\n${req}`
+  return `Goal: ${goal.objective}\nStatus: ${goal.status}\nMode: ${goal.completionMode ?? "verified"}\nRevision: ${goal.revision}\nBudget: ${formatGoalBudget(goal)}\nModel context: ${formatModelContext(goal)}${unit}${stop}\nRequirements:\n${req}`
 }
 
 function acceptanceRequirements(goal: GoalState): GoalRequirement[] {
@@ -66,7 +66,10 @@ export function formatGoalContract(goal: GoalState | null): string {
   const hostContracts = goal.requirements.filter((item) => item.verification === "command" || item.verification === "file")
   const constraintLines = constraints.length ? constraints.map((item) => `- ${item}`).join("\n") : "- none declared"
   const unit = goal.unitRotation ? `\n\n${formatGoalUnitRotation(goal)}` : ""
-  return `Goal Contract\nObjective: ${goal.objective}\nStatus: ${goal.status}\nRevision: ${goal.revision}${unit}\n\nSuccess criteria:\n${requirementLines(acceptance, "none declared beyond the full objective")}\n\nConstraints / non-goals:\n${constraintLines}\n\nHost verification contracts:\n${requirementLines(hostContracts, "none declared")}\n\nBudget: ${formatGoalBudget(goal)}\n\nThe full objective and every declared constraint remain required for completion.`
+  const completion = (goal.completionMode ?? "verified") === "continuous"
+    ? "Continuous mode: automatic completion is disabled; the Goal runs until pause/clear or a safety boundary stops it."
+    : "Verified mode: the full objective and every declared constraint remain required for completion."
+  return `Goal Contract\nObjective: ${goal.objective}\nStatus: ${goal.status}\nMode: ${goal.completionMode ?? "verified"}\nRevision: ${goal.revision}${unit}\n\nSuccess criteria:\n${requirementLines(acceptance, "none declared beyond the full objective")}\n\nConstraints / non-goals:\n${constraintLines}\n\nHost verification contracts:\n${requirementLines(hostContracts, "none declared")}\n\nBudget: ${formatGoalBudget(goal)}\n\n${completion}`
 }
 
 function archiveLine(record: GoalArchiveRecord): string {

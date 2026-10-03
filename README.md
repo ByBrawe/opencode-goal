@@ -217,6 +217,9 @@ Repeatable contract flags define success and hard boundaries:
 --contains "file::required text"
 --unit "host command"
 --fresh-session-per-unit
+--continuous            # keep running; no automatic completion gate
+--infinite              # alias for --continuous
+--verified              # switch an edited continuous Goal back to verified completion
 --max-turns <n>
 --max-tokens <n>
 --max-minutes <n>
@@ -224,6 +227,26 @@ Repeatable contract flags define success and hard boundaries:
 ```
 
 New Goals have no cumulative token cap by default (`maxTokens: 0`). Use `--max-tokens` or `/goal budget --max-tokens` only when you want an explicit total-work runaway guard; this cumulative budget is separate from the selected model's current context/input window.
+
+### Continuous / infinite Goals
+
+For monitoring, generators, queues, or other work that should intentionally keep running without a success condition, create the Goal in continuous mode:
+
+```text
+/goal process incoming work forever --continuous
+```
+
+`--infinite` is an alias for `--continuous`. In this mode the Goal remains active and autonomous continuation keeps using the same objective, constraints, budgets, restart recovery, no-progress protection, provider safety handling, and user steering rules, but **automatic verified completion is disabled**. The model is instructed not to call `opencode_goal_complete`, and the host rejects that tool before running checks or the semantic verifier if it is called anyway.
+
+Continuous does not mean "ignore safety limits": explicit `--max-turns`, `--max-tokens`, `--max-minutes`, `--max-cost`, provider/usage limits, waiting-user state, repeated no-progress protection, manual `/goal pause`, and `/goal clear` still stop or suspend work normally.
+
+To convert an existing continuous Goal back to ordinary verified completion, edit it explicitly:
+
+```text
+/goal edit finish the current backlog and stop --verified
+```
+
+`/goal status`, `/goal contract`, `/goal audit`, and the native sidebar show the current mode. Queued Goals created with `/goal add ... --continuous` preserve the mode when promoted.
 
 `--notify` attaches an optional **user-authored** local lifecycle command to the Goal Contract. The command is launched only after the relevant Goal state is durably persisted. `{reason}` expands to `completed`, `blocked`, `paused`, or `rejected`; `{goal}` expands to the Goal ID. `waiting_user`, budget limits, and usage limits use the `paused` reason. Notification execution is advisory: command failure cannot change Goal state or completion. Model-facing `opencode_goal_*` tools cannot set or replace this command.
 

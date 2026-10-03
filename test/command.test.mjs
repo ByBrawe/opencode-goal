@@ -183,3 +183,14 @@ test("per-unit session rotation is explicit, paired, and excluded from queued Go
     /non-empty host command/,
   )
 })
+
+
+test("continuous/infinite mode is explicit, reversible, and excluded from budget-only mutation", () => {
+  assert.equal(parseGoalCommand("monitor forever --continuous").completionMode, "continuous")
+  assert.equal(parseGoalCommand("monitor forever --infinite").completionMode, "continuous")
+  assert.equal(parseGoalCommand("edit monitor differently --verified").completionMode, "verified")
+  assert.equal(parseGoalCommand("add queued watcher --continuous").completionMode, "continuous")
+  assert.throws(() => parseGoalCommand("monitor --continuous --verified"), /conflicts/)
+  assert.throws(() => parseGoalCommand("monitor --verified --infinite"), /conflicts/)
+  assert.throws(() => parseGoalCommand("budget --continuous"), /accepts only/)
+})

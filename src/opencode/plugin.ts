@@ -312,6 +312,7 @@ export default async function OpenCodeGoalPlugin(input: any, options: OpenCodeGo
           const previousOwner = goalTurnOwner(goal)
           goal = editGoal(goal, {
             objective: parsed.objective,
+            ...(parsed.completionMode ? { completionMode: parsed.completionMode } : {}),
             ...(parsed.acceptance.length ? { acceptance: parsed.acceptance } : {}),
             ...(parsed.checks.length ? { checks: parsed.checks } : {}),
             ...(parsed.files.length ? { files: parsed.files } : {}),
@@ -324,6 +325,7 @@ export default async function OpenCodeGoalPlugin(input: any, options: OpenCodeGo
           goal = createGoal({
             sessionID: event.sessionID,
             objective: parsed.objective,
+            ...(parsed.completionMode ? { completionMode: parsed.completionMode } : {}),
             acceptance: parsed.acceptance,
             checks: parsed.checks,
             files: parsed.files,
@@ -639,6 +641,9 @@ export default async function OpenCodeGoalPlugin(input: any, options: OpenCodeGo
           const stale = staleToolReason(context, snapshot)
           if (stale) return stale
           if (snapshot.status !== "active") return `Completion rejected: goal status is ${snapshot.status}.`
+          if ((snapshot.completionMode ?? "verified") === "continuous") {
+            return "Completion disabled: this Goal is continuous. Keep working until the user pauses/clears it or a safety boundary stops it; use /goal edit <objective> --verified to re-enable verified completion."
+          }
           let evaluated = await runConfiguredChecks(snapshot, directory)
           evaluated = await verifyDeclaredFiles(evaluated, directory)
           if (currentSteeringEpoch(context.sessionID) !== startingSteeringEpoch) {

@@ -1,4 +1,4 @@
-import type { FileRequirementInput, GoalBudget, GoalState } from "./types.js"
+import type { FileRequirementInput, GoalBudget, GoalCompletionMode, GoalState } from "./types.js"
 
 export interface QueuedGoalSpec {
   id: string
@@ -7,6 +7,7 @@ export interface QueuedGoalSpec {
   constraints: string[]
   checks: string[]
   files: FileRequirementInput[]
+  completionMode?: GoalCompletionMode
   notifyCommand?: string
   budget: Partial<GoalBudget>
   createdAt: number
@@ -27,6 +28,7 @@ export interface QueueGoalInput {
   constraints?: string[]
   checks?: string[]
   files?: FileRequirementInput[]
+  completionMode?: GoalCompletionMode
   notifyCommand?: string
   budget?: Partial<GoalBudget>
   now?: number

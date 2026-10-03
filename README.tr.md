@@ -217,6 +217,9 @@ Tekrarlanabilir contract flag'leri success ve hard boundary'leri tanımlar:
 --contains "file::required text"
 --unit "host komutu"
 --fresh-session-per-unit
+--continuous            # çalışmaya devam et; otomatik completion gate yok
+--infinite              # --continuous alias'ı
+--verified              # düzenlenen continuous Goal'ı verified completion'a döndür
 --max-turns <n>
 --max-tokens <n>
 --max-minutes <n>
@@ -224,6 +227,26 @@ Tekrarlanabilir contract flag'leri success ve hard boundary'leri tanımlar:
 ```
 
 Yeni Goal'larda cumulative token limiti varsayılan olarak yoktur (`maxTokens: 0`). Toplam çalışma için açık bir runaway guard istediğinizde `--max-tokens` veya `/goal budget --max-tokens` kullanın; bu cumulative budget seçilen modelin güncel context/input penceresinden ayrıdır.
+
+### Continuous / infinite Goal'lar
+
+Monitoring, generator, queue veya bilerek bir başarı koşuluna ulaşmadan çalışmaya devam etmesi gereken işler için Goal'ı continuous mode'da başlatın:
+
+```text
+/goal gelen işleri sürekli işle --continuous
+```
+
+`--infinite`, `--continuous` için alias'tır. Bu modda Goal aktif kalır; autonomous continuation aynı objective, constraint, budget, restart recovery, no-progress koruması, provider güvenliği ve user-steering kurallarını kullanır, ancak **otomatik verified completion kapalıdır**. Model `opencode_goal_complete` çağırmaması için açıkça yönlendirilir; yine de çağırırsa host check veya semantic verifier çalıştırılmadan önce tool çağrısı reddedilir.
+
+Continuous, "safety limitlerini yok say" anlamına gelmez: açık `--max-turns`, `--max-tokens`, `--max-minutes`, `--max-cost`, provider/usage limitleri, waiting-user durumu, tekrarlanan no-progress koruması, manuel `/goal pause` ve `/goal clear` normal şekilde işi durdurur veya askıya alır.
+
+Mevcut continuous Goal'ı normal verified completion moduna döndürmek için açıkça edit edin:
+
+```text
+/goal edit mevcut backlog'u bitir ve dur --verified
+```
+
+`/goal status`, `/goal contract`, `/goal audit` ve native sidebar mevcut mode'u gösterir. `/goal add ... --continuous` ile kuyruğa alınan Goal'lar promote edilirken mode'u korur.
 
 `--notify`, Goal Contract'a opsiyonel ve **kullanıcı tarafından yazılan** yerel bir lifecycle komutu bağlar. Komut yalnız ilgili Goal state kalıcı olarak diske yazıldıktan sonra çalıştırılır. `{reason}` değeri `completed`, `blocked`, `paused` veya `rejected`; `{goal}` ise Goal ID ile değiştirilir. `waiting_user`, budget limit ve usage limit durumları `paused` reason değerini kullanır. Notification tamamen advisory'dir: komut hatası Goal state'ini veya completion sonucunu değiştiremez. Model-facing `opencode_goal_*` tool'ları bu komutu ayarlayamaz veya değiştiremez.
 

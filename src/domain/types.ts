@@ -13,6 +13,7 @@ export type RequirementStatus = "pending" | "proven" | "failed" | "unknown" | "b
 export type EvidenceKind = "command" | "file" | "diff" | "artifact" | "runtime" | "external" | "manual" | "agent_note"
 export type EvidenceTrust = "host" | "verifier" | "user" | "agent"
 export type VerificationKind = "semantic" | "command" | "file"
+export type GoalCompletionMode = "verified" | "continuous"
 export type GoalRequirementSource = "objective" | "acceptance" | "constraint" | "check" | "file"
 export type GoalInfrastructureRecoveryKind = "semantic_verifier" | "continuation_dispatch" | "provider_retry"
 
@@ -213,6 +214,8 @@ export interface GoalState {
   id: string
   sessionID: string
   objective: string
+  /** Completion policy. Older schema-v1 snapshots omit this and are treated as verified. */
+  completionMode?: GoalCompletionMode
   /** Explicit Goal Contract boundaries/non-goals. Older schema-v1 snapshots may omit this field. */
   constraints?: string[]
   revision: number

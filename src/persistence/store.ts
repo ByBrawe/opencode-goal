@@ -157,6 +157,7 @@ function validateState(value: unknown): GoalState | null {
   const state = value as Partial<GoalState>
   if (state.schemaVersion !== 1 || typeof state.id !== "string" || typeof state.sessionID !== "string" || typeof state.objective !== "string") return null
   if (!Array.isArray(state.requirements) || !Array.isArray(state.evidence) || !validGeneration(state.storageGeneration)) return null
+  if (state.completionMode !== undefined && state.completionMode !== "verified" && state.completionMode !== "continuous") return null
   if (state.notifyCommand !== undefined && (typeof state.notifyCommand !== "string" || !state.notifyCommand.trim())) return null
   if (!validRuntimeFingerprint(state.runtimeFingerprint)) return null
   if (!validUnitRotation(state.unitRotation) || !validUnitRotationBinding(state)) return null
@@ -195,6 +196,8 @@ function stateIntegrityDetail(value: unknown): string {
   if (schema !== 1) return `unsupported schemaVersion ${String(schema)}`
   const generation = value && typeof value === "object" ? (value as { storageGeneration?: unknown }).storageGeneration : undefined
   if (!validGeneration(generation)) return `invalid storageGeneration ${String(generation)}`
+  const completionMode = value && typeof value === "object" ? (value as { completionMode?: unknown }).completionMode : undefined
+  if (completionMode !== undefined && completionMode !== "verified" && completionMode !== "continuous") return `invalid completionMode ${String(completionMode)}`
   const notifyCommand = value && typeof value === "object" ? (value as { notifyCommand?: unknown }).notifyCommand : undefined
   if (notifyCommand !== undefined && (typeof notifyCommand !== "string" || !notifyCommand.trim())) return "invalid notifyCommand"
   const runtimeFingerprint = value && typeof value === "object" ? (value as { runtimeFingerprint?: unknown }).runtimeFingerprint : undefined

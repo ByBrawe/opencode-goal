@@ -64,7 +64,7 @@ test("goal created from Plan is persisted paused instead of executing", async ()
     assert.equal(runtime.prompts.length, 0)
     assert.equal(runtime.toasts.at(-1).variant, "warning")
   } finally {
-    await rm(root, { recursive: true, force: true })
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })
   }
 })
 
@@ -95,7 +95,7 @@ test("Plan cannot resume a Goal but Build can explicitly resume and repin execut
     assert.match(buildResume.parts[0].text, /Continue working toward the active OpenCode goal/)
     assert.equal(runtime.toasts.at(-1).variant, "success")
   } finally {
-    await rm(root, { recursive: true, force: true })
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })
   }
 })
 
@@ -117,7 +117,7 @@ test("idle cannot auto-continue an active Goal bound to Plan", async () => {
     assert.match(paused.stopReason, /switch to Build and run \/goal resume/i)
     assert.equal(runtime.prompts.length, 0, "restricted idle must never dispatch a continuation prompt")
   } finally {
-    await rm(root, { recursive: true, force: true })
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })
   }
 })
 
@@ -140,6 +140,6 @@ test("startup recovery pauses an active persisted Plan Goal before any prompt", 
     await new Promise((resolve) => setTimeout(resolve, 20))
     assert.equal(runtime.prompts.length, 0, "restart bootstrap must not recover into Plan execution")
   } finally {
-    await rm(root, { recursive: true, force: true })
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })
   }
 })

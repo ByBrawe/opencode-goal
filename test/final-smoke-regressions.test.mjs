@@ -31,6 +31,29 @@ test("file evidence accepts the 1-based requirement number shown by Goal status"
   }
 })
 
+test("file evidence fails cleanly when the declared file path is a directory", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-evidence-directory-"))
+  try {
+    await import("node:fs/promises").then(({ mkdir }) => mkdir(path.join(root, "fixtures")))
+    let goal = createGoal({
+      sessionID: "s-directory",
+      objective: "verify fixture marker",
+      files: [{ file: "fixtures", contains: "expected" }],
+    })
+    const fileRequirement = goal.requirements[1]
+
+    const checked = await recordFileEvidence(goal, { root, requirementID: fileRequirement.id })
+    assert.equal(checked.evidence.passed, false)
+    assert.equal(checked.evidence.metadata?.exists, true)
+    assert.equal(checked.evidence.metadata?.regularFile, false)
+    assert.equal(checked.evidence.metadata?.directory, true)
+    assert.match(checked.evidence.summary, /expected a regular file/)
+    assert.throws(() => proveRequirementsFromEvidence(checked.goal, checked.evidence.id), /failed evidence cannot prove/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test("a repeated blocker gets its third turn before the generic stall guard can preempt it", () => {
   let goal = createGoal({ sessionID: "s1", objective: "impossible verification" })
 

@@ -107,6 +107,80 @@ test("a malformed root-path citation can fall back to one matching fresh host fi
   }
 })
 
+test("verifier accepts a workspace-root-qualified path whose leading root slash was dropped", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-evidence-root-prefix-"))
+  try {
+    await writeFile(path.join(root, "README.md"), "Verified Goal Mode\n", "utf8")
+    const droppedRootPath = path.join(root, "README.md").replace(/^[/\\]+/, "")
+    const fake = makeClient(async (input) => {
+      const accepted = await submitProven({ ...input, pathValue: droppedRootPath, quote: "Verified Goal Mode" })
+      assert.equal(accepted, "Semantic verifier result accepted.")
+      return {}
+    })
+    const hooks = await OpenCodeGoalPlugin({ client: fake.client, directory: root })
+    fake.setHooks(hooks)
+    await createGoal(hooks, "ship verified docs")
+
+    const result = await hooks.tool.opencode_goal_complete.execute({ summary: "done" }, { sessionID: "parent", messageID: "executor-message", agent: "build" })
+    assert.equal(result, "Goal completed with host and verifier-backed evidence.")
+    assert.equal((await stateFor(root)).status, "completed")
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("verifier quote corroboration tolerates hard-wrap whitespace without tolerating text changes", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-evidence-wrap-"))
+  try {
+    await writeFile(
+      path.join(root, "README.md"),
+      "The write queue spec asserts\nnon-blocking + retry; no patches changed.\n",
+      "utf8",
+    )
+    const fake = makeClient(async (input) => {
+      const accepted = await submitProven({
+        ...input,
+        pathValue: "README.md",
+        quote: "The write queue spec asserts non-blocking + retry; no patches changed.",
+      })
+      assert.equal(accepted, "Semantic verifier result accepted.")
+      return {}
+    })
+    const hooks = await OpenCodeGoalPlugin({ client: fake.client, directory: root })
+    fake.setHooks(hooks)
+    await createGoal(hooks, "ship verified docs")
+
+    const result = await hooks.tool.opencode_goal_complete.execute({ summary: "done" }, { sessionID: "parent", messageID: "executor-message", agent: "build" })
+    assert.equal(result, "Goal completed with host and verifier-backed evidence.")
+    assert.equal((await stateFor(root)).status, "completed")
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("verifier directory citations fail closed with a regular-file diagnostic instead of EISDIR", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-evidence-directory-citation-"))
+  try {
+    await import("node:fs/promises").then(({ mkdir }) => mkdir(path.join(root, "docs")))
+    const fake = makeClient(async (input) => {
+      const accepted = await submitProven({ ...input, pathValue: "docs", quote: "anything" })
+      assert.equal(accepted, "Semantic verifier result accepted.")
+      return {}
+    })
+    const hooks = await OpenCodeGoalPlugin({ client: fake.client, directory: root })
+    fake.setHooks(hooks)
+    await createGoal(hooks, "ship verified docs")
+
+    const result = await hooks.tool.opencode_goal_complete.execute({ summary: "done" }, { sessionID: "parent", messageID: "executor-message", agent: "build" })
+    assert.match(result, /failed closed/)
+    assert.match(result, /regular file/)
+    assert.doesNotMatch(result, /EISDIR/)
+    assert.equal((await stateFor(root)).status, "active")
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test("unrelated hallucinated quotes still fail closed even when the file contract is proven", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-evidence-hallucination-"))
   try {

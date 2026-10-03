@@ -69,7 +69,7 @@ export function semanticVerificationPrompt(goal: GoalState, auditToken: string, 
     objective: goal.objective,
     requirements: semantic.map((item) => ({ id: item.id, text: item.text })),
   }, null, 2)
-  return `Independently audit the semantic requirements for an OpenCode goal.\n\nThe goal executor's claims are not proof. Inspect the current workspace yourself using only read/search tools. Never edit files, run shell commands, delegate tasks, or mutate goal state. Preserve the full requested scope.\n\nVerdicts:\n- proven: current authoritative workspace evidence directly establishes the requirement. Support proven verdicts with exact file excerpts as {path, quote} and/or IDs of current passing host evidence. The host will independently re-read file quotes and validate every host-evidence ID.\n- failed: current evidence directly contradicts the requirement.\n- unknown: evidence is missing, indirect, ambiguous, external, or would require executing a command you cannot run.\n\nPrefer a current passing host-evidence ID when it directly establishes the requirement. When citing a file, quote only literal text that exists inside that file. Never copy read-tool line numbers, path headers, XML/Markdown wrappers, labels, or explanatory prose into the quote.\n\nDo not treat a vague statement, plan, TODO, changelog claim, or unverified test claim as proof. Host-run verification evidence, when present below, may be used only for what it actually establishes. A path without an exact quote is not proof, and an unknown host-evidence ID is not proof. Temporal/process requirements such as doing an action across N distinct turns are not proven by a final file value alone: use the host runtime turn/progress evidence below and return unknown or failed when the requested cadence/count is not established.\n\nHost evidence:\n${hostEvidence}\n\nVerification request:\n${request}\n\nCall opencode_goal_verifier_result exactly once with the auditToken and one result for every listed requirement. Do not return a success verdict outside that tool.`
+  return `Independently audit the semantic requirements for an OpenCode goal.\n\nThe goal executor's claims are not proof. Inspect the current workspace yourself using only read/search tools. Never edit files, run shell commands, delegate tasks, or mutate goal state. Preserve the full requested scope.\n\nVerdicts:\n- proven: current authoritative workspace evidence directly establishes the requirement. Support proven verdicts with exact file excerpts as {path, quote} and/or IDs of current passing host evidence. The host will independently re-read file quotes and validate every host-evidence ID.\n- failed: current evidence directly contradicts the requirement.\n- unknown: evidence is missing, indirect, ambiguous, external, or would require executing a command you cannot run.\n\nPrefer a current passing host-evidence ID when it directly establishes the requirement. When citing a file, use a path relative to the workspace root (for example docs/file.md) or an absolute path with its leading root/drive intact; never strip the leading slash or drive prefix. Quote only literal text that exists inside that file. Never copy read-tool line numbers, path headers, XML/Markdown wrappers, labels, or explanatory prose into the quote.\n\nDo not treat a vague statement, plan, TODO, changelog claim, or unverified test claim as proof. Host-run verification evidence, when present below, may be used only for what it actually establishes. A path without an exact quote is not proof, and an unknown host-evidence ID is not proof. Temporal/process requirements such as doing an action across N distinct turns are not proven by a final file value alone: use the host runtime turn/progress evidence below and return unknown or failed when the requested cadence/count is not established.\n\nHost evidence:\n${hostEvidence}\n\nVerification request:\n${request}\n\nCall opencode_goal_verifier_result exactly once with the auditToken and one result for every listed requirement. Do not return a success verdict outside that tool.`
 }
 
 function resolveInside(root: string, candidate: string): string {
@@ -98,6 +98,29 @@ function evidenceQuoteCandidates(value: string): string[] {
   return [...candidates]
 }
 
+function droppedRootQualifiedRelative(root: string, candidate: string): string | undefined {
+  if (path.isAbsolute(candidate)) return undefined
+  const base = path.resolve(root)
+  const anchor = path.parse(base).root
+  const rootWithoutAnchor = path.normalize(base.slice(anchor.length))
+  const normalizedCandidate = path.normalize(candidate)
+  if (!rootWithoutAnchor || normalizedCandidate === rootWithoutAnchor) return undefined
+  if (!normalizedCandidate.startsWith(rootWithoutAnchor + path.sep)) return undefined
+  const relative = path.relative(rootWithoutAnchor, normalizedCandidate)
+  if (!relative || relative === "." || relative.startsWith("..") || path.isAbsolute(relative)) return undefined
+  return relative
+}
+
+function matchEvidenceQuote(content: string, candidates: string[]): string | undefined {
+  const exact = candidates.find((candidate) => content.includes(candidate))
+  if (exact) return exact
+  const normalizedContent = content.replace(/\s+/g, " ").trim()
+  return candidates.find((candidate) => {
+    const normalizedCandidate = candidate.replace(/\s+/g, " ").trim()
+    return normalizedCandidate.length > 0 && normalizedContent.includes(normalizedCandidate)
+  })
+}
+
 export async function corroborateSemanticVerifierEvidence(
   root: string,
   goal: GoalState,
@@ -109,6 +132,8 @@ export async function corroborateSemanticVerifierEvidence(
   const readCurrentFile = async (absolute: string) => {
     let cached = cache.get(absolute)
     if (!cached) {
+      const info = await fs.stat(absolute)
+      if (!info.isFile()) throw new Error(`verifier evidence must reference a regular file: ${absolute}`)
       const content = await fs.readFile(absolute, "utf8")
       cached = { content, sha256: createHash("sha256").update(content).digest("hex") }
       cache.set(absolute, cached)
@@ -162,8 +187,20 @@ export async function corroborateSemanticVerifierEvidence(
         }
         throw error
       }
-      const cached = await readCurrentFile(absolute)
-      const quote = evidenceQuoteCandidates(requestedQuote).find((candidate) => cached.content.includes(candidate))
+      let evidencePath = relativePath
+      let cached: { content: string; sha256: string }
+      try {
+        cached = await readCurrentFile(absolute)
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code
+        const recoveredRelative = code === "ENOENT" ? droppedRootQualifiedRelative(root, relativePath) : undefined
+        if (!recoveredRelative) throw error
+        absolute = resolveInside(root, recoveredRelative)
+        evidencePath = recoveredRelative
+        cached = await readCurrentFile(absolute)
+      }
+      const quoteCandidates = evidenceQuoteCandidates(requestedQuote)
+      const quote = matchEvidenceQuote(cached.content, quoteCandidates)
       if (!quote) {
         const recovered = await recoverHostFileEvidence(requestedQuote, absolute)
         if (recovered) {
@@ -172,7 +209,7 @@ export async function corroborateSemanticVerifierEvidence(
         }
         throw new Error(`verifier evidence quote was not found in ${relativePath}`)
       }
-      evidence.push({ path: relativePath, quote, sha256: cached.sha256 })
+      evidence.push({ path: evidencePath, quote, sha256: cached.sha256 })
     }
     const normalizedHostEvidenceIDs = [...hostEvidenceIDs]
     for (const id of normalizedHostEvidenceIDs) {

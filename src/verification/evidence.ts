@@ -80,28 +80,41 @@ export async function recordFileEvidence(goal: GoalState, input: {
   const absolute = assertInside(input.root, requirement.file)
   let content = ""
   let exists = true
+  let regularFile = false
+  let directory = false
   try {
-    content = await fs.readFile(absolute, "utf8")
+    const info = await fs.stat(absolute)
+    regularFile = info.isFile()
+    directory = info.isDirectory()
+    if (regularFile) content = await fs.readFile(absolute, "utf8")
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code
     if (code !== "ENOENT") throw error
     exists = false
   }
-  const passed = exists && (requirement.contains === undefined || content.includes(requirement.contains))
-  const digest = exists ? createHash("sha256").update(content).digest("hex") : ""
+  const passed = exists && regularFile && (requirement.contains === undefined || content.includes(requirement.contains))
+  const digest = regularFile ? createHash("sha256").update(content).digest("hex") : ""
   const evidence: EvidenceRecord = {
     id: randomUUID(),
     kind: "file",
     trust: "host",
     summary: passed
       ? `Verified ${requirement.file}${requirement.contains === undefined ? " exists" : " contains the required text"}`
-      : `Could not verify ${requirement.file}${requirement.contains === undefined ? " exists" : " contains the required text"}`,
+      : exists && !regularFile
+        ? `Could not verify ${requirement.file}: path is ${directory ? "a directory" : "not a regular file"}; expected a regular file`
+        : `Could not verify ${requirement.file}${requirement.contains === undefined ? " exists" : " contains the required text"}`,
     createdAt: now,
     goalRevision: goal.revision,
     requirementIDs: [requirement.id],
     source: requirement.file,
     passed,
-    metadata: { exists, sha256: digest, ...(requirement.contains === undefined ? {} : { contains: requirement.contains }) },
+    metadata: {
+      exists,
+      regularFile,
+      ...(directory ? { directory: true } : {}),
+      sha256: digest,
+      ...(requirement.contains === undefined ? {} : { contains: requirement.contains }),
+    },
   }
   return { goal: addEvidence(goal, evidence), evidence }
 }

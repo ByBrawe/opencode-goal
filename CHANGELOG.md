@@ -2,6 +2,22 @@
 
 All notable changes to **OpenCode Goals** are documented here.
 
+## 1.3.46 — 2026-10-04
+
+Continuous/infinite Goal mode patch.
+
+- Fix #262 by adding explicit `--continuous` Goal contracts; `--infinite` is an equivalent alias for long-running work with no automatic success terminal.
+- Add `--verified` on create/edit so a continuous Goal can be deliberately returned to normal host-verified completion semantics.
+- Preserve autonomous continuation, objective/constraints, cumulative budgets, provider/usage limits, waiting-user behavior, restart recovery, compaction ownership, no-progress protection, pause/clear controls and user steering while continuous mode is active.
+- Reject `opencode_goal_complete` before host checks or semantic verification in continuous mode, and explicitly instruct Goal-owned prompts not to call completion while that mode is active.
+- Persist the mode through schema-v1 Goal snapshots and ordered queue promotion without requiring a state migration; older snapshots with no mode remain verified.
+- Show `verified` / `continuous` in status, contract and audit views, and render `CONTINUOUS` in the native OpenCode 2 sidebar.
+- Cover parser aliases/conflicts, mode reversal, completion veto, queue promotion, prompts/compaction and V2 verifier short-circuit behavior with deterministic regressions.
+
+This release changes completion policy only when the user explicitly selects continuous/infinite mode. Existing Goals remain verified by default.
+
+See [the 1.3.46 release notes](docs/releases/1.3.46.md).
+
 ## 1.3.45 — 2026-10-03
 
 Semantic-verifier scale and evidence-hardening patch.

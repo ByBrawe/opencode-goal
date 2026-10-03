@@ -248,6 +248,8 @@ Mevcut continuous Goal'ı normal verified completion moduna döndürmek için a�
 
 `/goal status`, `/goal contract`, `/goal audit` ve native sidebar mevcut mode'u gösterir. `/goal add ... --continuous` ile kuyruğa alınan Goal'lar promote edilirken mode'u korur.
 
+Native OpenCode 2 sidebar ayrıca persisted Goal state'ten read-only telemetry gösterir: Goal id/revision, Goal yaşı ve account edilmiş model runtime, turn/token/cost ile finite/unlimited budget'lar, varsa seçili model/context telemetry, requirement/check/file proof sayıları, native Todo plan sayıları ve aktif Todo, son persisted host-progress/state-update yaşı, continuation/recovery/handoff durumu, stall-guard sayacı ve Goal queue. Host güvenilir veri persist etmediyse live TPS/provider phase veya sahte completion yüzdesi **üretilmez**.
+
 `--notify`, Goal Contract'a opsiyonel ve **kullanıcı tarafından yazılan** yerel bir lifecycle komutu bağlar. Komut yalnız ilgili Goal state kalıcı olarak diske yazıldıktan sonra çalıştırılır. `{reason}` değeri `completed`, `blocked`, `paused` veya `rejected`; `{goal}` ise Goal ID ile değiştirilir. `waiting_user`, budget limit ve usage limit durumları `paused` reason değerini kullanır. Notification tamamen advisory'dir: komut hatası Goal state'ini veya completion sonucunu değiştiremez. Model-facing `opencode_goal_*` tool'ları bu komutu ayarlayamaz veya değiştiremez.
 
 Örnek:

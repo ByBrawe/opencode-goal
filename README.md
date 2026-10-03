@@ -248,6 +248,8 @@ To convert an existing continuous Goal back to ordinary verified completion, edi
 
 `/goal status`, `/goal contract`, `/goal audit`, and the native sidebar show the current mode. Queued Goals created with `/goal add ... --continuous` preserve the mode when promoted.
 
+The native OpenCode 2 sidebar also exposes a read-only telemetry snapshot from persisted Goal state: Goal id/revision, age and accounted model runtime, turns/tokens/cost and finite/unlimited budgets, selected model/context telemetry when available, requirement/check/file proof counts, native Todo-plan counts plus the current in-progress item, last persisted host-progress/state-update age, continuation/recovery/handoff state, stall-guard count, and the Goal queue. It deliberately does **not** invent live TPS, provider phase, or a fake completion percentage when the host has not persisted trustworthy data for those values.
+
 `--notify` attaches an optional **user-authored** local lifecycle command to the Goal Contract. The command is launched only after the relevant Goal state is durably persisted. `{reason}` expands to `completed`, `blocked`, `paused`, or `rejected`; `{goal}` expands to the Goal ID. `waiting_user`, budget limits, and usage limits use the `paused` reason. Notification execution is advisory: command failure cannot change Goal state or completion. Model-facing `opencode_goal_*` tools cannot set or replace this command.
 
 Example:

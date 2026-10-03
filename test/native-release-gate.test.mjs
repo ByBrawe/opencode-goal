@@ -28,9 +28,9 @@ test("all documented native gates including actual sidebar rendering are mandato
   assert.throws(() => evaluateReleaseRuns([], [], sha, repository))
 })
 test("an already published immutable version must match its exact git source", () => {
-  const expected = { name: "@bybrawe/opencode-goal", version: "1.3.46", sha }
+  const expected = { name: "@bybrawe/opencode-goal", version: "1.3.47", sha }
   assert.doesNotThrow(() => assertRegistrySource({ name: expected.name, version: expected.version, gitHead: sha }, expected))
-  for (const change of [{ gitHead: "b".repeat(40) }, { gitHead: undefined }, { name: "other" }, { version: "1.3.45" }]) assert.throws(() => assertRegistrySource({ name: expected.name, version: expected.version, gitHead: sha, ...change }, expected), /different source/)
+  for (const change of [{ gitHead: "b".repeat(40) }, { gitHead: undefined }, { name: "other" }, { version: "1.3.46" }]) assert.throws(() => assertRegistrySource({ name: expected.name, version: expected.version, gitHead: sha, ...change }, expected), /different source/)
 })
 test("publisher keeps immutable checkout, serialized OIDC and exact-main gates", async () => {
   const workflow = await readFile(new URL("../.github/workflows/publish-npm.yml", import.meta.url), "utf8")

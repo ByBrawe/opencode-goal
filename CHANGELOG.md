@@ -2,6 +2,23 @@
 
 All notable changes to **OpenCode Goals** are documented here.
 
+## 1.3.47 — 2026-10-04
+
+Native Goal sidebar telemetry patch.
+
+- Expand the read-only OpenCode 2 sidebar with persisted Goal id/revision, verified/continuous mode, Goal age and accounted model runtime.
+- Show cumulative turns, tokens, cost and finite/unlimited turn/token/runtime/cost budgets without inventing percentages for open-ended Goals.
+- Surface the selected model and persisted context telemetry when the host has recorded it.
+- Show requirement/check/file proof counts, native Todo plan counts, and the current in-progress Todo item.
+- Surface the age of the last persisted host progress and Goal state update, plus continuation-pending, infrastructure-recovery, unit-handoff and stall-guard state.
+- Keep the existing ordered Goal queue visible below the live Goal telemetry.
+- Keep telemetry fail-safe on malformed nested persisted values and fail visible on an invalid completion mode.
+- Deliberately omit live TPS, live provider phase and estimated completion percentages because the current public/persisted host contract does not provide trustworthy values for them.
+
+The sidebar remains read-only and location-bound; this release does not add a second lifecycle authority or treat Todo/telemetry as completion evidence.
+
+See [the 1.3.47 release notes](docs/releases/1.3.47.md).
+
 ## 1.3.46 — 2026-10-04
 
 Continuous/infinite Goal mode patch.

@@ -23,8 +23,15 @@ const VERIFIER_SYSTEM_PROMPT =
 
 type UnknownRecord = Record<string, unknown>
 
+export interface OpenCode2VerifierModelRef {
+  providerID: string
+  id: string
+  variant?: string
+}
+
 export interface OpenCode2VerifierSessionAPI {
   create?(input: { parentID: string; title?: string }): unknown | Promise<unknown>
+  switchModel?(input: { sessionID: string; model: OpenCode2VerifierModelRef }): unknown | Promise<unknown>
   prompt?(input: {
     sessionID: string
     id?: string
@@ -193,11 +200,12 @@ async function withinVerifierDeadline<T>(
 export function createOpenCode2SemanticVerifierRuntime(
   session: OpenCode2VerifierSessionAPI,
   resolveRoot: (parentSessionID: string) => Promise<string>,
-  options: { timeoutMs?: number } = {},
+  options: { timeoutMs?: number; model?: OpenCode2VerifierModelRef } = {},
 ) {
   const pending = new Map<string, PendingAudit>()
   const submitted = new Map<string, SubmittedAudit>()
   const resultSignals = new Map<string, () => void>()
+  const failureSignals = new Map<string, (error: SemanticVerifierUnavailableError) => void>()
   const verifierSessions = new Set<string>()
   const timeoutMs = Number.isFinite(options.timeoutMs) && Number(options.timeoutMs) > 0
     ? Number(options.timeoutMs)
@@ -268,6 +276,31 @@ export function createOpenCode2SemanticVerifierRuntime(
     },
   }
 
+  function observeEvent(event: unknown): boolean {
+    const item = record(event)
+    if (firstString(item?.type) !== "session.execution.failed") return false
+    const childID = sessionIDFromContext(event)
+    if (!childID || !verifierSessions.has(childID)) return false
+
+    const data = record(item?.data) ?? record(item?.properties)
+    const error = data?.error
+    const errorRecord = record(error)
+    const detail = firstString(
+      errorRecord?.message,
+      record(errorRecord?.data)?.message,
+      typeof error === "string" ? error : undefined,
+      data?.message,
+    )
+    failureSignals.get(childID)?.(
+      new SemanticVerifierUnavailableError(
+        detail
+          ? `semantic verifier execution failed: ${detail}`
+          : "semantic verifier execution failed without a host error message",
+      ),
+    )
+    return true
+  }
+
   function handleContext(event: any): boolean {
     const sessionID = sessionIDFromContext(event)
     if (!sessionID || !verifierSessions.has(sessionID)) {
@@ -305,6 +338,7 @@ export function createOpenCode2SemanticVerifierRuntime(
     const hostEvidenceRecords = semanticVerifierHostEvidence(goal, verifyOptions.currentMessageID)
     let childID = ""
     let retryAfterTimeout = false
+    let primaryTimeoutMessage: string | undefined
 
     try {
       let created: unknown
@@ -322,6 +356,25 @@ export function createOpenCode2SemanticVerifierRuntime(
       childID = firstString(record(created)?.id, record(record(created)?.data)?.id) ?? ""
       if (!childID) throw new SemanticVerifierUnavailableError("OpenCode did not return a verifier session id")
 
+      if (options.model) {
+        if (typeof session.switchModel !== "function") {
+          throw new SemanticVerifierUnavailableError(
+            "OpenCode 2 semantic verifier has a configured model but this host does not expose session.switchModel()",
+          )
+        }
+        try {
+          await withinVerifierDeadline(
+            session,
+            childID,
+            Promise.resolve(session.switchModel({ sessionID: childID, model: options.model })),
+            deadlineMs,
+          )
+        } catch (error) {
+          if (error instanceof SemanticVerifierUnavailableError) throw error
+          throw new SemanticVerifierUnavailableError(`semantic verifier model selection failed: ${String(error)}`)
+        }
+      }
+
       verifierSessions.add(childID)
       pending.set(childID, {
         auditToken,
@@ -334,6 +387,11 @@ export function createOpenCode2SemanticVerifierRuntime(
       let resolveResult!: () => void
       const resultSignal = new Promise<void>((resolve) => { resolveResult = resolve })
       resultSignals.set(childID, resolveResult)
+      let rejectFailure!: (error: SemanticVerifierUnavailableError) => void
+      const failureSignal = new Promise<never>((_resolve, reject) => {
+        rejectFailure = reject
+      })
+      failureSignals.set(childID, rejectFailure)
 
       const text = semanticVerificationPrompt(goal, auditToken, hostEvidenceRecords)
       let admitted: unknown
@@ -377,7 +435,10 @@ export function createOpenCode2SemanticVerifierRuntime(
         await withinVerifierDeadline(
           session,
           childID,
-          Promise.all([resumed, resultSignal]).then(() => undefined),
+          Promise.race([
+            Promise.all([resumed, resultSignal]).then(() => undefined),
+            failureSignal,
+          ]),
           deadlineMs,
         )
         if (typeof session.wait === "function") {
@@ -405,12 +466,16 @@ export function createOpenCode2SemanticVerifierRuntime(
       retryAfterTimeout = allowTimeoutRetry
         && error instanceof SemanticVerifierUnavailableError
         && /semantic verifier timed out after \d+ms/.test(error.message)
+      if (retryAfterTimeout && error instanceof SemanticVerifierUnavailableError) {
+        primaryTimeoutMessage = error.message
+      }
       if (!retryAfterTimeout) throw error
     } finally {
       if (childID) {
         pending.delete(childID)
         submitted.delete(childID)
         resultSignals.delete(childID)
+        failureSignals.delete(childID)
         verifierSessions.delete(childID)
         await bestEffortWithin(
           typeof session.delete === "function"
@@ -429,7 +494,9 @@ export function createOpenCode2SemanticVerifierRuntime(
       })
     } catch (error) {
       if (error instanceof SemanticVerifierUnavailableError) {
-        throw new SemanticVerifierUnavailableError(`semantic verifier unavailable after one automatic timeout retry: ${error.message}`)
+        throw new SemanticVerifierUnavailableError(
+          `semantic verifier unavailable after primary timeout (${primaryTimeoutMessage ?? `${deadlineMs}ms`}) and one automatic retry (${retryTimeoutMs}ms): ${error.message}`,
+        )
       }
       throw error
     }
@@ -437,9 +504,11 @@ export function createOpenCode2SemanticVerifierRuntime(
 
   return {
     resultTool,
+    observeEvent,
     handleContext,
     verify,
     isVerifierSession(sessionID: string) { return verifierSessions.has(sessionID) },
     get timeout() { return timeoutMs },
+    get model() { return options.model },
   }
 }

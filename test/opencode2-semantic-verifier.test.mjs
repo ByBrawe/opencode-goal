@@ -217,3 +217,121 @@ test("V2 semantic verifier interrupts timed-out child through the public session
     await rm(root, { recursive: true, force: true })
   }
 })
+
+
+test("V2 semantic verifier switches its child to the configured public model before prompting", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-v2-semantic-model-"))
+  try {
+    const goal = createGoal({ sessionID: "parent-model", objective: "verify selected model", now: 100 })
+    const switches = []
+    let runtime
+    const session = {
+      async create() { return { id: "child-model" } },
+      async switchModel(input) {
+        switches.push(input)
+      },
+      async prompt(input) {
+        if (input.resume === false) return { id: "message-model" }
+        const request = verificationRequest(input.text)
+        const accepted = await runtime.resultTool.execute({
+          auditToken: request.auditToken,
+          results: request.requirements.map((requirement) => ({
+            requirementID: requirement.id,
+            verdict: "unknown",
+            reason: "This test verifies public model selection only.",
+            evidence: [],
+            hostEvidenceIDs: [],
+          })),
+        }, { sessionID: "child-model" })
+        assert.equal(accepted.content, "Semantic verifier result accepted.")
+        return { id: "message-model" }
+      },
+      async wait() {},
+      async delete() {},
+    }
+
+    const model = { providerID: "example", id: "small-verifier", variant: "fast" }
+    runtime = createOpenCode2SemanticVerifierRuntime(session, async () => root, {
+      timeoutMs: 2_000,
+      model,
+    })
+
+    await runtime.verify("parent-model", goal)
+    assert.deepEqual(switches, [{ sessionID: "child-model", model }])
+    assert.deepEqual(runtime.model, model)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("V2 semantic verifier surfaces a host child execution failure before its deadline", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-v2-semantic-child-failure-"))
+  try {
+    const goal = createGoal({ sessionID: "parent-failure", objective: "surface verifier failure", now: 100 })
+    let resumeStarted
+    const resumed = new Promise((resolve) => { resumeStarted = resolve })
+    let deleted = 0
+    const session = {
+      async create() { return { id: "child-failure" } },
+      async prompt(input) {
+        if (input.resume === false) return { id: "message-failure" }
+        resumeStarted()
+        return await new Promise(() => {})
+      },
+      async interrupt() {},
+      async delete() { deleted += 1 },
+    }
+    const runtime = createOpenCode2SemanticVerifierRuntime(session, async () => root, { timeoutMs: 5_000 })
+
+    const verification = runtime.verify("parent-failure", goal, { allowTimeoutRetry: false })
+    await resumed
+    assert.equal(runtime.observeEvent({
+      type: "session.execution.failed",
+      data: {
+        sessionID: "child-failure",
+        error: { message: "provider quota exhausted" },
+      },
+    }), true)
+
+    await assert.rejects(
+      verification,
+      /semantic verifier execution failed: provider quota exhausted/,
+    )
+    assert.equal(deleted, 1)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("V2 semantic verifier reports both the primary deadline and bounded retry deadline", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-v2-semantic-timeout-diagnostic-"))
+  try {
+    const goal = createGoal({ sessionID: "parent-timeout-diagnostic", objective: "report verifier timeout", now: 100 })
+    let createCalls = 0
+    const session = {
+      async create() {
+        createCalls += 1
+        return { id: `child-timeout-diagnostic-${createCalls}` }
+      },
+      async prompt(input) {
+        if (input.resume === false) return { id: `message-timeout-diagnostic-${createCalls}` }
+        return await new Promise(() => {})
+      },
+      async interrupt() {},
+      async delete() {},
+    }
+    const runtime = createOpenCode2SemanticVerifierRuntime(session, async () => root, { timeoutMs: 20 })
+
+    await assert.rejects(
+      runtime.verify("parent-timeout-diagnostic", goal),
+      (error) => {
+        assert.match(error.message, /primary timeout \(semantic verifier timed out after 20ms\)/)
+        assert.match(error.message, /automatic retry \(20ms\)/)
+        return true
+      },
+    )
+    assert.equal(createCalls, 2)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})

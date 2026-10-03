@@ -12,6 +12,7 @@ import {
 } from "../runtime/infrastructure-recovery.js"
 import { parseGoalCommand } from "../opencode/command.js"
 import { createGoalTransitionNotifier, notifyGoal } from "../opencode/notify.js"
+import { DEFAULT_SEMANTIC_VERIFIER_TIMEOUT_MS } from "../opencode/verifier-defaults.js"
 import { markHostProgress } from "../runtime/progress.js"
 import { continuationPrompt } from "../opencode/prompt.js"
 import { createOpenCode2CompactionBoundaryRuntime, observeOpenCode2CompactionBoundary, prepareOpenCode2PostCompactionContinuation, type OpenCode2CompactionBoundaryResult, type OpenCode2CompactionBoundaryRuntime } from "./compaction-boundary.js"
@@ -89,6 +90,9 @@ export interface OpenCode2ExperimentalContext {
     subscribe(input?: { signal?: AbortSignal }): AsyncIterable<unknown>
   }
   model?: OpenCode2ModelRegistry
+  agent?: {
+    get(input: { agentID: string }): unknown | Promise<unknown>
+  }
   command?: {
     transform(callback: (commands: any) => void | Promise<void>): unknown | Promise<unknown>
   }
@@ -105,6 +109,10 @@ export interface OpenCode2ExperimentalContext {
     }): unknown | Promise<unknown>
     wait?(input: { sessionID: string }): unknown | Promise<unknown>
     delete?(input: { sessionID: string }): unknown | Promise<unknown>
+    switchModel?(input: {
+      sessionID: string
+      model: { providerID: string; id: string; variant?: string }
+    }): unknown | Promise<unknown>
     hook(name: string, callback: (event: any) => void | Promise<void>): unknown | Promise<unknown>
     prompt?(input: {
       sessionID: string
@@ -156,6 +164,57 @@ function firstString(...values: unknown[]): string | undefined {
     if (typeof value === "string" && value.trim()) return value.trim()
   }
   return undefined
+}
+
+function positiveNumber(value: unknown): number | undefined {
+  const number = Number(value)
+  return Number.isFinite(number) && number > 0 ? number : undefined
+}
+
+function openCode2VerifierModelRef(value: unknown): { providerID: string; id: string; variant?: string } | undefined {
+  if (typeof value === "string") {
+    const trimmed = value.trim()
+    const slash = trimmed.indexOf("/")
+    if (slash <= 0 || slash === trimmed.length - 1) return undefined
+    const providerID = trimmed.slice(0, slash)
+    const modelWithVariant = trimmed.slice(slash + 1)
+    const hash = modelWithVariant.lastIndexOf("#")
+    const id = (hash > 0 ? modelWithVariant.slice(0, hash) : modelWithVariant).trim()
+    const variant = hash > 0 ? modelWithVariant.slice(hash + 1).trim() : undefined
+    if (!providerID || !id) return undefined
+    return { providerID, id, ...(variant ? { variant } : {}) }
+  }
+
+  const item = record(value)
+  const providerID = firstString(item?.providerID)
+  const id = firstString(item?.id, item?.modelID)
+  const variant = firstString(item?.variant)
+  if (!providerID || !id) return undefined
+  return { providerID, id, ...(variant ? { variant } : {}) }
+}
+
+function openCode2VerifierTimeoutMs(ctx: OpenCode2ExperimentalContext): number {
+  return positiveNumber(ctx.options?.verifierTimeoutMs)
+    ?? positiveNumber(process.env.OPENCODE_GOAL_VERIFIER_TIMEOUT_MS)
+    ?? DEFAULT_SEMANTIC_VERIFIER_TIMEOUT_MS
+}
+
+async function resolveOpenCode2VerifierModel(
+  ctx: OpenCode2ExperimentalContext,
+): Promise<{ providerID: string; id: string; variant?: string } | undefined> {
+  const explicit = firstString(ctx.options?.verifierModel, process.env.OPENCODE_GOAL_VERIFIER_MODEL)
+  if (explicit) return openCode2VerifierModelRef(explicit)
+  if (typeof ctx.session.switchModel !== "function" || typeof ctx.agent?.get !== "function") return undefined
+
+  try {
+    const title = await ctx.agent.get({ agentID: "title" })
+    const item = record(title)
+    const data = nestedRecord(title, "data")
+    // V2 normalizes legacy small_model into the built-in title agent model.
+    return openCode2VerifierModelRef(item?.model ?? data?.model)
+  } catch {
+    return undefined
+  }
 }
 
 function sessionIDFromEvent(event: unknown): string | undefined {
@@ -1121,9 +1180,14 @@ export const OpenCode2GoalsExperimental = {
     const pendingModelResume = new Map<string, { goalID: string; revision: number; generation: number }>()
     const lifecycleEnabled = directLifecycleEnabled(ctx)
     const autonomousEnabled = lifecycleEnabled && autonomousEnabledByConfig(ctx)
+    const verifierModel = await resolveOpenCode2VerifierModel(ctx)
     const semanticVerifier = createOpenCode2SemanticVerifierRuntime(
       ctx.session,
       async (sessionID) => await resolveSessionDirectory(ctx, sessionID),
+      {
+        timeoutMs: openCode2VerifierTimeoutMs(ctx),
+        ...(verifierModel ? { model: verifierModel } : {}),
+      },
     )
     const workTools = createOpenCode2GoalWorkTools({
       autonomousRuntime,
@@ -1896,6 +1960,7 @@ export const OpenCode2GoalsExperimental = {
           const events = ctx.event!.subscribe({ signal: lifecycleAbort.signal })
           for await (const event of events) {
             if (lifecycleAbort.signal.aborted) break
+            semanticVerifier.observeEvent(event)
             const boundary = inspectOpenCode2AuthorityBoundary(runtime, compactionRuntime, event)
             const sessionID = boundary.sessionID
             const type = firstString(record(event)?.type)

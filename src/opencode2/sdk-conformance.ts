@@ -9,6 +9,8 @@ type OfficialContext = Plugin.Context
 type SessionInterruptInput = Parameters<OfficialContext["session"]["interrupt"]>[0]
 type SessionPromptInput = Parameters<OfficialContext["session"]["prompt"]>[0]
 type SessionContextInput = Parameters<OfficialContext["session"]["context"]>[0]
+type SessionSwitchModelInput = Parameters<OfficialContext["session"]["switchModel"]>[0]
+type AgentGetInput = Parameters<OfficialContext["agent"]["get"]>[0]
 
 /**
  * Compile-time tripwires for the pinned OpenCode 2 SDK surface used by the
@@ -36,4 +38,12 @@ export type OpenCode2PromptAcceptsGoalAdmission = Expect<
 
 export type OpenCode2SessionContextIsSessionScoped = Expect<
   SessionContextInput extends { sessionID: string } ? true : false
+>
+
+export type OpenCode2SwitchModelAcceptsVerifierSelection = Expect<
+  { sessionID: string; model: { providerID: string; id: string } } extends SessionSwitchModelInput ? true : false
+>
+
+export type OpenCode2AgentLookupAcceptsTitleAgent = Expect<
+  { agentID: string } extends AgentGetInput ? true : false
 >

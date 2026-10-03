@@ -29,6 +29,42 @@ both installers; an explicit V1 update preserves the tuple. Malformed owned
 tuples and conflicting duplicate options fail before writes. Unrelated
 plugin registrations are not converted.
 
+## Native semantic verifier
+
+Native OpenCode 2 semantic verification uses a five-minute primary deadline by
+default. The native plugin accepts the same Goal-specific overrides as the legacy
+adapter:
+
+```jsonc
+{
+  "plugins": [
+    {
+      "package": "@bybrawe/opencode-goal",
+      "options": {
+        "verifierTimeoutMs": 420000,
+        "verifierModel": "anthropic/claude-haiku-4-5"
+      }
+    }
+  ]
+}
+```
+
+`OPENCODE_GOAL_VERIFIER_TIMEOUT_MS` and `OPENCODE_GOAL_VERIFIER_MODEL` remain
+environment overrides when the corresponding plugin option is absent.
+
+When no explicit verifier model is configured, OpenCode 2 resolves the built-in
+`title` agent model and applies it to the verifier child through the public
+`session.switchModel()` API. V2 normalizes legacy `small_model` into that title
+agent selection, so existing small-model configuration remains the preferred
+lightweight verifier model without depending on private host state. Hosts that do
+not expose the public model-switch API retain their existing session-default
+behavior.
+
+A timed-out primary verification receives one bounded automatic retry of at most
+60 seconds. Diagnostics report both deadlines separately. If the host publishes a
+`session.execution.failed` event for the verifier child, Goal surfaces that
+failure reason immediately instead of waiting for the generic verifier deadline.
+
 ## Combined installation
 
 Loop supplies its chosen dialect to the Goal companion, including when an older

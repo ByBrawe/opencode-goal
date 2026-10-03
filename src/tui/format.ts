@@ -59,7 +59,9 @@ function validGoal(value: unknown, sessionID: string): value is {
 } {
   if (!value || typeof value !== "object") return false
   const goal = value as any
-  return goal.schemaVersion === 1 && goal.sessionID === sessionID && typeof goal.id === "string" && typeof goal.objective === "string" && typeof goal.status === "string" && Array.isArray(goal.requirements)
+  return goal.schemaVersion === 1 && goal.sessionID === sessionID && typeof goal.id === "string" && typeof goal.objective === "string" && typeof goal.status === "string"
+    && (goal.completionMode === undefined || goal.completionMode === "verified" || goal.completionMode === "continuous")
+    && Array.isArray(goal.requirements)
 }
 
 function validSequence(value: unknown, sessionID: string): value is { sessionID: string; items: Array<{ id: string; objective: string; activating?: boolean }> } {

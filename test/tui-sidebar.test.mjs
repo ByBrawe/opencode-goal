@@ -32,6 +32,10 @@ test("TUI Goal sidebar is read-only and fails visible on unsafe or corrupt stora
     assert.match(shown, /Queue · 2/)
     assert.match(shown, /second queued goal/)
 
+    await writeFile(goals.fileFor(sessionID), `${JSON.stringify({ ...beforeGoal, completionMode: "invalid-mode" }, null, 2)}\n`)
+    assert.match(formatGoalSidebar(root, sessionID), /Goal storage unavailable/)
+    await writeFile(goals.fileFor(sessionID), `${JSON.stringify(beforeGoal, null, 2)}\n`)
+
     const continuousSession = "sidebar-continuous"
     await goals.save(createGoal({ sessionID: continuousSession, objective: "watch forever", completionMode: "continuous" }))
     assert.match(formatGoalSidebar(root, continuousSession), /ACTIVE · CONTINUOUS/)

@@ -2,6 +2,21 @@
 
 All notable changes to **OpenCode Goals** are documented here.
 
+## 1.3.45 — 2026-10-03
+
+Semantic-verifier scale and evidence-hardening patch.
+
+- Fix #263 for OpenCode 2 by raising the native semantic-verifier default deadline to five minutes and allowing explicit `verifierTimeoutMs` / `OPENCODE_GOAL_VERIFIER_TIMEOUT_MS` values above 60 seconds for the primary audit.
+- Resolve the V2 verifier child model through the built-in `title` agent when no explicit verifier model is configured, preserving the host's normalized `small_model` choice through public `session.switchModel()`.
+- Surface verifier-child `session.execution.failed` details immediately and report primary/retry timeout durations separately; the single automatic retry remains bounded and capped at 60 seconds.
+- Harden semantic/file evidence handling: fail cleanly on non-regular declared paths, recover only safe workspace-root-qualified path shapes, and accept quote evidence whose only mismatch is whitespace folding after exact matching.
+- Keep Windows test cleanup resilient to transient filesystem handles without weakening product assertions.
+- Make post-publish consumer verification retry bounded npm registry propagation instead of reporting a false release failure after a successful trusted publish.
+
+Goal state schema, budgets, lifecycle ownership and completion fail-closed semantics are unchanged.
+
+See [the 1.3.45 release notes](docs/releases/1.3.45.md).
+
 ## 1.3.44 — 2026-10-02
 
 OpenCode 2.0.22 SDK-contract and autonomous ownership recovery patch.

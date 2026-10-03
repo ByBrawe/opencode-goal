@@ -296,7 +296,7 @@ If verification is unavailable, incomplete, stale, ambiguous, or races with a li
 
 ### Verifier timeout / bounded retry / Goal stays paused
 
-If the executor has finished the work but independent semantic verification hits a timeout-class infrastructure failure, the plugin aborts and cleans up that verifier child and automatically retries **once** in a fresh verifier session. The retry is capped at 60 seconds, or at the configured verifier timeout when that is lower. There is no third automatic verifier attempt.
+If the executor has finished the work but independent semantic verification hits a timeout-class infrastructure failure, the plugin aborts and cleans up that verifier child and automatically retries **once** in a fresh verifier session. On native OpenCode 2 the primary verifier deadline defaults to five minutes and can be overridden with plugin option `verifierTimeoutMs` or `OPENCODE_GOAL_VERIFIER_TIMEOUT_MS`, including values above 60 seconds. The single fresh-session retry remains bounded to the lower of that configured deadline and 60 seconds; there is no third automatic verifier attempt.
 
 Non-timeout provider or transport failures are not automatically retried. If the bounded timeout retry also fails, the Goal is persisted as `paused` instead of entering an endless completion retry loop. Existing host evidence remains persisted.
 

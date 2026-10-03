@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   publish:
-    name: Publish 1.3.44
+    name: Publish 1.3.45
     if: github.repository == 'ByBrawe/opencode-goal' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 35
@@ -26,11 +26,11 @@ jobs:
       contents: read
       actions: read
       id-token: write
-    # 1.3.44 may publish only after every required gate passes on this exact main SHA.
-    # Final candidate adds persisted autonomous-owner recovery, Windows process-tree drain safety, read-only lifecycle canary sequencing that does not invent a host-idle contract, the stable interrupt contract, the audited OpenCode 2.0.22 SDK surface and current OpenTUI peer alignment.
+    # 1.3.45 may publish only after every required gate passes on this exact main SHA.
+    # Final candidate ships configurable long-running V2 semantic verification, public child-model selection/failure diagnostics, hardened citation/file evidence, and the current Windows cleanup regression fixes on the audited OpenCode 2.0.22 SDK surface.
     env:
-      RELEASE_VERSION: '1.3.44'
-      RELEASE_PREDECESSOR: '1.3.43'
+      RELEASE_VERSION: '1.3.45'
+      RELEASE_PREDECESSOR: '1.3.44'
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -91,7 +91,7 @@ jobs:
         if: steps.release.outputs.publish == 'true'
         with:
           repository: ByBrawe/opencode-loop
-          ref: 2ae7345f1de4d7f39aa5d259153007c3f97401a6
+          ref: 7dff8a5716d3ac768c79bc4e0a8c78ae7cc3f53e
           path: companion-loop
           persist-credentials: false
       - name: Real native pair and read-only status before publication
@@ -142,9 +142,17 @@ jobs:
           VERIFY_DIR="$(mktemp -d)"
           trap 'rm -rf "$VERIFY_DIR"' EXIT
           cd "$VERIFY_DIR"
-          test "$(npm exec --yes --package="@bybrawe/opencode-goal@$RELEASE_VERSION" -- opencode-goal --version)" = "$RELEASE_VERSION"
+          for attempt in {1..30}; do
+            if test "$(npm exec --yes --package="@bybrawe/opencode-goal@$RELEASE_VERSION" -- opencode-goal --version 2>/dev/null)" = "$RELEASE_VERSION"; then break; fi
+            test "$attempt" != 30
+            sleep 10
+          done
           npm init -y >/dev/null
-          npm install --omit=dev --omit=peer --ignore-scripts --no-audit --no-fund "@bybrawe/opencode-goal@$RELEASE_VERSION"
+          for attempt in {1..30}; do
+            if npm install --omit=dev --omit=peer --ignore-scripts --no-audit --no-fund "@bybrawe/opencode-goal@$RELEASE_VERSION"; then break; fi
+            test "$attempt" != 30
+            sleep 10
+          done
           node --input-type=module <<'JS'
           import assert from 'node:assert/strict'
           const { default: root, OpenCodeGoalV1Plugin } = await import('@bybrawe/opencode-goal')

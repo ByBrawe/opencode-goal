@@ -296,7 +296,7 @@ Verification kullanılamıyorsa, eksikse, stale/ambiguous ise veya lifecycle de�
 
 ### Verifier timeout / bounded retry / Goal paused kalıyor
 
-Executor işi bitirmiş olsa bile bağımsız semantic verification timeout sınıfındaki bir altyapı hatasına ulaşırsa plugin timeout olan verifier child'ını abort edip temizler ve **bir kez** taze verifier session'ıyla otomatik retry yapar. Bu retry en fazla 60 saniyedir; yapılandırılmış verifier timeout daha düşükse o düşük değer kullanılır. Üçüncü bir otomatik verifier denemesi yoktur.
+Executor işi bitirmiş olsa bile bağımsız semantic verification timeout sınıfındaki bir altyapı hatasına ulaşırsa plugin timeout olan verifier child'ını abort edip temizler ve **bir kez** taze verifier session'ıyla otomatik retry yapar. Native OpenCode 2'de ana verifier deadline varsayılan olarak beş dakikadır ve `verifierTimeoutMs` plugin seçeneği veya `OPENCODE_GOAL_VERIFIER_TIMEOUT_MS` ile 60 saniyenin üzerine de çıkarılabilir. Tek taze-session retry ise yapılandırılmış deadline ile 60 saniyeden düşük olanına bounded kalır; üçüncü bir otomatik verifier denemesi yoktur.
 
 Timeout dışındaki provider veya transport hataları otomatik retry edilmez. Bounded timeout retry da başarısız olursa Goal sonsuz completion retry döngüsüne girmek yerine `paused` olarak kalıcılaştırılır. Mevcut host evidence korunur.
 

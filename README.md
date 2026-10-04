@@ -396,11 +396,19 @@ Or open a second OpenCode session for parallel work.
 
 ## Using OpenCode Goals with OpenCode Loop
 
-Both plugins can be installed together:
+[OpenCode Loop](https://github.com/ByBrawe/opencode-loop) is a separate, complementary plugin. Loop now installs **Loop only by default** and does not install, detect, refresh, migrate, or modify OpenCode Goal unless `--with-goals` is explicitly requested.
+
+Recommended independent installation:
 
 ```bash
 npx -y @bybrawe/opencode-loop@latest
 npx -y @bybrawe/opencode-goal@latest
+```
+
+Optional combined installation from Loop:
+
+```bash
+npx -y @bybrawe/opencode-loop@latest --with-goals
 ```
 
 Recommended split:
@@ -408,9 +416,9 @@ Recommended split:
 - **OpenCode Goals** — persistent `/goal` contracts, host evidence, completion verification, false-completion protection, revision isolation, restart recovery, and ordered Goals.
 - **OpenCode Loop** — `/loop`, scheduled command/shell jobs, compaction scheduling, and timer/idle-driven repetition infrastructure.
 
-Do **not** run `/goal` and Loop's experimental `/loop-goal` against the same work in the same OpenCode session. Both can autonomously continue and may compete to start turns.
+Loop's older experimental `/loop-goal*` commands are not installed by default anymore. They remain available only as an explicit compatibility opt-in with `--with-loop-goals`; new setups should use this dedicated Goal plugin instead.
 
-Also avoid leaving a prompt-producing `/loop ...` job continuously injecting turns while an active `/goal` is autonomously continuing. Use separate sessions or pause/remove that prompt loop until the Goal is done.
+Do **not** run `/goal` and a prompt-producing Loop against the same work in the same OpenCode session. Both can autonomously continue and may compete to start turns. Use separate sessions or pause/remove the prompt loop until the Goal is done.
 
 ## Package and release quality
 

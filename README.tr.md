@@ -396,11 +396,19 @@ Ya da paralel çalışma için ikinci bir OpenCode session açın.
 
 ## OpenCode Goals'u OpenCode Loop ile kullanmak
 
-İki plugin birlikte kurulabilir:
+[OpenCode Loop](https://github.com/ByBrawe/opencode-loop) ayrı ve tamamlayıcı bir eklentidir. Loop artık varsayılan olarak **yalnızca Loop'u** kurar; `--with-goals` açıkça verilmedikçe OpenCode Goal'ı kurmaz, algılamaz, güncellemez, migrate etmez veya değiştirmez.
+
+Önerilen bağımsız kurulum:
 
 ```bash
 npx -y @bybrawe/opencode-loop@latest
 npx -y @bybrawe/opencode-goal@latest
+```
+
+Loop üzerinden isteğe bağlı birleşik kurulum:
+
+```bash
+npx -y @bybrawe/opencode-loop@latest --with-goals
 ```
 
 Önerilen görev ayrımı:
@@ -408,9 +416,9 @@ npx -y @bybrawe/opencode-goal@latest
 - **OpenCode Goals** — kalıcı `/goal` contracts, host evidence, completion verification, false-completion protection, revision isolation, restart recovery ve ordered Goals.
 - **OpenCode Loop** — `/loop`, scheduled command/shell jobs, compaction scheduling ve timer/idle-driven repetition altyapısı.
 
-Aynı OpenCode session'ında aynı iş üzerinde `/goal` ile Loop'un deneysel `/loop-goal` özelliğini birlikte çalıştırmayın. İkisi de autonomous continuation yapabilir ve tur başlatmak için yarışabilir.
+Loop'un eski deneysel `/loop-goal*` komutları artık varsayılan olarak kurulmaz. Yalnızca uyumluluk için `--with-loop-goals` ile açıkça etkinleştirilebilir; yeni kurulumlarda bunun yerine bu ayrı Goal eklentisini kullanın.
 
-Ayrıca aktif `/goal` autonomous olarak devam ederken sürekli prompt üreten bir `/loop ...` işini açık bırakmayın. Goal tamamlanana kadar ayrı session kullanın veya prompt loop'u pause/remove edin.
+Aynı OpenCode session'ında aynı iş üzerinde `/goal` ile prompt üreten bir Loop'u birlikte çalıştırmayın. İkisi de autonomous continuation yapabilir ve tur başlatmak için yarışabilir. Ayrı session kullanın veya Goal bitene kadar prompt loop'u pause/remove edin.
 
 ## Paket ve release kalitesi
 

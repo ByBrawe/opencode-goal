@@ -803,6 +803,47 @@ async function main() {
 
     assert.equal(server.exitCode, null, `OpenCode 2 server exited during lifecycle canary\n${await diagnostics()}`)
 
+    // Reproduce a reaper/desktop restart, not merely a fresh new session.
+    // The previous session is cleared, but its persistent history remains.
+    // Old one-use capabilities must never survive; a NEW explicit /goal
+    // command in the SAME session must create a new authorized execution.
+    let sameSessionRearmed = false
+    if (process.env.OPENCODE2_REARM_SAME_SESSION_CANARY === "1") {
+      assert.equal(await readGoal(workspace, sessionID), null)
+      await stopProcess(server)
+      assert.notEqual(server.exitCode, null,
+        "old host must actually exit before recreating its Goal capability runtime")
+      server = spawn(OPENCODE_BINARY, ["serve", "--hostname", "127.0.0.1", "--port", String(port)], {
+        cwd: workspace,
+        env,
+        windowsHide: true,
+      })
+      server.stdout?.on("data", (chunk) => { serverLog = appendLog(serverLog, chunk) })
+      server.stderr?.on("data", (chunk) => { serverLog = appendLog(serverLog, chunk) })
+      await waitForTcp(port, server, () => serverLog)
+      await waitFor(async () => {
+        const response = await request(`${apiPrefix}/command`, { method: "GET" }, 5_000).catch(() => null)
+        return response?.ok && commandNames(response.body).has("goal")
+      }, "restarted same-workspace Goal command registry", diagnostics, 30_000)
+
+      const beforeRearm = provider.stats.requests.length
+      const issued = await command(CREATE_COMMAND)
+      assert.ok(issued.ok, `old-session re-issued native /goal failed\n${await diagnostics()}`)
+      const renewedGoal = await waitFor(async () => {
+        const goal = await readGoal(workspace, sessionID)
+        return goal?.status === "active" && goal.objective === "ship v2 capability" ? goal : null
+      }, "same-session reissued Goal persistence after real host restart", diagnostics, 60_000)
+      assert.notEqual(renewedGoal.id, goalID, "reissued /goal must create a fresh Goal ID after clear")
+      await waitFor(() => provider.stats.requests.slice(beforeRearm).some((item) => item.sawConsumedResult),
+        "post-restart single-use Goal tool result", diagnostics, 45_000)
+      const postRestartRequests = provider.stats.requests.slice(beforeRearm)
+      assert.ok(postRestartRequests.some((item) => item.hasControlTool && item.toolCommand === CREATE_COMMAND),
+        `old session failed to re-arm the host-authenticated Goal control tool\n${await diagnostics()}`)
+      assert.ok(postRestartRequests.some((item) => item.sawConsumedResult && !item.hasControlTool),
+        "capability must be consumed and hidden again after the new mutation")
+      sameSessionRearmed = true
+    }
+
     console.log(JSON.stringify({
       ok: true,
       version,
@@ -810,6 +851,7 @@ async function main() {
       sessionID,
       locationSessionID,
       directCommandRegistered: latestCommands.has("goal"),
+      sameSessionRearmed,
       create: { objective: createdGoal.objective, status: createdGoal.status, maxTurns: createdGoal.budget?.maxTurns },
       locationMoveBlocked: true,
       locationWorkspaceRejectObserved: provider.stats.requests.some((item) => item.sawLocationReject),

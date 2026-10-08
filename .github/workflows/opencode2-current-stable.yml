@@ -82,7 +82,8 @@ jobs:
         run: opencode2 --version
       - name: Check direct lifecycle canary syntax
         run: node --check scripts/opencode2-direct-lifecycle-canary.mjs
-      - name: Prove pause resume edit clear on latest OpenCode 2
+      - name: Prove pause resume edit clear and re-arming on a restarted old session
         env:
           OPENCODE2_EXPECTED_VERSION: "2."
+          OPENCODE2_REARM_SAME_SESSION_CANARY: "1"
         run: node scripts/opencode2-direct-lifecycle-canary.mjs

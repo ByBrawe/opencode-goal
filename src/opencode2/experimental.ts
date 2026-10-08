@@ -1181,6 +1181,15 @@ export const OpenCode2GoalsExperimental = {
     const handoffDispatching = new Set<string>()
     const handoffRetryTimers = new Map<string, ReturnType<typeof setTimeout>>()
     const pendingModelResume = new Map<string, { goalID: string; revision: number; generation: number }>()
+    // A plain foreground "continue" has no Goal work-tool authority. Only a
+    // successful, exact-message execution boundary may schedule a fresh
+    // host-owned Goal continuation; ordinary foreground turns stay unowned.
+    const pendingPlainResume = new Map<string, {
+      messageID: string
+      goalID: string
+      revision: number
+      generation?: number
+    }>()
     const lifecycleEnabled = directLifecycleEnabled(ctx)
     const autonomousEnabled = lifecycleEnabled && autonomousEnabledByConfig(ctx)
     const verifierModel = await resolveOpenCode2VerifierModel(ctx)
@@ -1214,6 +1223,7 @@ export const OpenCode2GoalsExperimental = {
         autonomousRuntime.executionOwnerBySession.clear()
         autonomousRuntime.kickoffBySession.clear()
         pendingModelResume.clear()
+        pendingPlainResume.clear()
         telemetryRuntime.currentBySession.clear()
         toolProgressRuntime.shellPending.clear()
         for (const timer of hostLimitRetryTimers.values()) clearTimeout(timer)
@@ -2017,6 +2027,7 @@ export const OpenCode2GoalsExperimental = {
               cancelHostLimitRetry(sessionID)
               workTools.clearSession(sessionID)
               pendingModelResume.delete(sessionID)
+              pendingPlainResume.delete(sessionID)
               autonomousDispatching.delete(sessionID)
               continue
             }
@@ -2079,6 +2090,7 @@ export const OpenCode2GoalsExperimental = {
 
             const modelResumedGoal = await settleModelResume(sessionID, generation, succeeded)
             if (modelResumedGoal) {
+              pendingPlainResume.delete(sessionID)
               clearOpenCode2GoalOwnership(autonomousRuntime, sessionID)
               await scheduleAutonomousContinuation(
                 sessionID,
@@ -2090,6 +2102,7 @@ export const OpenCode2GoalsExperimental = {
             }
 
             if (!succeeded) {
+              pendingPlainResume.delete(sessionID)
               const kickoff = consumeOpenCode2GoalKickoff(autonomousRuntime, sessionID, generation)
               const owner = consumeOpenCode2GoalExecution(autonomousRuntime, sessionID, generation)
               if (type !== "session.execution.failed") continue
@@ -2143,11 +2156,27 @@ export const OpenCode2GoalsExperimental = {
 
               const owner = consumeOpenCode2GoalExecution(autonomousRuntime, sessionID, generation)
                 ?? await recoverPersistedGoalExecutionOwner(sessionID, generation, goal)
-              if (
-                !owner
-                || owner.goalID !== goal.id
-                || owner.revision !== goal.revision
-              ) continue
+              if (!owner || owner.goalID !== goal.id || owner.revision !== goal.revision) {
+                const plain = pendingPlainResume.get(sessionID)
+                if (plain?.generation === generation) {
+                  pendingPlainResume.delete(sessionID)
+                  if (
+                    goal.status === "active"
+                    && plain.goalID === goal.id
+                    && plain.revision === goal.revision
+                  ) {
+                    runtime.settledGoalExecutionGenerationBySession.set(sessionID, generation)
+                    await scheduleAutonomousContinuation(
+                      sessionID,
+                      goal,
+                      continuationPrompt(goal),
+                      "resume",
+                    )
+                  }
+                }
+                continue
+              }
+              pendingPlainResume.delete(sessionID)
               runtime.settledGoalExecutionGenerationBySession.set(sessionID, generation)
 
               let observedGoal = goal
@@ -2404,6 +2433,9 @@ export const OpenCode2GoalsExperimental = {
 
         const prompt = nestedRecord(event, "prompt")
         const metadata = record(event?.metadata) ?? record(prompt?.metadata)
+        // Later foreground input supersedes an earlier plain wake. In
+        // particular, never grant completion authority to a plugin prompt.
+        pendingPlainResume.delete(sessionID)
         if (
           metadata?.opencode_goal_v2_autonomous === true
           || metadata?.opencode_goal_v2_direct_command === true
@@ -2415,6 +2447,19 @@ export const OpenCode2GoalsExperimental = {
         // model context construction. Mark steering here so in-flight Goal
         // verification cannot race an ordinary foreground user prompt.
         workTools.markForegroundAdmission(sessionID)
+        const messageID = firstString(event?.messageID)
+        const text = typeof prompt?.text === "string" ? prompt.text.trim().toLowerCase() : ""
+        if (!messageID || !["continue", "devam et", "devam"].includes(text)) return
+        // Do not take over an in-flight execution or a paused/waiting Goal.
+        if (runtime.activeExecutionGenerationBySession.has(sessionID)) return
+        try {
+          const { goal } = await coordinatorGoal(sessionID)
+          if (goal?.status === "active") {
+            pendingPlainResume.set(sessionID, { messageID, goalID: goal.id, revision: goal.revision })
+          }
+        } catch {
+          // Corrupt or missing storage never authorizes an autonomous wake.
+        }
       })
     } catch {
       // Older hosts may not expose prompt admission. The context hook remains
@@ -2442,6 +2487,12 @@ export const OpenCode2GoalsExperimental = {
             const existingOwner = autonomousRuntime.executionOwnerBySession.get(sessionID)
             const goalOwned = Boolean(armed || existingOwner?.messageID === lastUserMessageID)
             if (!goalOwned && !directCapability) {
+              const plain = pendingPlainResume.get(sessionID)
+              if (plain?.messageID === lastUserMessageID) {
+                // Context proves the admitted message belongs to this
+                // foreground generation. The plain turn stays unprivileged.
+                plain.generation = activeOrNextExecutionGeneration(runtime, sessionID)
+              }
               workTools.markForegroundSteering(sessionID, lastUserMessageID)
             }
           }

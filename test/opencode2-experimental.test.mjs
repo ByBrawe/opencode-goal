@@ -1820,3 +1820,111 @@ test("V2 semantic resume fails closed on failed routing execution or changed wai
     await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   }
 })
+
+test("V2 plain continue reclaims a Goal-owned continuation only after successful foreground execution", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "goal-v2-plain-wake-"))
+  try {
+    const host = fakeV2EventContext(root)
+    const sessionID = "v2-plain-continue"
+    const store = new GoalStore(root)
+    await seedGoal(root, sessionID, "finish the ticket")
+    const cleanup = await OpenCode2GoalsExperimental.setup(host.ctx)
+    try {
+      const admission = host.hooks.get("prompt")
+      assert.equal(typeof admission, "function")
+      await admission({ sessionID, messageID: "plain-continue-1", prompt: { text: "continue" } })
+      await host.emitEvent({ type: "session.execution.started", data: { sessionID } })
+      const foreground = {
+        sessionID,
+        agent: "build",
+        tools: { ...requestTools(), opencode_goal_complete: { description: "complete" } },
+        system: [],
+        messages: [{ id: "plain-continue-1", role: "user", content: "continue" }],
+      }
+      await host.hooks.get("context")(foreground)
+      assert.equal(foreground.tools.opencode_goal_complete, undefined, "plain chat must never inherit Goal completion authority")
+      await host.emitEvent({ type: "session.execution.succeeded", data: { sessionID } })
+      const owned = await waitForValue(
+        () => host.prompts.find((item) =>
+          item.resume === false
+          && item.metadata?.opencode_goal_v2_source === "resume"
+          && item.sessionID === sessionID
+        ),
+        "native Goal-owned continuation after plain continue",
+      )
+      assert.equal((await store.load(sessionID)).status, "active")
+      assert.equal(owned.metadata.opencode_goal_v2_autonomous, true)
+      const ownedContext = {
+        sessionID,
+        agent: "build",
+        tools: { ...requestTools(), opencode_goal_complete: { description: "complete" } },
+        system: [],
+        messages: [{ id: owned.returnedID, role: "user", content: "host-admitted Goal continuation" }],
+      }
+      await host.hooks.get("context")(ownedContext)
+      assert.ok(ownedContext.tools.opencode_goal_complete, "only the newly owned Goal turn has lifecycle work tools")
+      await host.emitEvent({ type: "session.execution.succeeded", data: { sessionID } })
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      assert.equal(
+        host.prompts.filter((item) => item.resume === false && item.metadata?.opencode_goal_v2_source === "resume").length,
+        1,
+        "replayed foreground terminal must never admit two continuations",
+      )
+    } finally {
+      await cleanup()
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("V2 plain wake fails closed on unrelated text, failed turn, Plan context and changed revision", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "goal-v2-plain-wake-denied-"))
+  try {
+    const host = fakeV2EventContext(root)
+    const store = new GoalStore(root)
+    const cleanup = await OpenCode2GoalsExperimental.setup(host.ctx)
+    try {
+      const cases = [
+        { sessionID: "unrelated", text: "continue developing unrelated work" },
+        { sessionID: "failed", text: "continue", failed: true },
+        { sessionID: "read-only", text: "continue", agent: "plan" },
+        { sessionID: "revision-changed", text: "continue", changeRevision: true },
+      ]
+      for (const scenario of cases) {
+        await seedGoal(root, scenario.sessionID)
+        const messageID = `foreground-${scenario.sessionID}`
+        await host.hooks.get("prompt")({
+          sessionID: scenario.sessionID,
+          messageID,
+          prompt: { text: scenario.text },
+        })
+        await host.emitEvent({ type: "session.execution.started", data: { sessionID: scenario.sessionID } })
+        await runHook(host, "context", {
+          sessionID: scenario.sessionID,
+          agent: scenario.agent ?? "build",
+          messageID,
+          text: scenario.text,
+        })
+        if (scenario.changeRevision) {
+          const goal = await store.load(scenario.sessionID)
+          await store.save({ ...goal, revision: goal.revision + 1 })
+        }
+        await host.emitEvent({
+          type: scenario.failed ? "session.execution.failed" : "session.execution.succeeded",
+          data: { sessionID: scenario.sessionID },
+        })
+      }
+      await new Promise((resolve) => setTimeout(resolve, 75))
+      assert.equal(
+        host.prompts.filter((item) => item.resume === false && item.metadata?.opencode_goal_v2_autonomous === true).length,
+        0,
+        "unowned, failed, read-only or mismatched Goal input must never start a continuation",
+      )
+    } finally {
+      await cleanup()
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})

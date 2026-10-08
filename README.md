@@ -37,7 +37,12 @@ Then **fully restart OpenCode** and verify:
 /goal status
 ```
 
-You should also see `/goal` in OpenCode's slash-command list.
+You should also see `/goal` in OpenCode's slash-command list. If Windows
+Desktop says "no matching item" even though terminal TUI lists both `/goal`
+and `/loop`, follow the [Windows Desktop native command diagnostic guide](https://github.com/ByBrawe/opencode-loop/blob/main/docs/OPENCODE2-DESKTOP-WINDOWS.md).
+The Desktop and TUI may use different server versions, project directories
+or connections. Do not add a legacy `goal.md` prompt bridge before checking
+the Desktop server's own command registry.
 
 `npm install @bybrawe/opencode-goal` by itself only installs a Node package into the current project. It does **not** register the plugin in OpenCode. Use the `npx` installer above or the global installer command.
 

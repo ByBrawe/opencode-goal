@@ -1375,6 +1375,54 @@ test("direct lifecycle command mints host-message capability without persisting 
   }
 })
 
+test("V2 restarted plugin re-arms only a fresh host-native /goal command on the same old session", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-old-session-rearm-"))
+  const sessionID = "v2-old-reaped-session"
+  const command = 'ship work after window restart --accept "persist new goal"'
+  try {
+    await withDirectLifecyclePreview(async () => {
+      // A previous window admitted a lifecycle command but was reaped before
+      // the one-use tool committed it. Capability memory must not survive.
+      const oldHost = fakeV2Context(root)
+      const oldCleanup = await OpenCode2GoalsExperimental.setup(oldHost.ctx)
+      const abandoned = await dispatchDirectCommand(oldHost, sessionID, command)
+      const previousContext = await armCapability(oldHost, sessionID, abandoned.messageID)
+      assert.ok(previousContext.tools.opencode_goals_v2_control)
+      await oldCleanup()
+      assert.equal(await new GoalStore(root).load(sessionID), null)
+
+      // Reopening the SAME session starts a new plugin runtime. Merely
+      // replaying the older message is forbidden, but a new explicit native
+      // /goal command must receive a new host-authenticated capability.
+      const reopened = fakeV2Context(root)
+      const cleanup = await OpenCode2GoalsExperimental.setup(reopened.ctx)
+      try {
+        const oldContext = await runHook(reopened, "context", {
+          sessionID, messageID: abandoned.messageID, text: command,
+        })
+        assert.equal(oldContext.tools.opencode_goals_v2_control, undefined,
+          "replayed historical message cannot restore a consumed or lost capability")
+
+        const renewed = await dispatchDirectCommand(reopened, sessionID, command)
+        const freshContext = await armCapability(reopened, sessionID, renewed.messageID)
+        assert.ok(freshContext.tools.opencode_goals_v2_control,
+          "reissued native /goal must arm after plugin restart in the same session")
+        const result = await consumeCapability(reopened, sessionID, command)
+        assert.match(result.content, /single-use capability is consumed/i)
+        const saved = await new GoalStore(root).load(sessionID)
+        assert.equal(saved?.status, "active")
+        assert.equal(saved?.objective, "ship work after window restart")
+        const replay = await armCapability(reopened, sessionID, renewed.messageID)
+        assert.equal(replay.tools.opencode_goals_v2_control, undefined)
+      } finally {
+        await cleanup()
+      }
+    })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test("mismatched lifecycle arguments consume the capability before persistence and cannot be retried", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-capability-mismatch-"))
   try {

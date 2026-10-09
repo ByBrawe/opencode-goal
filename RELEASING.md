@@ -58,7 +58,7 @@ npm run test:tui-native
 
 ## Trusted publication
 
-The current authorized release is 1.3.47, following npm latest 1.3.46. The publisher
+The current authorized release is 1.3.48, following npm latest 1.3.47. The publisher
 runs on an explicit workflow dispatch or a main update to its workflow/package
 manifest. Other versions are skipped until the release guard is deliberately changed.
 
@@ -86,4 +86,4 @@ imports the published native server/shared RPC without TUI peers, then imports t
 
 A started workflow, merge, tag or successful upload alone is not publication proof.
 Record the published version, source SHA, integrity and successful consumer check.
-See docs/releases/1.3.47.md for this release's product scope and limitations.
+See docs/releases/1.3.48.md for this release's product scope and limitations.

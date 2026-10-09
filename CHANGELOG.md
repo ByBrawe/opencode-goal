@@ -2,6 +2,18 @@
 
 All notable changes to **OpenCode Goals** are documented here.
 
+## 1.3.48 — 2026-10-09
+
+OpenCode 2 Goal lifecycle recovery patch.
+
+- Recover Goal-owned work after a plain `continue` wake only when the exact host-observed message and successful execution boundary prove continuation ownership; ordinary foreground and Plan messages remain unprivileged.
+- Re-arm a fresh single-use native `/goal create` capability after plugin restart in the same session, without replaying, renewing or accepting a historical capability.
+- Exercise a real latest OpenCode 2 host kill/restart/reopen using the original workspace and session ID; require the reissued native command to persist a new active Goal.
+- Retain read-only Goal sidebar telemetry, verified/continuous modes, state safety, semantic verification and the separate Loop installation contract.
+- Keep Windows Desktop slash-command visibility tracked separately: native server command registration is not proof that Desktop's connected host lists those commands.
+
+See [the 1.3.48 release notes](docs/releases/1.3.48.md).
+
 ## 1.3.47 — 2026-10-04
 
 Native Goal sidebar telemetry patch.

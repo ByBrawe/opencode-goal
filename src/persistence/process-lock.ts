@@ -99,6 +99,20 @@ async function readOwner(file: string): Promise<LockOwner | null> {
     }
   }
 
+  // A link-free exclusive claim publishes an empty destination before its
+  // short owner write. Do not mistake that bounded publication window for a
+  // corrupt lock; a persistently empty file still fails closed.
+  if (raw.length === 0) {
+    for (let attempt = 0; attempt < 8 && raw.length === 0; attempt += 1) {
+      await sleep(10 * (attempt + 1))
+      try { raw = await fs.readFile(file, "utf8") }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return null
+        throw error
+      }
+    }
+  }
+
   let value: unknown
   try {
     value = JSON.parse(raw)
@@ -197,6 +211,10 @@ async function createCandidate(
   return candidate
 }
 
+// Some valid project volumes (exFAT/FAT/SMB) do not implement hard links.
+// Keep the fully-written hard-link claim on filesystems that support it.
+// O_EXCL creation is the cross-filesystem fallback: no rename or overwrite,
+// and both primary locks and dead-owner cleanup elections use the same guard.
 async function linkClaim(candidate: string, canonical: string, assertSafe: (target: string) => Promise<void>): Promise<boolean> {
   await assertSafeWithRaceRetry(candidate, assertSafe)
   await assertSafeLockFile(canonical, assertSafe)
@@ -204,9 +222,28 @@ async function linkClaim(candidate: string, canonical: string, assertSafe: (targ
     await fs.link(candidate, canonical)
     return true
   } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === "EEXIST") return false
+    if (!["EISDIR", "ENOTSUP", "EOPNOTSUPP", "ENOSYS", "EPERM", "EACCES"].includes(String(code))) throw error
+  }
+
+  const contents = await fs.readFile(candidate)
+  let handle: Awaited<ReturnType<typeof fs.open>>
+  try {
+    handle = await fs.open(canonical, "wx", 0o600)
+  } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "EEXIST") return false
     throw error
   }
+  try {
+    await handle.writeFile(contents)
+  } catch (error) {
+    await handle.close().catch(() => undefined)
+    await removeWithRetry(canonical).catch(() => undefined)
+    throw error
+  }
+  await handle.close()
+  return true
 }
 
 async function sameOwner(file: string, expected: LockOwner): Promise<boolean> {

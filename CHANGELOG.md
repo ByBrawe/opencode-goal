@@ -2,6 +2,20 @@
 
 All notable changes to **OpenCode Goals** are documented here.
 
+## 1.3.49 — 2026-10-13
+
+Filesystem portability patch for Windows exFAT/FAT and restricted hard-link volumes.
+
+- Fix #272: when the filesystem rejects atomic hard-link lock claims with unsupported-operation errors including Windows exFAT `EISDIR`, fall back to an exclusive `wx` lock file without overwriting an existing owner.
+- Apply the same fallback to stale-owner cleanup elections; retain owner tokens, live-process exclusion, bounded corruption handling, and fail-closed unexpected I/O errors.
+- Retry the transient empty-owner read window of an exclusive creation only for a bounded interval, never silently stealing corrupt locks.
+- Add regression tests simulating exFAT failures, concurrent owners, dead-owner cleanup, and unsupported-error distinctions.
+- Keep native /goal lifecycle authority, session ownership, persisted state, and Loop's independently installed package unchanged.
+
+This release is regression-tested on Windows/Linux CI with synthetic hard-link failures; the reported physical exFAT Windows reproduction remains to be re-tested by the reporter.
+
+See [1.3.49 release notes](docs/releases/1.3.49.md).
+
 ## 1.3.48 — 2026-10-09
 
 OpenCode 2 Goal lifecycle recovery patch.

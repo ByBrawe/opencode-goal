@@ -4,6 +4,7 @@ import { mkdtemp, readdir, readFile, rm } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import OpenCodeGoalPlugin from "../dist/legacy-loader.js"
+import { GoalStore } from "../dist/persistence/store.js"
 
 async function tick() {
   await new Promise((resolve) => setTimeout(resolve, 0))
@@ -104,6 +105,53 @@ async function emitPatch(hooks, {
     },
   })
 }
+
+test("foreground V1 chat survives competing storage writer without losing either update", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-chat-stale-"))
+  const originalLoad = GoalStore.prototype.load
+  const originalSave = GoalStore.prototype.save
+  let armed = false
+  let injected = false
+
+  GoalStore.prototype.load = async function (sessionID, ...rest) {
+    const snapshot = await originalLoad.call(this, sessionID, ...rest)
+    if (armed && !injected && snapshot && sessionID === "session-1") {
+      injected = true
+      const competitor = new GoalStore(root)
+      const current = await originalLoad.call(competitor, sessionID)
+      await originalSave.call(competitor, {
+        ...current,
+        stopReason: "parallel writer",
+        updatedAt: current.updatedAt + 1,
+      })
+    }
+    return snapshot
+  }
+  try {
+    const fake = fakeClient()
+    const hooks = await OpenCodeGoalPlugin({ client: fake.client, directory: root })
+    const output = await createGoalThroughCommand(hooks)
+    await hooks["chat.message"](
+      { sessionID: "session-1", messageID: "user-r1", agent: "build", model: { providerID: "p", modelID: "m" } },
+      { message: { id: "user-r1" }, parts: output.parts },
+    )
+    armed = true
+    await hooks["chat.message"](
+      { sessionID: "session-1", messageID: "user-r2", agent: "build", model: { providerID: "p", modelID: "m" } },
+      { message: { id: "user-r2" }, parts: [{ type: "text", text: "a normal foreground message" }] },
+    )
+    assert.equal(injected, true, "the competing generation write must be injected")
+    const goal = await readOnlyGoal(root)
+    assert.equal(goal.status, "active")
+    assert.equal(goal.stopReason, "parallel writer", "competing writer must survive rebasing")
+    assert.deepEqual(goal.execution, { agent: "build", model: { providerID: "p", modelID: "m" } })
+    assert.equal(goal.storageGeneration, 3)
+  } finally {
+    GoalStore.prototype.load = originalLoad
+    GoalStore.prototype.save = originalSave
+    await rm(root, { recursive: true, force: true })
+  }
+})
 
 test("command-owned chat message does not pause its own goal", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-adapter-"))

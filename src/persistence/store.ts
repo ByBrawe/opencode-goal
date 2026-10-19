@@ -589,3 +589,37 @@ export class GoalStore {
     }
   }
 }
+
+/**
+ * Write a narrowly-scoped update against a fresh Goal snapshot.
+ *
+ * A wrapper writer may commit after the core plugin loads its Goal. Retry only
+ * stale generations, never integrity, lock-owner or replacement failures.
+ * Callers must re-check status, Goal ID, revision and ownership in mutator.
+ */
+export async function mutateGoal(
+  store: GoalStore,
+  sessionID: string,
+  mutate: (goal: GoalState) => GoalState | null | Promise<GoalState | null>,
+  options: { maxAttempts?: number } = {},
+): Promise<{ goal: GoalState; wrote: boolean } | null> {
+  const maxAttempts = Math.max(1, Math.min(8, options.maxAttempts ?? 6))
+  let stale: GoalStoreConcurrencyError | undefined
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const current = await store.load(sessionID)
+    if (!current) return null
+    const next = await mutate(current)
+    if (!next) return { goal: current, wrote: false }
+    try {
+      await store.save(next)
+      return { goal: next, wrote: true }
+    } catch (error) {
+      if (error instanceof GoalStoreConcurrencyError && error.kind === "stale_write") {
+        stale = error
+        continue
+      }
+      throw error
+    }
+  }
+  throw stale ?? new Error("Goal mutation retry budget was exhausted")
+}

@@ -590,21 +590,41 @@ export class GoalStore {
   }
 }
 
+export type FreshGoalMutationResult = {
+  goal: GoalState
+  wrote: boolean
+}
+
+const DEFAULT_GOAL_MUTATION_ATTEMPTS = 6
+const MAX_GOAL_MUTATION_ATTEMPTS = 8
+
+function resolveGoalMutationAttempts(value: number | undefined): number {
+  if (value === undefined) return DEFAULT_GOAL_MUTATION_ATTEMPTS
+  if (!Number.isInteger(value) || value < 1 || value > MAX_GOAL_MUTATION_ATTEMPTS) {
+    throw new RangeError(`maxAttempts must be an integer between 1 and ${MAX_GOAL_MUTATION_ATTEMPTS}`)
+  }
+  return value
+}
+
 /**
- * Write a narrowly-scoped update against a fresh Goal snapshot.
+ * Apply a caller-owned mutation against the freshest persisted snapshot.
  *
- * A wrapper writer may commit after the core plugin loads its Goal. Retry only
- * stale generations, never integrity, lock-owner or replacement failures.
- * Callers must re-check status, Goal ID, revision and ownership in mutator.
+ * Every plugin wrapper can observe host events and tool completions in
+ * parallel. A writer that loaded an older snapshot must not surface a
+ * GoalStoreConcurrencyError just because another wrapper committed first.
+ * Re-load and re-apply the mutation (including its id/revision/status guards)
+ * instead, while still propagating lock, integrity and live-replacement
+ * failures unchanged. The store-level generation check remains authoritative.
+ * Mutators must be pure/re-entrant: they can run once per stale collision.
  */
 export async function mutateGoal(
   store: GoalStore,
   sessionID: string,
   mutate: (goal: GoalState) => GoalState | null | Promise<GoalState | null>,
-  options: { maxAttempts?: number } = {},
-): Promise<{ goal: GoalState; wrote: boolean } | null> {
-  const maxAttempts = Math.max(1, Math.min(8, options.maxAttempts ?? 6))
-  let stale: GoalStoreConcurrencyError | undefined
+  options: { maxAttempts?: number; exhaustedMessage?: string } = {},
+): Promise<FreshGoalMutationResult | null> {
+  const maxAttempts = resolveGoalMutationAttempts(options.maxAttempts)
+  let lastStale: GoalStoreConcurrencyError | undefined
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const current = await store.load(sessionID)
     if (!current) return null
@@ -615,11 +635,11 @@ export async function mutateGoal(
       return { goal: next, wrote: true }
     } catch (error) {
       if (error instanceof GoalStoreConcurrencyError && error.kind === "stale_write") {
-        stale = error
+        lastStale = error
         continue
       }
       throw error
     }
   }
-  throw stale ?? new Error("Goal mutation retry budget was exhausted")
+  throw lastStale ?? new Error(options.exhaustedMessage ?? "Goal state kept changing while applying a fresh mutation")
 }

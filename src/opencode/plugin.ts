@@ -217,11 +217,9 @@ export default async function OpenCodeGoalPlugin(input: any, options: OpenCodeGo
         deferredIdle.add(sessionID)
         return null
       }
-      let goal = await load(sessionID)
+      const result = await mutateGoal(store, sessionID, (latest) => latest.status === "active" ? closeObservedTurn(latest) : null)
+      const goal = result?.goal
       if (!goal || goal.status !== "active") return null
-      goal = closeObservedTurn(goal)
-      await save(goal)
-      if (goal.status !== "active") return null
       resetCadenceTurn(sessionID)
       const token = Date.now() + Math.random()
       const text = continuationPrompt(goal)
@@ -237,10 +235,10 @@ export default async function OpenCodeGoalPlugin(input: any, options: OpenCodeGo
     void sdkPrompt(client, sessionID, prepared.text, prepared.goal.execution)
       .catch(async (error) => {
         await serialize(sessionID, async () => {
-          const latest = await load(sessionID)
-          if (latest?.status === "active" && dispatching.get(sessionID) === prepared.token) {
-            await save(pauseGoal(latest, `Continuation dispatch failed: ${String(error)}`))
-          }
+          await mutateGoal(store, sessionID, (latest) => {
+            if (latest.status !== "active" || dispatching.get(sessionID) !== prepared.token) return null
+            return pauseGoal(latest, `Continuation dispatch failed: ${String(error)}`)
+          })
         })
       })
       .finally(() => {
@@ -359,15 +357,16 @@ export default async function OpenCodeGoalPlugin(input: any, options: OpenCodeGo
         : typeof output?.message?.id === "string" ? output.message.id : undefined
       const owned = ownership.consumePrompt(event.sessionID, messageText, userMessageID)
       if (owned) {
-        if (owned.owner && Object.keys(context).length) {
+        const owner = owned.owner
+        if (owner && Object.keys(context).length) {
           await serialize(event.sessionID, async () => {
-            await mutateGoal(store, event.sessionID, (goal) => {
-              if (goal.status === "completed" || !sameGoalTurn(owned.owner, goalTurnOwner(goal))) return null
+            await mutateGoal(store, event.sessionID, (latest) => {
+              if (latest.status === "completed" || !sameGoalTurn(owner, goalTurnOwner(latest))) return null
               return {
-                ...goal,
+                ...latest,
                 execution: {
                   ...context,
-                  ...(goal.execution?.modelContext ? { modelContext: goal.execution.modelContext } : {}),
+                  ...(latest.execution?.modelContext ? { modelContext: latest.execution.modelContext } : {}),
                 },
                 updatedAt: Date.now(),
               }
@@ -405,14 +404,15 @@ export default async function OpenCodeGoalPlugin(input: any, options: OpenCodeGo
 
     "chat.params": async (event: any) => {
       await serialize(event.sessionID, async () => {
-        const goal = await load(event.sessionID)
-        if (!goal || goal.status === "completed") return
-        const next = observeModelContextLimits(goal, {
-          model: event.model,
-          autoCompaction: hostAutoCompaction,
-          ...(hostCompactionReserved !== undefined ? { compactionReserved: hostCompactionReserved } : {}),
+        await mutateGoal(store, event.sessionID, (goal) => {
+          if (goal.status === "completed") return null
+          const next = observeModelContextLimits(goal, {
+            model: event.model,
+            autoCompaction: hostAutoCompaction,
+            ...(hostCompactionReserved !== undefined ? { compactionReserved: hostCompactionReserved } : {}),
+          })
+          return next === goal ? null : next
         })
-        if (next !== goal) await save(next)
       })
     },
 
@@ -449,12 +449,12 @@ export default async function OpenCodeGoalPlugin(input: any, options: OpenCodeGo
         const todos = normalizeNativeTodos(output?.metadata?.todos ?? event?.args?.todos)
         if (!todos) return
         await serialize(event.sessionID, async () => {
-          const goal = await load(event.sessionID)
-          if (!goal || goal.status !== "active" || !sameGoalTurn(call.owner, goalTurnOwner(goal))) return
-          const next = observeTodoPlan(goal, todos)
-          if (next === goal) return
           try {
-            await save(next)
+            await mutateGoal(store, event.sessionID, (goal) => {
+              if (goal.status !== "active" || !sameGoalTurn(call.owner, goalTurnOwner(goal))) return null
+              const next = observeTodoPlan(goal, todos)
+              return next === goal ? null : next
+            })
           } catch (error) {
             // Todo telemetry is advisory. Cross-process contention must not turn
             // an otherwise successful native todowrite into a Goal failure.
@@ -475,21 +475,23 @@ export default async function OpenCodeGoalPlugin(input: any, options: OpenCodeGo
         })
         if (fingerprints.length === 0) return
         await serialize(event.sessionID, async () => {
-          let goal = await load(event.sessionID)
-          if (!goal || goal.status !== "active" || !sameGoalTurn(call.owner, goalTurnOwner(goal))) return
-          const before = goal.progressRevision
-          for (const item of fingerprints) {
-            goal = markHostProgress(goal, {
-              fingerprint: item.fingerprint,
-              source: `tool:${event.tool}`,
-              summary: item.summary,
-            })
-          }
-          if (goal.progressRevision !== before) {
+          const result = await mutateGoal(store, event.sessionID, (goal) => {
+            if (goal.status !== "active" || !sameGoalTurn(call.owner, goalTurnOwner(goal))) return null
+            const before = goal.progressRevision
+            let next = goal
+            for (const item of fingerprints) {
+              next = markHostProgress(next, {
+                fingerprint: item.fingerprint,
+                source: `tool:${event.tool}`,
+                summary: item.summary,
+              })
+            }
+            return next.progressRevision === before ? null : next
+          })
+          if (result?.wrote) {
             madeProgress = true
             rememberToolProgress(call.messageID)
-            await save(goal)
-            notifyGoal(directory, goal, "progress")
+            notifyGoal(directory, result.goal, "progress")
           }
         })
       } finally {
@@ -528,31 +530,34 @@ export default async function OpenCodeGoalPlugin(input: any, options: OpenCodeGo
           const meaningful = consumeMeaningfulAssistant(info?.id)
           if (owner) {
             let emptyNotice: { count: number; paused: boolean } | undefined
+            let accounted = false
             await serialize(sessionID, async () => {
-              const goal = await load(sessionID)
-              if (!goal || owner.goalID !== goal.id || goal.usage.seenMessageIDs.includes(info.id)) return
-              const sample = {
-                messageID: info.id,
-                inputTokens: info.tokens?.input,
-                outputTokens: info.tokens?.output,
-                reasoningTokens: info.tokens?.reasoning,
-                cost: info.cost,
-                createdAt: info.time?.created,
-                completedAt: info.time?.completed,
-              }
-              const currentRevision = sameGoalTurn(owner, goalTurnOwner(goal))
-              let next: GoalState
-              if (!meaningful && currentRevision && goal.status === "active") {
-                next = recordEmptyAssistantTurn(goal, sample)
-                emptyNotice = { count: next.emptyTurnCount ?? 0, paused: next.status === "paused" }
-              } else {
-                next = accountAssistantUsage(goal, sample)
-                if (meaningful && currentRevision) next = clearEmptyAssistantTurnStreak(next)
-              }
-              next = observeModelContextUsage(next, info.tokens)
-              await save(next)
+              const result = await mutateGoal(store, sessionID, (goal) => {
+                emptyNotice = undefined
+                if (owner.goalID !== goal.id || goal.usage.seenMessageIDs.includes(info.id)) return null
+                const sample = {
+                  messageID: info.id,
+                  inputTokens: info.tokens?.input,
+                  outputTokens: info.tokens?.output,
+                  reasoningTokens: info.tokens?.reasoning,
+                  cost: info.cost,
+                  createdAt: info.time?.created,
+                  completedAt: info.time?.completed,
+                }
+                const currentRevision = sameGoalTurn(owner, goalTurnOwner(goal))
+                let next: GoalState
+                if (!meaningful && currentRevision && goal.status === "active") {
+                  next = recordEmptyAssistantTurn(goal, sample)
+                  emptyNotice = { count: next.emptyTurnCount ?? 0, paused: next.status === "paused" }
+                } else {
+                  next = accountAssistantUsage(goal, sample)
+                  if (meaningful && currentRevision) next = clearEmptyAssistantTurnStreak(next)
+                }
+                return observeModelContextUsage(next, info.tokens)
+              })
+              accounted = Boolean(result?.wrote)
             })
-            if (emptyNotice) {
+            if (accounted && emptyNotice) {
               const message = emptyNotice.paused
                 ? `Goal paused after ${emptyNotice.count} consecutive empty assistant turns.`
                 : "Goal assistant returned no meaningful activity; retrying once."
@@ -573,21 +578,23 @@ export default async function OpenCodeGoalPlugin(input: any, options: OpenCodeGo
         if (toolProgressMessages.has(part.messageID)) return
         const owner = ownership.assistantOwner(part.messageID)
         if (!owner) return
+        let madeProgress = false
         await serialize(sessionID, async () => {
-          const goal = await load(sessionID)
-          if (!goal || goal.status !== "active" || !sameGoalTurn(owner, goalTurnOwner(goal))) return
-          const files = Array.isArray(part.files) ? part.files.map(String).filter(Boolean) : []
-          const next = markHostProgress(goal, {
-            fingerprint: `patch:${part.hash}`,
-            source: "patch",
-            summary: files.length ? `Workspace changed: ${files.join(", ")}` : `Workspace patch ${part.hash}`,
+          const result = await mutateGoal(store, sessionID, (goal) => {
+            if (goal.status !== "active" || !sameGoalTurn(owner, goalTurnOwner(goal))) return null
+            const files = Array.isArray(part.files) ? part.files.map(String).filter(Boolean) : []
+            const next = markHostProgress(goal, {
+              fingerprint: `patch:${part.hash}`,
+              source: "patch",
+              summary: files.length ? `Workspace changed: ${files.join(", ")}` : `Workspace patch ${part.hash}`,
+            })
+            madeProgress = next.progressRevision !== goal.progressRevision
+            if (madeProgress && requiresDistinctGoalTurnCadence(goal) && !cadenceMutationReservations.has(sessionID)) {
+              cadenceMutationReservations.set(sessionID, `patch:${part.messageID || part.hash}`)
+            }
+            return next
           })
-          const madeProgress = next.progressRevision !== goal.progressRevision
-          if (madeProgress && requiresDistinctGoalTurnCadence(goal) && !cadenceMutationReservations.has(sessionID)) {
-            cadenceMutationReservations.set(sessionID, `patch:${part.messageID || part.hash}`)
-          }
-          await save(next)
-          if (madeProgress) notifyGoal(directory, next, "progress")
+          if (result?.wrote && madeProgress) notifyGoal(directory, result.goal, "progress")
         })
         return
       }
@@ -615,7 +622,12 @@ export default async function OpenCodeGoalPlugin(input: any, options: OpenCodeGo
           if (!goal) return "No active goal."
           const stale = staleToolReason(context, goal)
           if (stale) return stale
-          await save(addProgressNote(goal, args))
+          const result = await mutateGoal(store, context.sessionID, (latest) => {
+            if (latest.id !== goal.id || latest.revision !== goal.revision) return null
+            if (staleToolReason(context, latest)) return null
+            return addProgressNote(latest, args)
+          })
+          if (!result?.wrote) return "Rejected: the Goal changed before the checkpoint was recorded."
           return "Checkpoint recorded. Note: checkpoint text is not completion evidence."
         }),
       }),
@@ -623,15 +635,20 @@ export default async function OpenCodeGoalPlugin(input: any, options: OpenCodeGo
         description: "Ask the host to verify a predeclared project-file requirement. Use either the exact requirement ID or the 1-based requirement number shown by opencode_goal_get/status; semantic/objective requirements are verified by completion audit instead.",
         args: { requirementID: tool.schema.string() },
         execute: async (args: any, context: any) => await serialize(context.sessionID, async () => {
-          let goal = await load(context.sessionID)
+          const goal = await load(context.sessionID)
           if (!goal) return "No active goal."
           const stale = staleToolReason(context, goal)
           if (stale) return stale
-          const checked = await recordFileEvidence(goal, { root: directory, requirementID: args.requirementID })
-          goal = checked.goal
-          if (checked.evidence.passed) goal = proveRequirementsFromEvidence(goal, checked.evidence.id)
-          await save(goal)
-          return checked.evidence.summary
+          let summary: string | undefined
+          const result = await mutateGoal(store, context.sessionID, async (latest) => {
+            if (latest.id !== goal.id || latest.revision !== goal.revision) return null
+            if (staleToolReason(context, latest)) return null
+            const checked = await recordFileEvidence(latest, { root: directory, requirementID: args.requirementID })
+            summary = checked.evidence.summary
+            return checked.evidence.passed ? proveRequirementsFromEvidence(checked.goal, checked.evidence.id) : checked.goal
+          })
+          if (!result?.wrote || summary === undefined) return "Rejected: the Goal changed before file evidence could be recorded."
+          return summary
         }),
       }),
       opencode_goal_complete: tool({
@@ -665,13 +682,15 @@ export default async function OpenCodeGoalPlugin(input: any, options: OpenCodeGo
                 if (currentSteeringEpoch(context.sessionID) !== startingSteeringEpoch) {
                   return "Completion not verified: user steering arrived while semantic verification was running. Goal remains active."
                 }
-                const latest = await load(context.sessionID)
-                if (!latest || latest.id !== snapshot.id || latest.revision !== snapshot.revision || latest.status !== "active") {
+                const reason = `Independent semantic verification unavailable: ${error.message}`
+                const result = await mutateGoal(store, context.sessionID, (latest) => {
+                  if (latest.id !== snapshot.id || latest.revision !== snapshot.revision || latest.status !== "active") return null
+                  const merged = settleCurrentProgress(mergeAuditEvaluation(latest, evaluated))
+                  return pauseGoal(merged, reason)
+                })
+                if (!result?.wrote) {
                   return "Completion not verified: goal changed, paused, or stopped while semantic verification was unavailable."
                 }
-                const merged = settleCurrentProgress(mergeAuditEvaluation(latest, evaluated))
-                const reason = `Independent semantic verification unavailable: ${error.message}`
-                await save(pauseGoal(merged, reason))
                 return `Completion not verified: ${error.message}. Goal paused to prevent repeated verifier retries. Use /goal resume to retry after the verifier/provider recovers.`
               })
             }
@@ -681,16 +700,20 @@ export default async function OpenCodeGoalPlugin(input: any, options: OpenCodeGo
             if (currentSteeringEpoch(context.sessionID) !== startingSteeringEpoch) {
               return "Completion rejected: user steering arrived while verification was running. Goal remains active."
             }
-            const latest = await load(context.sessionID)
-            if (!latest || latest.id !== snapshot.id || latest.revision !== snapshot.revision || latest.status !== "active") {
+            let completed: ReturnType<typeof completeGoal> | undefined
+            const result = await mutateGoal(store, context.sessionID, (latest) => {
+              if (latest.id !== snapshot.id || latest.revision !== snapshot.revision || latest.status !== "active") return null
+              const merged = settleCurrentProgress(mergeAuditEvaluation(latest, evaluated))
+              completed = completeGoal(merged, args.summary)
+              return completed.goal
+            })
+            const audit = completed?.audit
+            if (!result?.wrote || !audit) {
               return "Completion rejected: goal changed, paused, or stopped while verification was running."
             }
-            const merged = settleCurrentProgress(mergeAuditEvaluation(latest, evaluated))
-            const result = completeGoal(merged, args.summary)
-            await save(result.goal)
-            const rejection = completionNotificationReason(result.goal, result.audit)
+            const rejection = completionNotificationReason(result.goal, audit)
             if (rejection) notifyGoal(directory, result.goal, rejection)
-            return result.audit.ok ? "Goal completed with host and verifier-backed evidence." : `Completion rejected:\n- ${result.audit.reasons.join("\n- ")}`
+            return audit.ok ? "Goal completed with host and verifier-backed evidence." : `Completion rejected:\n- ${audit.reasons.join("\n- ")}`
           })
         },
       }),
@@ -706,8 +729,12 @@ export default async function OpenCodeGoalPlugin(input: any, options: OpenCodeGo
           const stale = staleToolReason(context, goal)
           if (stale) return stale
           if (goal.status !== "active") return `Waiting-user rejected: goal status is ${goal.status}.`
-          const next = waitForUserGoal(goal, args)
-          await save(next)
+          const result = await mutateGoal(store, context.sessionID, (latest) => {
+            if (latest.id !== goal.id || latest.revision !== goal.revision || latest.status !== "active") return null
+            if (staleToolReason(context, latest)) return null
+            return waitForUserGoal(latest, args)
+          })
+          if (!result?.wrote) return "Waiting-user rejected: the Goal changed before it could be persisted."
           return "Goal is waiting for user input. End this assistant turn without more project work or polling; autonomous Goal continuation is asleep until the user resumes it."
         }),
       }),
@@ -723,10 +750,16 @@ export default async function OpenCodeGoalPlugin(input: any, options: OpenCodeGo
           if (!goal) return "No active goal."
           const stale = staleToolReason(context, goal)
           if (stale) return stale
-          const next = reportBlocker(goal, { turnID: context.messageID ?? context.callID ?? String(Date.now()), ...args })
-          await save(next)
-          const count = next.blockerAudit?.consecutiveTurns ?? 0
-          return next.status === "blocked" ? `Goal blocked after ${count} repeated blocker turns.` : `Blocker recorded (${count}/3). Keep working on other useful paths if possible.`
+          const result = await mutateGoal(store, context.sessionID, (latest) => {
+            if (latest.id !== goal.id || latest.revision !== goal.revision) return null
+            if (staleToolReason(context, latest)) return null
+            return reportBlocker(latest, { turnID: context.messageID ?? context.callID ?? String(Date.now()), ...args })
+          })
+          if (!result?.wrote) return "Rejected: the Goal changed before the blocker was recorded."
+          const count = result.goal.blockerAudit?.consecutiveTurns ?? 0
+          return result.goal.status === "blocked"
+            ? `Goal blocked after ${count} repeated blocker turns.`
+            : `Blocker recorded (${count}/3). Keep working on other useful paths if possible.`
         }),
       }),
     },

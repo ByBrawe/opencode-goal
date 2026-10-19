@@ -2,7 +2,7 @@ import CorePlugin from "./plugin.js"
 import { pauseGoal } from "../domain/goal.js"
 import type { GoalExecutionContext, GoalState } from "../domain/types.js"
 import { scanRecoverableGoalStates } from "../persistence/diagnostics.js"
-import { GoalStore } from "../persistence/store.js"
+import { GoalStore, mutateGoal } from "../persistence/store.js"
 import { isRestrictedGoalAgent, restrictedAgentStopReason } from "./agent-boundary.js"
 import { createGoalTransitionNotifier } from "./notify.js"
 
@@ -217,7 +217,10 @@ async function recoverStartupGoals(
     }
     const currentAgent = current.execution?.agent
     if (isRestrictedGoalAgent(currentAgent)) {
-      await store.save(pauseGoal(current, restrictedAgentStopReason(currentAgent)))
+      await mutateGoal(store, sessionID, (latest) => {
+        if (latest.id !== current.id || latest.revision !== current.revision || latest.status !== "active") return null
+        return pauseGoal(latest, restrictedAgentStopReason(currentAgent))
+      })
       runtime.pending.delete(sessionID)
       continue
     }
@@ -249,10 +252,10 @@ async function recoverStartupGoals(
       await sdkRecoveryPrompt(input, sessionID, text, current.execution)
     } catch (error) {
       promptFailed = true
-      const latest = await store.load(sessionID)
-      if (latest?.id === current.id && latest.revision === current.revision && latest.status === "active") {
-        await store.save(pauseGoal(latest, `Restart recovery prompt failed: ${String(error)}`))
-      }
+      await mutateGoal(store, sessionID, (latest) => {
+        if (latest.id !== current.id || latest.revision !== current.revision || latest.status !== "active") return null
+        return pauseGoal(latest, `Restart recovery prompt failed: ${String(error)}`)
+      })
     } finally {
       runtime.inFlight.delete(sessionID)
       runtime.pending.delete(sessionID)

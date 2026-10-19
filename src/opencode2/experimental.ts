@@ -1,7 +1,7 @@
 import path from "node:path"
 import { createGoal, editGoal, pauseGoal, resumeGoal } from "../domain/goal.js"
 import type { GoalState } from "../domain/types.js"
-import { GoalStore } from "../persistence/store.js"
+import { GoalStore, mutateGoal } from "../persistence/store.js"
 import { applyGoalBudget, budgetLimitHits } from "../runtime/accounting.js"
 import { formatGoalRuntimeFingerprint } from "../runtime/fingerprint.js"
 import {
@@ -1293,14 +1293,15 @@ export const OpenCode2GoalsExperimental = {
       pendingModelResume.delete(sessionID)
       if (!succeeded || lifecycleAbort.signal.aborted) return undefined
       try {
-        const { store, goal } = await coordinatorGoal(sessionID)
-        if (!goal || goal.status !== "waiting_user" || goal.id !== pending.goalID || goal.revision !== pending.revision) return undefined
-        const resumed = {
-          ...resumeGoal(goal),
-          skipNextStallCheck: true,
-        }
-        await store.save(resumed)
-        return resumed
+        const { store } = await coordinatorGoal(sessionID)
+        const result = await mutateGoal(store, sessionID, (latest) => {
+          if (latest.status !== "waiting_user" || latest.id !== pending.goalID || latest.revision !== pending.revision) return null
+          return {
+            ...resumeGoal(latest),
+            skipNextStallCheck: true,
+          }
+        })
+        return result?.wrote ? result.goal : undefined
       } catch {
         return undefined
       }
@@ -1377,18 +1378,20 @@ export const OpenCode2GoalsExperimental = {
         })
         if (!fingerprints.length) return
 
-        let next = goal
-        const before = next.progressRevision
-        for (const item of fingerprints) {
-          next = markHostProgress(next, {
-            fingerprint: item.fingerprint,
-            source: `tool:${tool.name}`,
-            summary: item.summary,
-          })
-        }
-        if (next.progressRevision === before) return
-        await store.save(next)
-        notifyGoal(directory, next, "progress")
+        const result = await mutateGoal(store, sessionID, (latest) => {
+          if (latest.status !== "active" || latest.id !== owner.goalID || latest.revision !== owner.revision) return null
+          const before = latest.progressRevision
+          let next = latest
+          for (const item of fingerprints) {
+            next = markHostProgress(next, {
+              fingerprint: item.fingerprint,
+              source: `tool:${tool.name}`,
+              summary: item.summary,
+            })
+          }
+          return next.progressRevision === before ? null : next
+        })
+        if (result?.wrote) notifyGoal(directory, result.goal, "progress")
       } catch {
         // Progress telemetry is advisory. Never kill the V2 event subscriber
         // or authorize fallback mutation when hashing/state races fail.
@@ -1430,18 +1433,21 @@ export const OpenCode2GoalsExperimental = {
     ) => {
       if (lifecycleAbort.signal.aborted) return
       try {
-        const { store, goal } = await coordinatorGoal(sessionID)
-        if (lifecycleAbort.signal.aborted || !goal || goal.id !== goalID || goal.revision !== revision || goal.status !== "active") return
-        if (isTransientInfrastructureError(error)) {
-          const recovering = enterInfrastructureRecovery(goal, {
-            kind: "continuation_dispatch",
-            reason: String(error),
-          })
-          await store.save(recovering)
-          armHostLimitRetry(recovering)
-          return
-        }
-        await store.save(pauseGoal(goal, `Continuation dispatch failed: ${String(error)}`))
+        const { store } = await coordinatorGoal(sessionID)
+        if (lifecycleAbort.signal.aborted) return
+        const transient = isTransientInfrastructureError(error)
+        const result = await mutateGoal(store, sessionID, (latest) => {
+          if (latest.id !== goalID || latest.revision !== revision || latest.status !== "active") return null
+          if (transient) {
+            return enterInfrastructureRecovery(latest, {
+              kind: "continuation_dispatch",
+              reason: String(error),
+            })
+          }
+          return pauseGoal(latest, `Continuation dispatch failed: ${String(error)}`)
+        })
+        if (!result?.wrote || lifecycleAbort.signal.aborted) return
+        if (transient) armHostLimitRetry(result.goal)
       } catch {
         // Failure recovery is advisory to the original transport error. Never
         // mutate a different Goal/revision because recovery itself raced.
@@ -1895,12 +1901,20 @@ export const OpenCode2GoalsExperimental = {
           return
         }
 
-        const dispatched = markInfrastructureRecoveryDispatched(goal, now)
-        await store.save(dispatched)
+        const result = await mutateGoal(store, sessionID, (latest) => {
+          if (latest.status !== "active" || !latest.infrastructureRecovery) return null
+          if (latest.id !== goal.id || latest.revision !== goal.revision) return null
+          if (latest.infrastructureRecovery.nextRetryAt > now) return null
+          return markInfrastructureRecoveryDispatched(latest, now)
+        })
+        if (!result?.wrote) {
+          if (result?.goal.infrastructureRecovery?.nextRetryAt) armHostLimitRetry(result.goal)
+          return
+        }
         await scheduleAutonomousContinuation(
           sessionID,
-          dispatched,
-          continuationPrompt(dispatched),
+          result.goal,
+          continuationPrompt(result.goal),
           "recovery",
         )
       } catch {
@@ -2039,17 +2053,23 @@ export const OpenCode2GoalsExperimental = {
                 try {
                   const { store, goal } = await coordinatorGoal(sessionID)
                   if (goal?.status === "active") {
-                    const failure = classifyOpenCode2ExecutionFailure(goal, data?.error)
-                    const next = failure.kind === "ignore"
-                      ? pauseGoal(
-                          goal,
-                          "OpenCode automatic compaction failed before the active Goal could recover. Goal state is preserved. Run /compact, then /goal resume.",
-                        )
-                      : failure.goal
-                    await store.save(next)
-                    if (failure.kind === "transient") armHostLimitRetry(next)
-                    else cancelHostLimitRetry(sessionID)
-                    clearOpenCode2GoalOwnership(autonomousRuntime, sessionID)
+                    let failureKind: string | undefined
+                    const result = await mutateGoal(store, sessionID, (latest) => {
+                      if (latest.status !== "active" || latest.id !== goal.id || latest.revision !== goal.revision) return null
+                      const failure = classifyOpenCode2ExecutionFailure(latest, data?.error)
+                      failureKind = failure.kind
+                      return failure.kind === "ignore"
+                        ? pauseGoal(
+                            latest,
+                            "OpenCode automatic compaction failed before the active Goal could recover. Goal state is preserved. Run /compact, then /goal resume.",
+                          )
+                        : failure.goal
+                    })
+                    if (result?.wrote) {
+                      if (failureKind === "transient") armHostLimitRetry(result.goal)
+                      else cancelHostLimitRetry(sessionID)
+                      clearOpenCode2GoalOwnership(autonomousRuntime, sessionID)
+                    }
                   }
                 } catch {
                   // A failed compaction never authorizes fallback dispatch.
@@ -2065,11 +2085,15 @@ export const OpenCode2GoalsExperimental = {
                   if (compactionReason === "auto" && goal.status === "active") {
                     const attempt = observeOpenCode2NativeCompaction(hostLimitRuntime, goal)
                     if (attempt.repeatedWithoutOwnedSuccess) {
-                      const paused = pauseGoal(goal, repeatedOpenCode2CompactionReason())
-                      await store.save(paused)
-                      cancelHostLimitRetry(sessionID)
-                      clearOpenCode2GoalOwnership(autonomousRuntime, sessionID)
-                      continue
+                      const result = await mutateGoal(store, sessionID, (latest) => {
+                        if (latest.status !== "active" || latest.id !== goal.id || latest.revision !== goal.revision) return null
+                        return pauseGoal(latest, repeatedOpenCode2CompactionReason())
+                      })
+                      if (result?.wrote) {
+                        cancelHostLimitRetry(sessionID)
+                        clearOpenCode2GoalOwnership(autonomousRuntime, sessionID)
+                        continue
+                      }
                     }
                   }
 
@@ -2119,10 +2143,19 @@ export const OpenCode2GoalsExperimental = {
                   || goal.revision !== expected.revision
                 ) continue
 
-                const failure = classifyOpenCode2ExecutionFailure(goal, data?.error)
-                if (failure.kind === "ignore") continue
-                await store.save(failure.goal)
-                if (failure.kind === "transient") armHostLimitRetry(failure.goal)
+                let failureKind: string | undefined
+                const result = await mutateGoal(store, sessionID, (latest) => {
+                  if (
+                    latest.status !== "active"
+                    || latest.id !== expected.goalID
+                    || latest.revision !== expected.revision
+                  ) return null
+                  const failure = classifyOpenCode2ExecutionFailure(latest, data?.error)
+                  failureKind = failure.kind
+                  return failure.kind === "ignore" ? null : failure.goal
+                })
+                if (!result?.wrote) continue
+                if (failureKind === "transient") armHostLimitRetry(result.goal)
                 else cancelHostLimitRetry(sessionID)
               } catch {
                 // Failure events without fresh matching Goal ownership cannot
@@ -2180,18 +2213,17 @@ export const OpenCode2GoalsExperimental = {
               runtime.settledGoalExecutionGenerationBySession.set(sessionID, generation)
 
               let observedGoal = goal
-              if (completedTelemetry) {
-                const accounted = applyOpenCode2GoalTelemetry(
-                  observedGoal,
-                  owner.messageID,
-                  completedTelemetry,
-                )
-                observedGoal = accounted.goal
-              }
-              if (observedGoal.infrastructureRecovery) {
-                observedGoal = clearInfrastructureRecovery(observedGoal)
-              }
-              if (observedGoal !== goal) await store.save(observedGoal)
+              const observed = await mutateGoal(store, sessionID, (latest) => {
+                if (latest.id !== goal.id || latest.revision !== goal.revision) return null
+                let next = latest
+                if (completedTelemetry) {
+                  next = applyOpenCode2GoalTelemetry(next, owner.messageID, completedTelemetry).goal
+                }
+                if (next.infrastructureRecovery) next = clearInfrastructureRecovery(next)
+                return next === latest ? null : next
+              })
+              if (!observed) continue
+              observedGoal = observed.goal
               cancelHostLimitRetry(sessionID)
               markOpenCode2OwnedExecutionSuccess(hostLimitRuntime, sessionID)
 
@@ -2199,18 +2231,28 @@ export const OpenCode2GoalsExperimental = {
               if (observedGoal.status === "active" && observedGoal.unitRotation) {
                 try {
                   const unit = await readGoalUnitIdentity(observedGoal.unitRotation.command, directory)
-                  if (observedGoal.unitRotation.currentUnit === undefined) {
-                    observedGoal = observeInitialGoalUnit(observedGoal, unit)
-                    await store.save(observedGoal)
-                  } else if (unitRotationNeeded(observedGoal, unit)) {
-                    nextUnitIdentity = unit
-                    observedGoal = markHostProgress(observedGoal, {
-                      fingerprint: `unit:${unitIdentityDigest(unit)}`,
-                      source: "unit-boundary",
-                      summary: `Host unit identity advanced to ${JSON.stringify(unit)}`,
-                    })
-                    await store.save(observedGoal)
-                  }
+                  const unitResult = await mutateGoal(store, sessionID, (latest) => {
+                    nextUnitIdentity = undefined
+                    if (
+                      latest.status !== "active"
+                      || !latest.unitRotation
+                      || latest.id !== observedGoal.id
+                      || latest.revision !== observedGoal.revision
+                    ) return null
+                    if (latest.unitRotation.currentUnit === undefined) {
+                      return observeInitialGoalUnit(latest, unit)
+                    }
+                    if (unitRotationNeeded(latest, unit)) {
+                      nextUnitIdentity = unit
+                      return markHostProgress(latest, {
+                        fingerprint: `unit:${unitIdentityDigest(unit)}`,
+                        source: "unit-boundary",
+                        summary: `Host unit identity advanced to ${JSON.stringify(unit)}`,
+                      })
+                    }
+                    return null
+                  })
+                  if (unitResult) observedGoal = unitResult.goal
                 } catch {
                   // Unit observation is fail-closed. A broken unit command never
                   // invents a boundary or interrupts the existing session owner.
@@ -2234,22 +2276,29 @@ export const OpenCode2GoalsExperimental = {
                 continue
               }
 
-              const prepared = prepareOpenCode2Continuation(observedGoal, event)
-              if (!prepared.closed) continue
-              await store.save(prepared.goal)
-              if (prepared.shouldContinue && prepared.prompt) {
+              let prepared: ReturnType<typeof prepareOpenCode2Continuation> | undefined
+              const preparedResult = await mutateGoal(store, sessionID, (latest) => {
+                prepared = undefined
+                if (latest.id !== observedGoal.id || latest.revision !== observedGoal.revision) return null
+                prepared = prepareOpenCode2Continuation(latest, event)
+                return prepared.goal === latest ? null : prepared.goal
+              })
+              if (preparedResult) observedGoal = preparedResult.goal
+              if (!prepared?.closed) continue
+              const continuation = prepared
+              if (continuation.shouldContinue && continuation.prompt) {
                 if (
                   nextUnitIdentity
-                  && prepared.goal.status === "active"
-                  && unitRotationNeeded(prepared.goal, nextUnitIdentity)
+                  && continuation.goal.status === "active"
+                  && unitRotationNeeded(continuation.goal, nextUnitIdentity)
                 ) {
-                  const handedOff = await attemptUnitRotation(directory, prepared.goal, nextUnitIdentity)
+                  const handedOff = await attemptUnitRotation(directory, continuation.goal, nextUnitIdentity)
                   if (handedOff) continue
                 }
                 await scheduleAutonomousContinuation(
                   sessionID,
-                  prepared.goal,
-                  prepared.prompt,
+                  continuation.goal,
+                  continuation.prompt,
                   "execution",
                 )
               }
@@ -2351,10 +2400,11 @@ export const OpenCode2GoalsExperimental = {
       try {
         const directory = await resolveSessionDirectory(ctx, sessionID)
         const store = new GoalStore(directory, { onTransition: createGoalTransitionNotifier(directory) })
-        const goal = await store.load(sessionID)
-        if (!goal || goal.status === "completed") return
-        const next = await observeOpenCode2ModelRegistryLimits(goal, ctx.model, event.model)
-        if (next !== goal) await store.save(next)
+        await mutateGoal(store, sessionID, async (goal) => {
+          if (goal.status === "completed") return null
+          const next = await observeOpenCode2ModelRegistryLimits(goal, ctx.model, event.model)
+          return next === goal ? null : next
+        })
       } catch {
         // Model-limit telemetry is advisory. Missing registry data or a
         // concurrent Goal mutation must never block the host context hook.

@@ -133,3 +133,54 @@ test("V2 blocker tool requires distinct owned Goal turns and blocks only on the 
     await rm(root, { recursive: true, force: true })
   }
 })
+
+test("V2 work tool retries when another writer commits before it saves", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-v2-work-tools-stale-"))
+  const originalLoad = GoalStore.prototype.load
+  const originalSave = GoalStore.prototype.save
+  let armed = false
+  let injected = false
+  GoalStore.prototype.load = async function (sessionID, ...rest) {
+    const snapshot = await originalLoad.call(this, sessionID, ...rest)
+    if (armed && !injected && snapshot && sessionID === "v2-work-tools-stale") {
+      injected = true
+      const competitor = new GoalStore(root)
+      const current = await originalLoad.call(competitor, sessionID)
+      await originalSave.call(competitor, {
+        ...current,
+        stopReason: "competing plugin writer",
+        updatedAt: current.updatedAt + 1,
+      })
+    }
+    return snapshot
+  }
+  try {
+    const sessionID = "v2-work-tools-stale"
+    const store = new GoalStore(root)
+    const goal = createGoal({ sessionID, objective: "survive concurrent writes", now: 100 })
+    await store.save(goal)
+
+    const autonomousRuntime = createOpenCode2AutonomousRuntime()
+    own(autonomousRuntime, sessionID, goal, "goal-turn-stale")
+    const tools = createOpenCode2GoalWorkTools({
+      autonomousRuntime,
+      resolveDirectory: async () => root,
+      semanticVerifier: { async verify(_sessionID, current) { return current } },
+    })
+
+    armed = true
+    const progress = await tools.definitions.opencode_goal_progress.execute(
+      { summary: "checkpoint under contention" },
+      { sessionID },
+    )
+    assert.match(progress.content, /Checkpoint recorded/i)
+
+    const latest = await store.load(sessionID)
+    assert.equal(latest.stopReason, "competing plugin writer")
+    assert.equal(latest.progressNotes.length, 1)
+  } finally {
+    GoalStore.prototype.load = originalLoad
+    GoalStore.prototype.save = originalSave
+    await rm(root, { recursive: true, force: true })
+  }
+})

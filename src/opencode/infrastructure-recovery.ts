@@ -1,7 +1,7 @@
 import type CorePlugin from "./plugin.js"
 import type { GoalInfrastructureRecoveryKind, GoalState } from "../domain/types.js"
 import { scanRecoverableGoalStates } from "../persistence/diagnostics.js"
-import { GoalStore, GoalStoreConcurrencyError } from "../persistence/store.js"
+import { GoalStore, GoalStoreConcurrencyError, mutateGoal } from "../persistence/store.js"
 import {
   clearInfrastructureRecovery,
   enterInfrastructureRecovery,
@@ -56,18 +56,6 @@ function delay(ms: number): Promise<void> {
     const timer = setTimeout(resolve, ms)
     ;(timer as any).unref?.()
   })
-}
-
-async function saveWithReload(store: GoalStore, goal: GoalState): Promise<GoalState> {
-  try {
-    await store.save(goal)
-    return goal
-  } catch (error) {
-    if (!(error instanceof GoalStoreConcurrencyError)) throw error
-    const latest = await store.load(goal.sessionID)
-    if (!latest) throw error
-    return latest
-  }
 }
 
 /** Observe transient failures without changing SDK behavior. */
@@ -201,13 +189,16 @@ export function installGoalInfrastructureRecovery(
         retrySeenAt.delete(sessionID)
         const recovery = goal.infrastructureRecovery
         if (!recovery) return true
-        const delayed: GoalState = {
-          ...goal,
-          infrastructureRecovery: { ...recovery, nextRetryAt: now + retryPollMs },
-          updatedAt: now,
-        }
-        const saved = await saveWithReload(store, delayed)
-        if (saved.status === "active" && saved.infrastructureRecovery?.nextRetryAt) await schedule(sessionID)
+        const result = await mutateGoal(store, sessionID, (latest) => {
+          if (latest.status !== "active" || !latest.infrastructureRecovery) return null
+          if (latest.infrastructureRecovery.kind !== recovery.kind) return null
+          return {
+            ...latest,
+            infrastructureRecovery: { ...latest.infrastructureRecovery, nextRetryAt: now + retryPollMs },
+            updatedAt: now,
+          }
+        })
+        if (result?.goal.status === "active" && result.goal.infrastructureRecovery?.nextRetryAt) await schedule(sessionID)
         return true
       }
     } else if (live === "busy") {
@@ -233,10 +224,14 @@ export function installGoalInfrastructureRecovery(
     if (await postponeWhileHostOwnsSession(sessionID, goal)) return
     if (completionWins.has(sessionID)) return
 
-    goal = markInfrastructureRecoveryDispatched(goal, now)
-    const saved = await saveWithReload(store, goal)
+    const result = await mutateGoal(store, sessionID, (latest) => {
+      if (latest.status !== "active" || !latest.infrastructureRecovery) return null
+      if (latest.infrastructureRecovery.kind !== goal.infrastructureRecovery?.kind) return null
+      if (latest.infrastructureRecovery.nextRetryAt > now) return null
+      return markInfrastructureRecoveryDispatched(latest, now)
+    })
     if (completionWins.has(sessionID)) return
-    if (saved.status !== "active" || saved.infrastructureRecovery?.nextRetryAt !== 0) return
+    if (!result || result.goal.status !== "active" || result.goal.infrastructureRecovery?.nextRetryAt !== 0) return
     const hook = hooks.event
     if (typeof hook !== "function") return
     await hook({

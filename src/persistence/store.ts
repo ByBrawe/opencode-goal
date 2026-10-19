@@ -589,3 +589,45 @@ export class GoalStore {
     }
   }
 }
+
+export type FreshGoalMutationResult = {
+  goal: GoalState
+  wrote: boolean
+}
+
+/**
+ * Apply a caller-owned mutation against the freshest persisted snapshot.
+ *
+ * Every plugin wrapper can observe host events and tool completions in
+ * parallel. A writer that loaded an older snapshot must not surface a
+ * GoalStoreConcurrencyError just because another wrapper committed first.
+ * Re-load and re-apply the mutation (including its id/revision/status guards)
+ * instead, while still propagating lock, integrity and live-replacement
+ * failures unchanged. The store-level generation check remains authoritative.
+ */
+export async function mutateGoal(
+  store: GoalStore,
+  sessionID: string,
+  mutate: (goal: GoalState) => GoalState | null | Promise<GoalState | null>,
+  options: { maxAttempts?: number; exhaustedMessage?: string } = {},
+): Promise<FreshGoalMutationResult | null> {
+  const maxAttempts = options.maxAttempts ?? 6
+  let lastStale: GoalStoreConcurrencyError | undefined
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const current = await store.load(sessionID)
+    if (!current) return null
+    const next = await mutate(current)
+    if (!next) return { goal: current, wrote: false }
+    try {
+      await store.save(next)
+      return { goal: next, wrote: true }
+    } catch (error) {
+      if (error instanceof GoalStoreConcurrencyError && error.kind === "stale_write") {
+        lastStale = error
+        continue
+      }
+      throw error
+    }
+  }
+  throw lastStale ?? new Error(options.exhaustedMessage ?? "Goal state kept changing while applying a fresh mutation")
+}

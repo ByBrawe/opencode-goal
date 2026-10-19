@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url"
 import os from "node:os"
 import path from "node:path"
 import { createGoal } from "../dist/domain/goal.js"
-import { GoalStore, GoalStoreConcurrencyError } from "../dist/persistence/store.js"
+import { GoalStore, GoalStoreConcurrencyError, mutateGoal } from "../dist/persistence/store.js"
 
 const worker = fileURLToPath(new URL("../scripts/store-concurrency-worker.mjs", import.meta.url))
 
@@ -246,6 +246,70 @@ test("stale snapshots cannot bypass generation checks through semantic no-op det
       (error) => error instanceof GoalStoreConcurrencyError && error.kind === "stale_write",
     )
     assert.equal((await store.load(sessionID)).storageGeneration, 2)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("mutateGoal rebases a stale mutation onto the freshest snapshot", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-fresh-mutation-"))
+  try {
+    const sessionID = "fresh-mutation-session"
+    const writer = new GoalStore(root)
+    const competitor = new GoalStore(root)
+    await writer.save(createGoal({ sessionID, objective: "rebase concurrent writes", now: 100 }))
+
+    let injected = false
+    const result = await mutateGoal(writer, sessionID, async (goal) => {
+      if (!injected) {
+        injected = true
+        const current = await competitor.load(sessionID)
+        await competitor.save({
+          ...current,
+          stopReason: "competing writer",
+          updatedAt: current.updatedAt + 1,
+        })
+      }
+      return {
+        ...goal,
+        constraints: [...(goal.constraints ?? []), "survived retry"],
+        updatedAt: Date.now(),
+      }
+    })
+
+    assert.ok(result?.wrote)
+    const persisted = await writer.load(sessionID)
+    assert.equal(persisted.stopReason, "competing writer")
+    assert.deepEqual(persisted.constraints, ["survived retry"])
+    assert.equal(persisted.storageGeneration, 3)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("mutateGoal stops after the bounded stale-write retry budget", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-fresh-mutation-budget-"))
+  try {
+    const sessionID = "fresh-mutation-budget-session"
+    const writer = new GoalStore(root)
+    const competitor = new GoalStore(root)
+    await writer.save(createGoal({ sessionID, objective: "bound retries", now: 100 }))
+
+    let attempts = 0
+    await assert.rejects(
+      () => mutateGoal(writer, sessionID, async (goal) => {
+        attempts += 1
+        const current = await competitor.load(sessionID)
+        await competitor.save({
+          ...current,
+          stopReason: `competing writer ${attempts}`,
+          updatedAt: current.updatedAt + attempts,
+        })
+        return { ...goal, stopReason: `mutation ${attempts}`, updatedAt: Date.now() }
+      }, { maxAttempts: 2, exhaustedMessage: "bounded retry budget exhausted" }),
+      (error) => error instanceof GoalStoreConcurrencyError && error.kind === "stale_write",
+    )
+    assert.equal(attempts, 2)
   } finally {
     await rm(root, { recursive: true, force: true })
   }

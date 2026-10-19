@@ -1,6 +1,6 @@
 import { pauseGoal, waitForUserGoal } from "../domain/goal.js"
 import type { GoalState } from "../domain/types.js"
-import { GoalStore } from "../persistence/store.js"
+import { GoalStore, mutateGoal } from "../persistence/store.js"
 import { reportBlocker } from "../runtime/blocker.js"
 import { runConfiguredChecks } from "../runtime/checks.js"
 import { addProgressNote } from "../runtime/progress.js"
@@ -215,12 +215,15 @@ export function createOpenCode2GoalWorkTools(input: {
         return await serialize(id, async () => {
           const current = await currentOwnedGoal(context)
           if ("rejection" in current) return response(current.rejection)
-          const next = addProgressNote(current.goal, {
-            summary: String(args?.summary ?? ""),
-            ...(typeof args?.next === "string" && args.next.trim() ? { next: args.next.trim() } : {}),
+          const result = await mutateGoal(current.store, id, (latest) => {
+            if (latest.status !== "active" || !ownerFor(id, latest)) return null
+            return addProgressNote(latest, {
+              summary: String(args?.summary ?? ""),
+              ...(typeof args?.next === "string" && args.next.trim() ? { next: args.next.trim() } : {}),
+            })
           })
-          await current.store.save(next)
-          return response("Checkpoint recorded. Note: checkpoint text is not completion evidence.", next)
+          if (!result?.wrote) return response("Rejected: the Goal changed before the checkpoint was recorded.")
+          return response("Checkpoint recorded. Note: checkpoint text is not completion evidence.", result.goal)
         })
       },
     },
@@ -240,14 +243,18 @@ export function createOpenCode2GoalWorkTools(input: {
           const current = await currentOwnedGoal(context)
           if ("rejection" in current) return response(current.rejection)
           await nativeProgress(context, "Verifying declared file evidence")
-          const checked = await recordFileEvidence(current.goal, {
-            root: current.directory,
-            requirementID: String(args?.requirementID ?? ""),
+          let summary: string | undefined
+          const result = await mutateGoal(current.store, id, async (latest) => {
+            if (latest.status !== "active" || !ownerFor(id, latest)) return null
+            const checked = await recordFileEvidence(latest, {
+              root: current.directory,
+              requirementID: String(args?.requirementID ?? ""),
+            })
+            summary = checked.evidence.summary
+            return checked.evidence.passed ? proveRequirementsFromEvidence(checked.goal, checked.evidence.id) : checked.goal
           })
-          let goal = checked.goal
-          if (checked.evidence.passed) goal = proveRequirementsFromEvidence(goal, checked.evidence.id)
-          await current.store.save(goal)
-          return response(checked.evidence.summary, goal)
+          if (!result?.wrote || summary === undefined) return response("Rejected: the Goal changed before file evidence could be recorded.")
+          return response(summary, result.goal)
         })
       },
     },
@@ -298,16 +305,19 @@ export function createOpenCode2GoalWorkTools(input: {
               if ("rejection" in current) {
                 return response("Completion not verified: goal changed, paused, or stopped while semantic verification was unavailable.")
               }
-              if (current.goal.id !== snapshot.id || current.goal.revision !== snapshot.revision) {
-                return response("Completion not verified: goal changed, paused, or stopped while semantic verification was unavailable.", current.goal)
-              }
-              const merged = settleCurrentProgress(mergeAuditEvaluation(current.goal, evaluated))
               const reason = `Independent semantic verification unavailable: ${error.message}`
-              const paused = pauseGoal(merged, reason)
-              await current.store.save(paused)
+              const result = await mutateGoal(current.store, id, (latest) => {
+                if (latest.status !== "active" || !ownerFor(id, latest)) return null
+                if (latest.id !== snapshot.id || latest.revision !== snapshot.revision) return null
+                const merged = settleCurrentProgress(mergeAuditEvaluation(latest, evaluated))
+                return pauseGoal(merged, reason)
+              })
+              if (!result?.wrote) {
+                return response("Completion not verified: goal changed, paused, or stopped while semantic verification was unavailable.", result?.goal ?? null)
+              }
               return response(
                 `Completion not verified: ${error.message}. Goal paused to prevent repeated verifier retries. Use /goal resume to retry after the verifier/provider recovers.`,
-                paused,
+                result.goal,
               )
             })
           }
@@ -322,19 +332,25 @@ export function createOpenCode2GoalWorkTools(input: {
           if ("rejection" in current) {
             return response("Completion rejected: goal changed, paused, or stopped while verification was running.")
           }
-          if (current.goal.id !== snapshot.id || current.goal.revision !== snapshot.revision) {
-            return response("Completion rejected: goal changed, paused, or stopped while verification was running.", current.goal)
-          }
           await nativeProgress(context, "Finalizing verified Goal completion")
-          const merged = settleCurrentProgress(mergeAuditEvaluation(current.goal, evaluated))
-          const result = completeGoal(merged, String(args?.summary ?? ""))
-          await current.store.save(result.goal)
-          const rejection = completionNotificationReason(result.goal, result.audit)
+          let completed: ReturnType<typeof completeGoal> | undefined
+          const result = await mutateGoal(current.store, id, (latest) => {
+            if (latest.status !== "active" || !ownerFor(id, latest)) return null
+            if (latest.id !== snapshot.id || latest.revision !== snapshot.revision) return null
+            const merged = settleCurrentProgress(mergeAuditEvaluation(latest, evaluated))
+            completed = completeGoal(merged, String(args?.summary ?? ""))
+            return completed.goal
+          })
+          const audit = completed?.audit
+          if (!result?.wrote || !audit) {
+            return response("Completion rejected: goal changed, paused, or stopped while verification was running.", result?.goal ?? current.goal)
+          }
+          const rejection = completionNotificationReason(result.goal, audit)
           if (rejection) notifyGoal(current.directory, result.goal, rejection)
           return response(
-            result.audit.ok
+            audit.ok
               ? "Goal completed with host and verifier-backed evidence."
-              : `Completion rejected:\n- ${result.audit.reasons.join("\n- ")}`,
+              : `Completion rejected:\n- ${audit.reasons.join("\n- ")}`,
             result.goal,
           )
         })
@@ -358,14 +374,17 @@ export function createOpenCode2GoalWorkTools(input: {
         return await serialize(id, async () => {
           const current = await currentOwnedGoal(context)
           if ("rejection" in current) return response(current.rejection)
-          const next = waitForUserGoal(current.goal, {
-            reason: String(args?.reason ?? ""),
-            ...(typeof args?.needed === "string" && args.needed.trim() ? { needed: args.needed.trim() } : {}),
+          const result = await mutateGoal(current.store, id, (latest) => {
+            if (latest.status !== "active" || !ownerFor(id, latest)) return null
+            return waitForUserGoal(latest, {
+              reason: String(args?.reason ?? ""),
+              ...(typeof args?.needed === "string" && args.needed.trim() ? { needed: args.needed.trim() } : {}),
+            })
           })
-          await current.store.save(next)
+          if (!result?.wrote) return response("Waiting-user rejected: the Goal changed before it could be persisted.")
           return response(
             "Goal is waiting for user input. End this assistant turn without more project work or polling; autonomous Goal continuation is asleep until the user resumes it.",
-            next,
+            result.goal,
           )
         })
       },
@@ -389,19 +408,22 @@ export function createOpenCode2GoalWorkTools(input: {
         return await serialize(id, async () => {
           const current = await currentOwnedGoal(context)
           if ("rejection" in current) return response(current.rejection)
-          const next = reportBlocker(current.goal, {
-            turnID: current.owner.messageID,
-            reason: String(args?.reason ?? ""),
-            ...(typeof args?.needed === "string" && args.needed.trim() ? { needed: args.needed.trim() } : {}),
-            ...(typeof args?.key === "string" && args.key.trim() ? { key: args.key.trim() } : {}),
+          const result = await mutateGoal(current.store, id, (latest) => {
+            if (latest.status !== "active" || !ownerFor(id, latest)) return null
+            return reportBlocker(latest, {
+              turnID: current.owner.messageID,
+              reason: String(args?.reason ?? ""),
+              ...(typeof args?.needed === "string" && args.needed.trim() ? { needed: args.needed.trim() } : {}),
+              ...(typeof args?.key === "string" && args.key.trim() ? { key: args.key.trim() } : {}),
+            })
           })
-          await current.store.save(next)
-          const count = next.blockerAudit?.consecutiveTurns ?? 0
+          if (!result?.wrote) return response("Rejected: the Goal changed before the blocker was recorded.")
+          const count = result.goal.blockerAudit?.consecutiveTurns ?? 0
           return response(
-            next.status === "blocked"
+            result.goal.status === "blocked"
               ? `Goal blocked after ${count} repeated blocker turns.`
               : `Blocker recorded (${count}/3). Keep working on other useful paths if possible.`,
-            next,
+            result.goal,
           )
         })
       },

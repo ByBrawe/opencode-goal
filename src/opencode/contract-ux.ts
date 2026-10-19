@@ -1,5 +1,5 @@
 import { replaceGoalConstraints } from "../domain/goal.js"
-import { GoalStore } from "../persistence/store.js"
+import { GoalStore, mutateGoal } from "../persistence/store.js"
 import { parseGoalCommand } from "./command.js"
 import { continuationPrompt } from "./prompt.js"
 
@@ -36,11 +36,10 @@ export function installGoalContractUX(input: any, hooks: any): void {
     await commandHook(event, output)
 
     if ((parsed.action === "create" || parsed.action === "edit") && parsed.constraints.length) {
-      const current = await store.load(event.sessionID)
-      if (!current) throw new Error("Goal disappeared while applying Goal Contract constraints")
       const owned = textFromParts(output.parts)
-      const next = replaceGoalConstraints(current, parsed.constraints)
-      await store.save(next)
+      const result = await mutateGoal(store, event.sessionID, (current) => replaceGoalConstraints(current, parsed.constraints))
+      if (!result) throw new Error("Goal disappeared while applying Goal Contract constraints")
+      const next = result.goal
       const shown = next.status === "active"
         ? continuationPrompt(next)
         : `${owned}\n\nGoal Contract constraints:\n${next.constraints?.map((item) => `- ${item}`).join("\n") || "- none"}`

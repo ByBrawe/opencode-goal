@@ -1,5 +1,6 @@
 import type { EvidenceRecord, GoalState } from "../domain/types.js"
 import type { SemanticRequirementResult } from "./semantic.js"
+import { explicitFileTargets, requestsDeletion, needsConcreteDeliverable } from "./semantic-targets.js"
 
 export interface ProcessTurnExpectation {
   turns: number
@@ -85,20 +86,81 @@ function runtimeMetric(records: EvidenceRecord[], key: "turns" | "mutations"): n
  * semantic objective; requiring identical requirement IDs would break
  * legitimate shared evidence. Runtime counters never suffice.
  */
+function normalizedPath(value: string | undefined): string {
+  return String(value ?? "").replace(/\\/g, "/").replace(/^\.\/+/, "").toLowerCase()
+}
+
 function hasConcreteResultEvidence(
   goal: GoalState,
+  requirementText: string,
   result: SemanticRequirementResult,
   records: EvidenceRecord[],
 ): boolean {
-  const fileExcerpt = result.evidence.some((item) => Boolean(item.path?.trim() && item.quote?.trim()))
-  if (fileExcerpt) return true
-  const refs = new Set(result.hostEvidenceIDs)
-  return records.some((item) =>
-    refs.has(item.id)
+  const targets = explicitFileTargets(requirementText).map(normalizedPath)
+  const deletionOnly = requestsDeletion(requirementText)
+    && !/\b(?:implement|create|update|write|build|fix|add|refactor)\b/i.test(requirementText)
+  const quotedPaths = new Set(result.evidence
+    .filter((item) => item.path?.trim() && item.quote?.trim())
+    .map((item) => normalizedPath(item.path)))
+  const ids = new Set(result.hostEvidenceIDs)
+  const current = records.filter((item) =>
+    ids.has(item.id)
     && item.goalRevision === goal.revision
     && item.trust === "host"
-    && item.passed === true
-    && (item.kind === "file" || item.kind === "command"),
+    && item.passed === true,
+  )
+  // Merely citing a passing host check is not enough. Bind it to its
+  // structured file/command contract; runtime counters have neither.
+  const provedFiles = current.filter((item) => {
+    if (item.kind !== "file" || !item.source || item.metadata?.absent === true) return false
+    return goal.requirements.some((requirement) =>
+      requirement.verification === "file"
+      && requirement.file
+      && normalizedPath(requirement.file) === normalizedPath(item.source)
+      && item.requirementIDs.includes(requirement.id)
+      && requirement.status === "proven"
+      && item.metadata?.exists !== false
+      && item.metadata?.regularFile !== false,
+    )
+  })
+  const absence = current.filter((item) =>
+    item.kind === "file"
+    && item.metadata?.absent === true
+    && item.requirementIDs.includes(result.requirementID)
+    && item.source,
+  )
+
+  // Named deliverables require proof of THOSE paths, not just any README
+  // contract, a generic npm test, or a host runtime/turn count.
+  if (targets.length > 0) {
+    return targets.every((target) =>
+      deletionOnly
+        ? absence.some((item) => normalizedPath(item.source) === target)
+        : quotedPaths.has(target) || provedFiles.some((item) => normalizedPath(item.source) === target),
+    )
+  }
+
+  // Unnamed deletion has no inspectable negative target; do not infer it from
+  // a command or an unrelated file. Explicit named deletions use host absence.
+  if (deletionOnly) return false
+  if (quotedPaths.size > 0 || provedFiles.length > 0) return true
+
+  // A direct check can prove a test/lint/build-only objective if the passed
+  // command actually implements the named verification. "true" cannot prove
+  // an implementation, and a test pass alone cannot prove a named artifact.
+  const testOnly = /\b(?:tests?|lint|typecheck|checks?|build|compile|ci)\b/i.test(requirementText)
+    && !/\b(?:implement|create|delete|remove|update|write|modify|fix|refactor)\b/i.test(requirementText)
+  if (!testOnly) return false
+  return current.some((item) =>
+    item.kind === "command"
+    && item.source
+    && /\b(?:test|lint|check|build|compile|tsc)\b/i.test(item.source)
+    && goal.requirements.some((requirement) =>
+      requirement.verification === "command"
+      && requirement.status === "proven"
+      && requirement.command === item.source
+      && item.requirementIDs.includes(requirement.id),
+    ),
   )
 }
 
@@ -136,12 +198,13 @@ export function guardSemanticProcessResults(
     const requirement = requirements.get(result.requirementID)
     if (!requirement || requirement.verification !== "semantic") return result
     const expectation = inferProcessTurnExpectation(requirement.text)
-    if (!expectation) {
-      if (!hasConcreteResultEvidence(goal, result, hostEvidenceRecords)) {
-        return guarded(result, "unknown", "non-process requirement has only runtime turn/progress counters or an unsupported host reference; real file or passing command/file evidence is required.")
-      }
-      return result
+    // A turn requirement can coexist with an actual deliverable. Proving
+    // cadence alone must not silently prove an implementation or deleted file.
+    const needsArtifact = !expectation || needsConcreteDeliverable(requirement.text, expectation.requireMutationPerTurn)
+    if (needsArtifact && !hasConcreteResultEvidence(goal, requirement.text, result, hostEvidenceRecords)) {
+      return guarded(result, "unknown", "non-process deliverable has only runtime counters, unrelated checks or unsupported evidence; real target-file, host absence, or directly linked verification evidence is required.")
     }
+    if (!expectation) return result
 
     if (expectation.requireMutationPerTurn) {
       if (mutations === undefined) {

@@ -151,6 +151,49 @@ test("V2 semantic verifier is child-session bound, read-only, and host-corrobora
   }
 })
 
+
+test("V2 named deletion uses current host absence and rejects recreation during independent verification", async () => {
+  for (const recreate of [false, true]) {
+    const root = await mkdtemp(path.join(os.tmpdir(), "goal-v2-delete-"))
+    const goal = createGoal({ sessionID: "parent", objective: "delete obsolete.txt" })
+    let runtime
+    const session = {
+      async create() { return { id: "verifier-delete-child" } },
+      async prompt(input) {
+        if (input.resume === false) return { id: "verifier-delete-message" }
+        const request = verificationRequest(input.text)
+        const absenceID = input.text.match(/- \[(goal-absent-r\d+-[a-f0-9]+)\] Host verified/)?.[1]
+        assert.ok(absenceID, "native verifier must see a host-observed named absence, not runtime counters")
+        const accepted = await runtime.resultTool.execute({
+          auditToken: request.auditToken,
+          results: request.requirements.map((item) => ({
+            requirementID: item.id, verdict: "proven",
+            reason: "Host confirms obsolete.txt is absent.",
+            evidence: [], hostEvidenceIDs: [absenceID],
+          })),
+        }, { sessionID: "verifier-delete-child" })
+        assert.equal(accepted.content, "Semantic verifier result accepted.")
+        if (recreate) await writeFile(path.join(root, "obsolete.txt"), "recreated while verifying")
+        return { id: "verifier-delete-message" }
+      },
+      async wait() { return { status: "idle" } },
+      async delete() {},
+      async interrupt() {},
+    }
+    runtime = createOpenCode2SemanticVerifierRuntime(session, async () => root, { timeoutMs: 2_000 })
+    try {
+      if (recreate) {
+        await assert.rejects(() => runtime.verify("parent", goal), /no longer absent/)
+      } else {
+        const verified = await runtime.verify("parent", goal)
+        assert.equal(verified.requirements.find((item) => item.verification === "semantic")?.status, "proven")
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+})
+
 test("V2 semantic verifier rejects hallucinated quotes and leaves completion unproven", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-v2-semantic-bad-"))
   try {

@@ -195,10 +195,10 @@ jobs:
           npm ls @bybrawe/opencode-goal @opencode/cli @opentui/core @opentui/solid solid-js
           node --input-type=module <<'JS'
           import assert from 'node:assert/strict'
-          import { createRequire } from 'node:module'
-          const require = createRequire(import.meta.url)
-          assert.equal(require('@opentui/core/package.json').version, '0.7.0')
-          assert.equal(require('@opentui/solid/package.json').version, '0.7.0')
+          import { readFileSync } from 'node:fs'
+          const installedVersion = (name) => JSON.parse(readFileSync('node_modules/@opentui/' + name + '/package.json', 'utf8')).version
+          assert.equal(installedVersion('core'), '0.7.0')
+          assert.equal(installedVersion('solid'), '0.7.0')
           const { default: tui } = await import('@bybrawe/opencode-goal/tui')
           assert.equal(tui.id, 'opencode-goal')
           assert.equal(typeof tui.setup, 'function')

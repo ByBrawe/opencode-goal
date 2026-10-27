@@ -20,7 +20,7 @@ permissions:
 
 jobs:
   current-stable-v2:
-    name: OpenCode 2.0.16 stable lifecycle
+    name: Pinned OpenCode 2.0.16 legacy compatibility lifecycle
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -85,5 +85,37 @@ jobs:
       - name: Prove pause resume edit clear and re-arming on a restarted old session
         env:
           OPENCODE2_EXPECTED_VERSION: "2."
+          OPENCODE2_REARM_SAME_SESSION_CANARY: "1"
+        run: node scripts/opencode2-direct-lifecycle-canary.mjs
+
+  pinned-v2-1-4-real-native:
+    name: Pinned OpenCode 2.1.4 real Goal lifecycle and restart
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+      - name: Install repository dependencies and build native plugin
+        run: |
+          # Goal does not commit package-lock.json; npm ci is invalid here.
+          npm install
+          npm run build
+      - name: Install exact 2.1.4 host and print version evidence
+        run: |
+          npm install -g @opencode/cli@2.1.4
+          opencode2 --version
+          node -e 'const p=require("./package.json"); console.log("Goal", p.version, "native SDK", p.dependencies["@opencode/plugin"]);'
+          opencode2 --version | grep -F "2.1.4"
+      - name: Test V2 Goal host contract, waiting-user and ownership
+        env:
+          OPENCODE2_EXPECTED_VERSION: "2.1.4"
+        run: node scripts/opencode2-current-stable-canary.mjs
+      - name: Test explicit native lifecycle and same-session re-arm after restart
+        env:
+          OPENCODE2_EXPECTED_VERSION: "2.1.4"
           OPENCODE2_REARM_SAME_SESSION_CANARY: "1"
         run: node scripts/opencode2-direct-lifecycle-canary.mjs

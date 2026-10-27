@@ -242,7 +242,8 @@ test("passing current host file/command checks are admissible but stale or runti
   assert.equal(guardSemanticProcessResults(target, given, [{ ...current, goalRevision: 0 }])[0].verdict, "unknown")
   assert.equal(guardSemanticProcessResults(target, given, [{ ...current, passed: false }])[0].verdict, "unknown")
   assert.equal(guardSemanticProcessResults(target, given, [{ ...current, kind: "runtime" }])[0].verdict, "unknown")
-  assert.equal(guardSemanticProcessResults(target, given, [{ ...current, requirementIDs: ["some-other-requirement"] }])[0].verdict, "unknown")
+  assert.equal(guardSemanticProcessResults(target, given, [{ ...current, requirementIDs: ["shared-file-requirement"] }])[0].verdict, "proven", "a passing file/command contract may also corroborate the semantic objective")
+  assert.equal(guardSemanticProcessResults(target, [{ ...given[0], hostEvidenceIDs: [] }], [current])[0].verdict, "unknown", "uncited host checks do not authorize completion")
 })
 
 

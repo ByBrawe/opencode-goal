@@ -74,7 +74,7 @@ test("hung semantic verifier stays bounded across one fresh timeout retry", asyn
   assert.equal(deleted, 2, "each verifier child must be cleaned up")
 })
 
-test("promptAsync dispatch waits for verifier tool submission without blocking on session.prompt", async () => {
+test("promptAsync dispatch waits for verifier tool submission without treating runtime-only claims as completed work", async () => {
   let runtime
   let promptCalls = 0
   let promptAsyncCalls = 0
@@ -97,7 +97,7 @@ test("promptAsync dispatch waits for verifier tool submission without blocking o
             results: request.requirements.map((requirement) => ({
               requirementID: requirement.id,
               verdict: "proven",
-              reason: "Host runtime evidence establishes the requested test verdict.",
+              reason: "Uncorroborated runtime turn count does not establish implementation.",
               evidence: [],
               hostEvidenceIDs: ["goal-runtime-turns-r1"],
             })),
@@ -117,7 +117,7 @@ test("promptAsync dispatch waits for verifier tool submission without blocking o
   runtime = createSemanticVerifierRuntime(client, process.cwd(), { timeoutMs: 250 })
   const result = await runtime.verify("parent", semanticGoal(), { currentMessageID: "executor-current" })
 
-  assert.equal(result.requirements[0].status, "proven")
+  assert.equal(result.requirements[0].status, "unknown", "transport success cannot authorize general completion using only runtime counters")
   assert.equal(promptAsyncCalls, 1)
   assert.equal(promptCalls, 0)
   assert.equal(deleted, 1)

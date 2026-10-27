@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url"
 import os from "node:os"
 import path from "node:path"
 import { createGoal } from "../dist/domain/goal.js"
-import { GoalStore, GoalStoreConcurrencyError, mutateGoal } from "../dist/persistence/store.js"
+import { GoalStore, GoalStoreConcurrencyError, GoalStoreIntegrityError, mutateGoal } from "../dist/persistence/store.js"
 
 const worker = fileURLToPath(new URL("../scripts/store-concurrency-worker.mjs", import.meta.url))
 
@@ -293,6 +293,80 @@ test("fresh-snapshot mutation cannot bypass bounded stale generation retries", a
     }, { maxAttempts: 2 }), (error) => error instanceof GoalStoreConcurrencyError && error.kind === "stale_write")
     assert.equal(attempts, 2)
     assert.equal((await core.load(sessionID)).stopReason, "external 2")
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("mutateGoal rejects non-positive, non-integer and unbounded retry budgets before loading", async () => {
+  const goal = createGoal({ sessionID: "invalid-budget", objective: "validate attempts" })
+  for (const maxAttempts of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, 9]) {
+    let loads = 0
+    const store = {
+      async load() { loads += 1; return goal },
+      async save() { throw new Error("must not save") },
+    }
+    await assert.rejects(
+      () => mutateGoal(store, goal.sessionID, (current) => current, { maxAttempts }),
+      RangeError,
+    )
+    assert.equal(loads, 0, `maxAttempts=${String(maxAttempts)} must fail before loading`)
+  }
+})
+
+test("mutateGoal propagates lock, integrity and live-replacement failures without retrying", async () => {
+  const goal = createGoal({ sessionID: "non-stale-errors", objective: "propagate errors" })
+  const failures = [
+    new GoalStoreConcurrencyError("lock_timeout", "lock is owned by another process"),
+    new GoalStoreConcurrencyError("lock_lost", "process lease token changed"),
+    new GoalStoreConcurrencyError("live_replacement", "refused to replace unfinished Goal"),
+    new GoalStoreIntegrityError("goal.json", "invalid_state", "corrupt snapshot"),
+  ]
+  for (const failure of failures) {
+    let saves = 0
+    const store = {
+      async load() { return goal },
+      async save() { saves += 1; throw failure },
+    }
+    await assert.rejects(
+      () => mutateGoal(store, goal.sessionID, (current) => ({ ...current, stopReason: "must not persist" })),
+      (error) => error === failure,
+    )
+    assert.equal(saves, 1, `${failure.name}/${failure.kind} must not be retried`)
+  }
+})
+
+test("mutateGoal re-applies a re-entrant mutator to each fresh snapshot without duplicating updates", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "goal-mutation-reentrant-"))
+  try {
+    const sessionID = "session-reentrant"
+    const writer = new GoalStore(root)
+    const other = new GoalStore(root)
+    await writer.save(createGoal({ sessionID, objective: "re-entrant mutation" }))
+    let collisions = 2
+    let attempts = 0
+    const result = await mutateGoal(writer, sessionID, async (goal) => {
+      attempts += 1
+      if (collisions > 0) {
+        collisions -= 1
+        const latest = await other.load(sessionID)
+        await other.save({
+          ...latest,
+          stopReason: `external ${attempts}`,
+          updatedAt: latest.updatedAt + attempts,
+        })
+      }
+      return {
+        ...goal,
+        constraints: [...(goal.constraints ?? []), "single fresh update"],
+        updatedAt: Date.now(),
+      }
+    })
+    assert.equal(result?.wrote, true)
+    assert.equal(attempts, 3)
+    const persisted = await writer.load(sessionID)
+    assert.deepEqual(persisted.constraints, ["single fresh update"], "a re-entrant mutator must not duplicate its effect")
+    assert.equal(persisted.stopReason, "external 2")
   } finally {
     await rm(root, { recursive: true, force: true })
   }

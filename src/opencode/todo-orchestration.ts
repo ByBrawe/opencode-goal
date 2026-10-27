@@ -1,5 +1,5 @@
 import type CorePlugin from "./plugin.js"
-import { GoalStore, GoalStoreConcurrencyError } from "../persistence/store.js"
+import { GoalStore, mutateGoal } from "../persistence/store.js"
 import { parseGoalCommand } from "./command.js"
 
 type PluginInput = Parameters<typeof CorePlugin>[0]
@@ -11,18 +11,11 @@ export function installGoalTodoOrchestration(input: PluginInput, hooks: PluginHo
   if (typeof commandHook !== "function") return
 
   async function clearTodoBinding(sessionID: string, goalID: string, revision: number) {
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      const goal = await store.load(sessionID)
-      if (!goal || goal.id !== goalID || goal.revision !== revision || !goal.todoPlan) return
+    await mutateGoal(store, sessionID, (goal) => {
+      if (goal.id !== goalID || goal.revision !== revision || !goal.todoPlan) return null
       const { todoPlan: _todoPlan, ...next } = goal
-      try {
-        await store.save(next)
-        return
-      } catch (error) {
-        if (error instanceof GoalStoreConcurrencyError && error.kind === "stale_write" && attempt === 0) continue
-        throw error
-      }
-    }
+      return next
+    }, { maxAttempts: 2 })
   }
 
   hooks["command.execute.before"] = async (event: any, output: any) => {

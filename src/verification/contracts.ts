@@ -19,3 +19,10 @@ export async function verifyDeclaredFiles(goal: GoalState, root: string): Promis
   }
   return next
 }
+
+/** Stable pass/fail identity for declared file contracts after a re-read. */
+export function fileRequirementOutcomes(goal: GoalState): string {
+  return JSON.stringify(goal.requirements
+    .filter((item) => item.verification === "file")
+    .map((item) => [item.id, item.status]))
+}

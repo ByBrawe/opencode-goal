@@ -62,3 +62,57 @@ export function completeGoal(goal: GoalState, summary: string, now = Date.now())
     audit,
   }
 }
+
+/**
+ * Identity of the completion-relevant Goal snapshot.
+ *
+ * A verifier/check result is only valid for the exact requirements, evidence,
+ * progress, revision turn baseline and current Todo plan it was computed from.
+ * Notes, timestamps and non-turn usage telemetry are intentionally excluded so
+ * unrelated writers can still merge without forcing a verification replay.
+ */
+export function completionSnapshotIdentity(goal: GoalState): string {
+  return JSON.stringify({
+    id: goal.id,
+    revision: goal.revision,
+    status: goal.status,
+    completionMode: goal.completionMode ?? "verified",
+    requirements: goal.requirements.map((item) => ({
+      id: item.id,
+      text: item.text,
+      required: item.required,
+      status: item.status,
+      evidenceIDs: item.evidenceIDs,
+      verification: item.verification,
+      command: item.command ?? null,
+      file: item.file ?? null,
+      contains: item.contains ?? null,
+    })),
+    evidence: goal.evidence.map((item) => ({
+      id: item.id,
+      kind: item.kind,
+      trust: item.trust,
+      goalRevision: item.goalRevision,
+      requirementIDs: item.requirementIDs,
+      source: item.source ?? null,
+      passed: item.passed ?? null,
+      metadata: item.metadata ?? null,
+    })),
+    checks: goal.checks,
+    usageTurns: goal.usage.turns,
+    revisionTurnBaseline: goal.revisionTurnBaseline ?? 0,
+    progressRevision: goal.progressRevision,
+    progressFingerprints: goal.progressFingerprints ?? [],
+    todoPlan: goal.todoPlan
+      ? {
+          goalRevision: goal.todoPlan.goalRevision,
+          digest: goal.todoPlan.digest,
+          total: goal.todoPlan.total,
+          pending: goal.todoPlan.pending,
+          inProgress: goal.todoPlan.inProgress,
+          completed: goal.todoPlan.completed,
+          cancelled: goal.todoPlan.cancelled,
+        }
+      : null,
+  })
+}

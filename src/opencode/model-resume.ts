@@ -1,7 +1,7 @@
 import { tool } from "@opencode-ai/plugin/tool"
 import type CorePlugin from "./plugin.js"
 import { resumeGoal } from "../domain/goal.js"
-import { GoalStore, GoalStoreIntegrityError } from "../persistence/store.js"
+import { GoalStore, GoalStoreIntegrityError, mutateGoal } from "../persistence/store.js"
 
 type PluginInput = Parameters<typeof CorePlugin>[0]
 type PluginHooks = Awaited<ReturnType<typeof CorePlugin>>
@@ -69,21 +69,19 @@ export function installGoalModelResume(input: PluginInput, hooks: PluginHooks): 
       const sessionID = properties.sessionID ?? properties.info?.sessionID ?? properties.part?.sessionID
 
       if (type === "session.idle" && typeof sessionID === "string" && pendingResume.delete(sessionID)) {
-        let goal
         try {
-          goal = await store.load(sessionID)
+          await mutateGoal(store, sessionID, (latest) => {
+            if (latest.status !== "paused" && latest.status !== "waiting_user") return null
+            return {
+              ...resumeGoal(latest),
+              // The just-finished assistant turn only routed natural-language
+              // intent to this control tool; it was not a Goal-owned work turn.
+              // Exempt that idle boundary, then let core dispatch real ownership.
+              skipNextStallCheck: true,
+            }
+          })
         } catch (error) {
           if (!(error instanceof GoalStoreIntegrityError)) throw error
-        }
-
-        if (goal?.status === "paused" || goal?.status === "waiting_user") {
-          await store.save({
-            ...resumeGoal(goal),
-            // The just-finished assistant turn only routed natural-language
-            // intent to this control tool; it was not a Goal-owned work turn.
-            // Exempt that idle boundary, then let core dispatch real ownership.
-            skipNextStallCheck: true,
-          })
         }
       }
 

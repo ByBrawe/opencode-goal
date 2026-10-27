@@ -5,6 +5,7 @@ import os from "node:os"
 import path from "node:path"
 import OpenCodeGoalPlugin from "../dist/legacy-loader.js"
 import { GoalStore } from "../dist/persistence/store.js"
+import { createGoal, editGoal } from "../dist/domain/goal.js"
 
 async function tick() {
   await new Promise((resolve) => setTimeout(resolve, 0))
@@ -146,6 +147,113 @@ test("foreground V1 chat survives competing storage writer without losing either
     assert.equal(goal.stopReason, "parallel writer", "competing writer must survive rebasing")
     assert.deepEqual(goal.execution, { agent: "build", model: { providerID: "p", modelID: "m" } })
     assert.equal(goal.storageGeneration, 3)
+  } finally {
+    GoalStore.prototype.load = originalLoad
+    GoalStore.prototype.save = originalSave
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("foreground V1 steering rejects a Goal revision changed during retry", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-chat-changed-revision-"))
+  const originalLoad = GoalStore.prototype.load
+  const originalSave = GoalStore.prototype.save
+  let armed = false
+  let injected = false
+
+  GoalStore.prototype.load = async function (sessionID, ...rest) {
+    const snapshot = await originalLoad.call(this, sessionID, ...rest)
+    if (armed && !injected && snapshot && sessionID === "session-1") {
+      injected = true
+      const competitor = new GoalStore(root)
+      const current = await originalLoad.call(competitor, sessionID)
+      const changed = editGoal(current, { objective: "new objective from a competing edit", now: current.updatedAt + 1 })
+      await originalSave.call(competitor, {
+        ...changed,
+        execution: { agent: "plan", model: { providerID: "other", modelID: "other" } },
+      })
+    }
+    return snapshot
+  }
+  try {
+    const fake = fakeClient()
+    const hooks = await OpenCodeGoalPlugin({ client: fake.client, directory: root })
+    const output = await createGoalThroughCommand(hooks)
+    await hooks["chat.message"](
+      { sessionID: "session-1", messageID: "user-r1", agent: "build", model: { providerID: "p", modelID: "m" } },
+      { message: { id: "user-r1" }, parts: output.parts },
+    )
+
+    armed = true
+    await hooks["chat.message"](
+      { sessionID: "session-1", messageID: "user-r2", agent: "steer", model: { providerID: "steer", modelID: "steer" } },
+      { message: { id: "user-r2" }, parts: [{ type: "text", text: "steering while another writer edits the Goal" }] },
+    )
+
+    assert.equal(injected, true, "the changed-revision write must be injected")
+    const goal = await readOnlyGoal(root)
+    assert.equal(goal.revision, 2)
+    assert.equal(goal.objective, "new objective from a competing edit")
+    assert.deepEqual(
+      goal.execution,
+      { agent: "plan", model: { providerID: "other", modelID: "other" } },
+      "the previous turn's execution context must not attach to a changed revision",
+    )
+  } finally {
+    GoalStore.prototype.load = originalLoad
+    GoalStore.prototype.save = originalSave
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("foreground V1 steering rejects a new Goal created in the same session", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-chat-new-goal-"))
+  const originalLoad = GoalStore.prototype.load
+  const originalSave = GoalStore.prototype.save
+  let armed = false
+  let injected = false
+
+  GoalStore.prototype.load = async function (sessionID, ...rest) {
+    const snapshot = await originalLoad.call(this, sessionID, ...rest)
+    if (armed && !injected && snapshot && sessionID === "session-1") {
+      injected = true
+      const competitor = new GoalStore(root)
+      const current = await originalLoad.call(competitor, sessionID)
+      await originalSave.call(competitor, {
+        ...current,
+        status: "completed",
+        completionSummary: "completed by a competing writer",
+        updatedAt: current.updatedAt + 1,
+      })
+      await originalSave.call(competitor, createGoal({
+        sessionID,
+        objective: "fresh Goal in the same session",
+        now: current.updatedAt + 2,
+      }))
+    }
+    return snapshot
+  }
+  try {
+    const fake = fakeClient()
+    const hooks = await OpenCodeGoalPlugin({ client: fake.client, directory: root })
+    const output = await createGoalThroughCommand(hooks)
+    await hooks["chat.message"](
+      { sessionID: "session-1", messageID: "user-r1", agent: "build", model: { providerID: "p", modelID: "m" } },
+      { message: { id: "user-r1" }, parts: output.parts },
+    )
+
+    armed = true
+    await hooks["chat.message"](
+      { sessionID: "session-1", messageID: "user-r2", agent: "steer", model: { providerID: "steer", modelID: "steer" } },
+      { message: { id: "user-r2" }, parts: [{ type: "text", text: "steering after a new Goal replaced the old one" }] },
+    )
+
+    assert.equal(injected, true, "the new Goal write must be injected")
+    const goal = await new GoalStore(root).load("session-1")
+    assert.equal(goal.objective, "fresh Goal in the same session")
+    assert.equal(goal.status, "active")
+    assert.equal(goal.execution, undefined, "the previous Goal turn's execution context must not attach to a new Goal")
+    assert.equal(goal.progressNotes.length, 0)
   } finally {
     GoalStore.prototype.load = originalLoad
     GoalStore.prototype.save = originalSave

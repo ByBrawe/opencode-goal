@@ -1,6 +1,6 @@
 import type CorePlugin from "./plugin.js"
 import type { GoalState } from "../domain/types.js"
-import { GoalStore, GoalStoreConcurrencyError } from "../persistence/store.js"
+import { GoalStore, mutateGoal } from "../persistence/store.js"
 import { clearObservedModelContextUsage, modelContextCompactionReason } from "../runtime/model-context.js"
 import {
   fatalProviderReason,
@@ -20,11 +20,6 @@ type PromptOverflowAttempt = {
   goalID: string
   revision: number
   baselineTurns: number
-}
-
-type FreshMutationResult = {
-  goal: GoalState
-  wrote: boolean
 }
 
 function eventSessionID(input: any): string | undefined {
@@ -61,37 +56,6 @@ function clearOverflowRecovery(goal: GoalState, now = Date.now()): GoalState {
   return clearObservedModelContextUsage({ ...rest, status: "active" as const, skipNextStallCheck: true, updatedAt: now }, now)
 }
 
-/**
- * Host events and wrapper coordinators can persist the same Goal in adjacent
- * microtasks. Re-load and retry stale generation writes instead of allowing a
- * recovery transition to disappear or surface GoalStoreConcurrencyError.
- */
-async function mutateFreshGoal(
-  store: GoalStore,
-  sessionID: string,
-  mutate: (goal: GoalState) => GoalState | null,
-  maxAttempts = 6,
-): Promise<FreshMutationResult | null> {
-  let lastStale: GoalStoreConcurrencyError | undefined
-  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    const current = await store.load(sessionID)
-    if (!current) return null
-    const next = mutate(current)
-    if (!next) return { goal: current, wrote: false }
-    try {
-      await store.save(next)
-      return { goal: next, wrote: true }
-    } catch (error) {
-      if (error instanceof GoalStoreConcurrencyError && error.kind === "stale_write") {
-        lastStale = error
-        continue
-      }
-      throw error
-    }
-  }
-  throw lastStale ?? new Error("Goal state kept changing while applying host-limit recovery")
-}
-
 export function installHostLimitHandling(input: PluginInput, hooks: PluginHooks): void {
   if (typeof hooks.event !== "function") return
   const originalEvent = hooks.event
@@ -101,7 +65,7 @@ export function installHostLimitHandling(input: PluginInput, hooks: PluginHooks)
   const overflowAttempts = new Map<string, PromptOverflowAttempt>()
 
   async function pauseOverflow(sessionID: string, attempt: PromptOverflowAttempt, reason: string): Promise<boolean> {
-    const result = await mutateFreshGoal(store, sessionID, (latest) => {
+    const result = await mutateGoal(store, sessionID, (latest) => {
       if (!sameAttempt(latest, attempt) || latest.status !== "active") return null
       return pauseForFatalProviderError(latest, overflowFailureReason(reason))
     })
@@ -134,7 +98,7 @@ export function installHostLimitHandling(input: PluginInput, hooks: PluginHooks)
     // Keep the recovery barrier active until the cleared state is durably saved.
     // A session.idle emitted between summarize() completion and this save must not
     // be allowed to dispatch the pre-compaction oversized history again.
-    const cleared = await mutateFreshGoal(store, sessionID, (latest) => {
+    const cleared = await mutateGoal(store, sessionID, (latest) => {
       if (!sameAttempt(latest, attempt) || latest.status !== "active") return null
       return clearOverflowRecovery(latest)
     })
@@ -161,7 +125,7 @@ export function installHostLimitHandling(input: PluginInput, hooks: PluginHooks)
       await originalAutocontinue(event, output)
       const sessionID = typeof event?.sessionID === "string" ? event.sessionID : undefined
       if (!sessionID) return
-      await mutateFreshGoal(store, sessionID, (goal) => {
+      await mutateGoal(store, sessionID, (goal) => {
         if (goal.status !== "active") return null
         const context = goal.execution?.modelContext
         if (!context || (context.lastRequestTokens === undefined && context.lastInputTokens === undefined)) return null
@@ -193,7 +157,7 @@ export function installHostLimitHandling(input: PluginInput, hooks: PluginHooks)
 
         recoveringOverflow.add(sessionID)
         let freshAttempt: PromptOverflowAttempt | undefined
-        const marked = await mutateFreshGoal(store, sessionID, (latest) => {
+        const marked = await mutateGoal(store, sessionID, (latest) => {
           if (latest.status !== "active") return null
           const freshReason = modelContextCompactionReason(latest)
           if (!freshReason) return null
@@ -223,7 +187,7 @@ export function installHostLimitHandling(input: PluginInput, hooks: PluginHooks)
     if (sessionID && type === "session.status") {
       const reason = hostUsageLimitReason(properties.status)
       if (reason) {
-        const limited = await mutateFreshGoal(store, sessionID, (goal) => goal.status === "active" ? markUsageLimited(goal, reason) : null)
+        const limited = await mutateGoal(store, sessionID, (goal) => goal.status === "active" ? markUsageLimited(goal, reason) : null)
         if (limited?.wrote) await abortSession(input.client, sessionID)
         await originalEvent(eventInput)
         return
@@ -245,7 +209,7 @@ export function installHostLimitHandling(input: PluginInput, hooks: PluginHooks)
         if (goal?.status === "active") {
           const previous = overflowAttempts.get(sessionID)
           if (previous && sameAttempt(goal, previous) && goal.usage.turns <= previous.baselineTurns) {
-            const paused = await mutateFreshGoal(store, sessionID, (latest) => {
+            const paused = await mutateGoal(store, sessionID, (latest) => {
               if (latest.status !== "active" || !sameAttempt(latest, previous) || latest.usage.turns > previous.baselineTurns) return null
               return pauseForFatalProviderError(latest, overflowFailureReason(overflowReason))
             })
@@ -257,7 +221,7 @@ export function installHostLimitHandling(input: PluginInput, hooks: PluginHooks)
           } else {
             recoveringOverflow.add(sessionID)
             let freshAttempt: PromptOverflowAttempt | undefined
-            const marked = await mutateFreshGoal(store, sessionID, (latest) => {
+            const marked = await mutateGoal(store, sessionID, (latest) => {
               if (latest.status !== "active") return null
               freshAttempt = {
                 goalID: latest.id,
@@ -293,7 +257,7 @@ export function installHostLimitHandling(input: PluginInput, hooks: PluginHooks)
 
       const reason = fatalProviderReason(properties.error)
       if (reason) {
-        const paused = await mutateFreshGoal(store, sessionID, (goal) => goal.status === "active" ? pauseForFatalProviderError(goal, reason) : null)
+        const paused = await mutateGoal(store, sessionID, (goal) => goal.status === "active" ? pauseForFatalProviderError(goal, reason) : null)
         if (paused?.wrote) await abortSession(input.client, sessionID)
         await originalEvent(eventInput)
         return

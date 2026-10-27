@@ -1,7 +1,7 @@
 import type CorePlugin from "./plugin.js"
 import { pauseGoal } from "../domain/goal.js"
 import type { GoalState } from "../domain/types.js"
-import { GoalStore } from "../persistence/store.js"
+import { GoalStore, mutateGoal } from "../persistence/store.js"
 import { parseGoalCommand, type ParsedGoalCommand } from "./command.js"
 import { createGoalTransitionNotifier } from "./notify.js"
 import { showGoalToast } from "./toast.js"
@@ -122,18 +122,22 @@ export function installRestrictedAgentSafety(input: PluginInput, hooks: PluginHo
     let boundaryApplied = false
 
     if (goal && goal.status !== "completed" && isRestrictedGoalAgent(agent)) {
-      const shouldPause = goal.status === "active"
-      const shouldBindAgent = goal.execution?.agent?.trim().toLowerCase() !== agent.toLowerCase()
-      const genericUserPause = goal.status === "paused" && goal.stopReason === "Paused because the user sent a new message."
-
-      if (shouldPause || shouldBindAgent || genericUserPause) {
-        const bound = withExecutionAgent(goal, agent)
-        goal = shouldPause || genericUserPause
+      let appliedBoundary = false
+      const result = await mutateGoal(store, event.sessionID, (latest) => {
+        if (latest.status === "completed" || !isRestrictedGoalAgent(agent)) return null
+        const shouldPause = latest.status === "active"
+        const shouldBindAgent = latest.execution?.agent?.trim().toLowerCase() !== agent.toLowerCase()
+        const genericUserPause = latest.status === "paused" && latest.stopReason === "Paused because the user sent a new message."
+        if (!(shouldPause || shouldBindAgent || genericUserPause)) return null
+        const bound = withExecutionAgent(latest, agent)
+        const next = shouldPause || genericUserPause
           ? pauseGoal(bound, restrictedAgentStopReason(agent))
           : bound
-        await store.save(goal)
-        boundaryApplied = shouldPause || genericUserPause
-      }
+        appliedBoundary = shouldPause || genericUserPause
+        return next
+      })
+      if (result) goal = result.goal
+      boundaryApplied = Boolean(result?.wrote && appliedBoundary)
 
       if (boundaryApplied) {
         if (executionPromptAction(action)) {
@@ -152,12 +156,15 @@ export function installRestrictedAgentSafety(input: PluginInput, hooks: PluginHo
     const type = String(eventInput?.event?.type ?? "")
     const sessionID = eventSessionID(eventInput)
     if (type === "session.idle" && sessionID) {
-      const goal = await store.load(sessionID)
-      const agent = goal?.execution?.agent
-      if (goal?.status === "active" && isRestrictedGoalAgent(agent)) {
-        const paused = pauseGoal(goal, restrictedAgentStopReason(agent))
-        await store.save(paused)
-        await showGoalToast(input.client, `Goal paused in ${agent} mode. Auto-continue was suppressed.`, "warning")
+      let pausedAgent: string | undefined
+      const result = await mutateGoal(store, sessionID, (latest) => {
+        const agent = latest.execution?.agent
+        if (latest.status !== "active" || !isRestrictedGoalAgent(agent)) return null
+        pausedAgent = agent
+        return pauseGoal(latest, restrictedAgentStopReason(agent))
+      })
+      if (result?.wrote) {
+        await showGoalToast(input.client, `Goal paused in ${pausedAgent ?? result.goal.execution?.agent ?? "restricted"} mode. Auto-continue was suppressed.`, "warning")
         return
       }
     }

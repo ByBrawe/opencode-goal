@@ -1,7 +1,7 @@
 import type CorePlugin from "./plugin.js"
 import type { GoalBudget, GoalRequirement, GoalState } from "../domain/types.js"
 import { diagnoseGoalStorage, type GoalStorageDiagnosticReport } from "../persistence/diagnostics.js"
-import { GoalStore, type GoalArchiveRecord, type GoalHistoryPruneResult, type GoalRestoreResult } from "../persistence/store.js"
+import { GoalStore, mutateGoal, type GoalArchiveRecord, type GoalHistoryPruneResult, type GoalRestoreResult } from "../persistence/store.js"
 import { applyGoalBudget, budgetLimitHits, formatGoalBudget } from "../runtime/accounting.js"
 import { formatModelContext } from "../runtime/model-context.js"
 import { parseGoalCommand } from "./command.js"
@@ -170,10 +170,9 @@ async function applyParsedBudgetAfterCore(
 ): Promise<void> {
   const patch = budgetPatch(parsed)
   if (!Object.keys(patch).length) return
-  const current = await store.load(event.sessionID)
-  if (!current) return
-  const next = applyGoalBudget(current, patch)
-  await store.save(next)
+  const result = await mutateGoal(store, event.sessionID, (current) => applyGoalBudget(current, patch))
+  if (!result) return
+  const next = result.goal
 
   const ownedText = textFromParts(output.parts)
   if (next.status === "active") {

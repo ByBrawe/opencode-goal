@@ -1,6 +1,10 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import { guardSemanticProcessResults, inferProcessTurnExpectation } from "../dist/verification/process.js"
+import { createGoal } from "../dist/domain/goal.js"
+import { applySemanticVerifierResults } from "../dist/verification/semantic.js"
+import { completeGoal } from "../dist/verification/audit.js"
+import { semanticVerifierHostEvidence } from "../dist/verification/verifier-evidence.js"
 
 function goal(text) {
   return {
@@ -238,6 +242,31 @@ test("passing current host file/command checks are admissible but stale or runti
   assert.equal(guardSemanticProcessResults(target, given, [{ ...current, goalRevision: 0 }])[0].verdict, "unknown")
   assert.equal(guardSemanticProcessResults(target, given, [{ ...current, passed: false }])[0].verdict, "unknown")
   assert.equal(guardSemanticProcessResults(target, given, [{ ...current, kind: "runtime" }])[0].verdict, "unknown")
+})
+
+
+test("a false done verdict cannot persist completed Goal when no project artifact exists", () => {
+  const current = createGoal({
+    sessionID: "false-complete-regression",
+    objective: "implement src/slug.js with tests",
+  })
+  const requirement = current.requirements.find((item) => item.verification === "semantic")
+  assert.ok(requirement, "a generic Goal requires independent semantic proof")
+  const evidence = semanticVerifierHostEvidence(current, "current-model-turn")
+  const claims = [{
+    requirementID: requirement.id,
+    verdict: "proven",
+    reason: "The assistant claims it has finished but no target file exists.",
+    evidence: [],
+    hostEvidenceIDs: evidence.map((item) => item.id),
+  }]
+  const checked = guardSemanticProcessResults(current, claims, evidence)
+  assert.equal(checked[0].verdict, "unknown")
+  const considered = applySemanticVerifierResults(current, checked)
+  const completed = completeGoal(considered, "All done!")
+  assert.equal(completed.audit.ok, false)
+  assert.notEqual(completed.goal.status, "completed")
+  assert.match(completed.audit.reasons.join(" "), /not proven/)
 })
 
 test("does not reinterpret within-N-turn budget language as required cadence", () => {

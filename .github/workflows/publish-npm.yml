@@ -101,6 +101,7 @@ jobs:
         run: |
           npm install --prefix "$RUNNER_TEMP/native-host" --package-lock=false @opencode/cli@2.1.4
           export OPENCODE2_BINARY="$RUNNER_TEMP/native-host/node_modules/.bin/opencode2"
+          export OPENCODE2_EXPECTED_VERSION=2.1.4
           test "$("$OPENCODE2_BINARY" --version)" = 'opencode v2.1.4'
           export OPENCODE_GOAL_INSTALLER="$GITHUB_WORKSPACE/dist/install.js"
           export OPENCODE_GOAL_V2_PLUGIN_URL="file://$GITHUB_WORKSPACE/dist/server.js"

@@ -186,3 +186,21 @@ jobs:
           assert.equal(typeof tui.setup, 'function')
           console.log('PUBLISHED_NATIVE_TUI_PASS')
           JS
+          # The 1.3.50 peer expansion must also resolve the *published* package
+          # under the newer OpenCode 2.1.4/OpenTUI 0.7 host without --force or
+          # --legacy-peer-deps; failure is a failed post-publish verification.
+          npm install --omit=dev --ignore-scripts --no-audit --no-fund \
+            "@bybrawe/opencode-goal@$RELEASE_VERSION" "@opencode/cli@2.1.4" \
+            "@opentui/core@0.7.0" "@opentui/solid@0.7.0" "solid-js@1.9.12"
+          npm ls @bybrawe/opencode-goal @opencode/cli @opentui/core @opentui/solid solid-js
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict'
+          import { createRequire } from 'node:module'
+          const require = createRequire(import.meta.url)
+          assert.equal(require('@opentui/core/package.json').version, '0.7.0')
+          assert.equal(require('@opentui/solid/package.json').version, '0.7.0')
+          const { default: tui } = await import('@bybrawe/opencode-goal/tui')
+          assert.equal(tui.id, 'opencode-goal')
+          assert.equal(typeof tui.setup, 'function')
+          console.log('PUBLISHED_NATIVE_TUI_OPENTUI_0_7_STRICT_PASS')
+          JS

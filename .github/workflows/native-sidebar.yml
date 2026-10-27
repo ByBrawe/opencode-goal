@@ -39,3 +39,62 @@ jobs:
         run: |
           npm install --prefix "$RUNNER_TEMP/native-host" --package-lock=false @opencode/cli@2.0.18
           OPENCODE2_BINARY="$RUNNER_TEMP/native-host/node_modules/.bin/opencode2" node scripts/native-status-host-canary.mjs
+
+  strict-consumer:
+    name: Strict npm Goal TUI + OpenCode ${{ matrix.host }} / OpenTUI ${{ matrix.opentui }} (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            opentui: '0.5.14'
+            host: '2.0.18'
+          - os: windows-latest
+            opentui: '0.5.14'
+            host: '2.0.18'
+          - os: ubuntu-latest
+            opentui: '0.7.0'
+            host: '2.1.4'
+          - os: windows-latest
+            opentui: '0.7.0'
+            host: '2.1.4'
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: '1.4.2'
+      - name: Build candidate without changing published version
+        run: |
+          npm install
+          npm run check
+          npm run build
+      - name: Clean strictly resolved package install + real TUI render
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/goal-packages"
+          npm pack --json --ignore-scripts --pack-destination "$RUNNER_TEMP/goal-packages" > "$RUNNER_TEMP/goal-pack.json"
+          filename="$(node -e 'const fs=require("node:fs");const p=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));if(p.length!==1)process.exit(1);process.stdout.write(p[0].filename)' "$RUNNER_TEMP/goal-pack.json")"
+          consumer="$RUNNER_TEMP/goal-clean-consumer"
+          mkdir -p "$consumer"
+          printf '{"private":true,"type":"module"}\n' > "$consumer/package.json"
+          # Strict npm resolution: NEVER --legacy-peer-deps, --force,
+          # --omit=peer or a developer-checkout node_modules link.
+          npm install --prefix "$consumer" --no-audit --no-fund --package-lock=false \
+            "$RUNNER_TEMP/goal-packages/$filename" \
+            "@opencode/cli@${{ matrix.host }}" \
+            "@opentui/core@${{ matrix.opentui }}" \
+            "@opentui/solid@${{ matrix.opentui }}" \
+            solid-js@1.9.12
+          npm ls --prefix "$consumer" @opencode/cli @opencode/plugin @bybrawe/opencode-goal @opentui/core @opentui/solid solid-js
+          node -e 'const p=require(process.argv[1]);if(p.version!==process.argv[2])process.exit(1);console.log("Host OpenCode CLI",p.version)' "$consumer/node_modules/@opencode/cli/package.json" "${{ matrix.host }}"
+          node -e 'const p=require(process.argv[1]);if(p.version!==process.argv[2])process.exit(1);console.log("OpenTUI Solid",p.version)' "$consumer/node_modules/@opentui/solid/package.json" "${{ matrix.opentui }}"
+          cp scripts/native-tui-clean-consumer-smoke.mjs "$consumer/native-tui-smoke.mjs"
+          (cd "$consumer" && bun --conditions=browser native-tui-smoke.mjs)

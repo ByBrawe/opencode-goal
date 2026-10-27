@@ -38,7 +38,7 @@ const ctx = {
   } },
 }
 
-assert.equal(plugin.id, "@bybrawe/opencode-goal")
+assert.equal(plugin.id, "opencode-goal", "native TUI plugin identity must match its established public registration")
 const close = await plugin.setup(ctx)
 assert.ok(slot)
 const rendered = await testRender(

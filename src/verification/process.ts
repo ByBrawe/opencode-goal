@@ -95,6 +95,7 @@ function hasConcreteResultEvidence(
     && item.goalRevision === goal.revision
     && item.trust === "host"
     && item.passed === true
+    && item.requirementIDs.includes(result.requirementID)
     && (item.kind === "file" || item.kind === "command"),
   )
 }

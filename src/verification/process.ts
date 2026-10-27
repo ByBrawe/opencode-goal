@@ -79,8 +79,11 @@ function runtimeMetric(records: EvidenceRecord[], key: "turns" | "mutations"): n
  * deliverable such as "implement the feature" or "create the file".
  *
  * By this point verifier file quotes have been host-corroborated. Only
- * literal corroborated files or current passing file/command host evidence
- * may establish a non-process semantic claim without model-only assertion.
+ * literal corroborated files or an explicitly cited, current passing
+ * file/command host record may establish a non-process claim. The same
+ * verified file record can support both a file requirement and the broader
+ * semantic objective; requiring identical requirement IDs would break
+ * legitimate shared evidence. Runtime counters never suffice.
  */
 function hasConcreteResultEvidence(
   goal: GoalState,
@@ -95,7 +98,6 @@ function hasConcreteResultEvidence(
     && item.goalRevision === goal.revision
     && item.trust === "host"
     && item.passed === true
-    && item.requirementIDs.includes(result.requirementID)
     && (item.kind === "file" || item.kind === "command"),
   )
 }

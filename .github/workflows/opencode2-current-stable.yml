@@ -99,9 +99,10 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: "24"
-      - name: Install exact repository dependencies and build native plugin
+      - name: Install repository dependencies and build native plugin
         run: |
-          npm ci
+          # Goal does not commit package-lock.json; npm ci is invalid here.
+          npm install
           npm run build
       - name: Install exact 2.1.4 host and print version evidence
         run: |

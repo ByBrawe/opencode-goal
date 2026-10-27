@@ -73,6 +73,32 @@ function runtimeMetric(records: EvidenceRecord[], key: "turns" | "mutations"): n
   return undefined
 }
 
+/**
+ * Runtime turn/progress counters are authoritative for an explicit process
+ * contract (e.g. N distinct Goal turns), but cannot certify a generic
+ * deliverable such as "implement the feature" or "create the file".
+ *
+ * By this point verifier file quotes have been host-corroborated. Only
+ * literal corroborated files or current passing file/command host evidence
+ * may establish a non-process semantic claim without model-only assertion.
+ */
+function hasConcreteResultEvidence(
+  goal: GoalState,
+  result: SemanticRequirementResult,
+  records: EvidenceRecord[],
+): boolean {
+  const fileExcerpt = result.evidence.some((item) => Boolean(item.path?.trim() && item.quote?.trim()))
+  if (fileExcerpt) return true
+  const refs = new Set(result.hostEvidenceIDs)
+  return records.some((item) =>
+    refs.has(item.id)
+    && item.goalRevision === goal.revision
+    && item.trust === "host"
+    && item.passed === true
+    && (item.kind === "file" || item.kind === "command"),
+  )
+}
+
 function guarded(result: SemanticRequirementResult, verdict: "failed" | "unknown", reason: string): SemanticRequirementResult {
   return {
     ...result,
@@ -107,7 +133,12 @@ export function guardSemanticProcessResults(
     const requirement = requirements.get(result.requirementID)
     if (!requirement || requirement.verification !== "semantic") return result
     const expectation = inferProcessTurnExpectation(requirement.text)
-    if (!expectation) return result
+    if (!expectation) {
+      if (!hasConcreteResultEvidence(goal, result, hostEvidenceRecords)) {
+        return guarded(result, "unknown", "non-process requirement has only runtime turn/progress counters or an unsupported host reference; real file or passing command/file evidence is required.")
+      }
+      return result
+    }
 
     if (expectation.requireMutationPerTurn) {
       if (mutations === undefined) {

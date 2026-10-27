@@ -169,6 +169,77 @@ test("does not reinterpret non-process numeric requirements", () => {
   assert.equal(result.verdict, "proven")
 })
 
+
+test("a verifier cannot mark generic deliverable complete using only runtime turn counters", () => {
+  const given = [{
+    requirementID: "req-process",
+    verdict: "proven",
+    reason: "The assistant says all work is done.",
+    evidence: [],
+    hostEvidenceIDs: ["goal-runtime-turns-r1", "goal-runtime-progress-r1"],
+  }]
+  for (const counts of [
+    { turns: 0, mutations: 0 },
+    { turns: 7, mutations: 0 },
+    { turns: 7, mutations: 30 },
+  ]) {
+    const result = guardSemanticProcessResults(
+      goal("Objective achieved: implement src/slug.js with passing tests"),
+      given,
+      hostEvidence(counts),
+    )[0]
+    assert.equal(result.verdict, "unknown", "turns and mutation fingerprints cannot establish an implementation")
+    assert.match(result.reason, /real file or passing command\/file evidence is required/)
+  }
+})
+
+test("explicit pure turn-count contract can still use host-observed runtime counters", () => {
+  const given = [{
+    requirementID: "req-process",
+    verdict: "proven",
+    reason: "The host has counted the required turns.",
+    evidence: [],
+    hostEvidenceIDs: ["goal-runtime-turns-r1"],
+  }]
+  const passed = guardSemanticProcessResults(
+    goal("Objective achieved: at least 3 distinct Goal turns"),
+    given,
+    hostEvidence({ turns: 3, mutations: 0 }),
+  )[0]
+  assert.equal(passed.verdict, "proven")
+})
+
+test("host-corroborated file excerpt satisfies the non-process evidence guard", () => {
+  const given = [{
+    requirementID: "req-process",
+    verdict: "proven",
+    reason: "The workspace file was checked by the host.",
+    evidence: [{ path: "src/slug.js", quote: "export function slugify" }],
+    hostEvidenceIDs: [],
+  }]
+  const guarded = guardSemanticProcessResults(
+    goal("Objective achieved: implement src/slug.js"),
+    given,
+    hostEvidence({ turns: 1, mutations: 1 }),
+  )[0]
+  assert.equal(guarded.verdict, "proven")
+})
+
+test("passing current host file/command checks are admissible but stale or runtime-only proof is not", () => {
+  const current = { id: "host-test-r1", kind: "command", trust: "host",
+    passed: true, goalRevision: 1, source: "npm test", requirementIDs: ["req-process"] }
+  const given = [{
+    requirementID: "req-process", verdict: "proven",
+    reason: "Verified host command passed.",
+    evidence: [], hostEvidenceIDs: [current.id],
+  }]
+  const target = goal("Objective achieved: ship passing tests")
+  assert.equal(guardSemanticProcessResults(target, given, [current])[0].verdict, "proven")
+  assert.equal(guardSemanticProcessResults(target, given, [{ ...current, goalRevision: 0 }])[0].verdict, "unknown")
+  assert.equal(guardSemanticProcessResults(target, given, [{ ...current, passed: false }])[0].verdict, "unknown")
+  assert.equal(guardSemanticProcessResults(target, given, [{ ...current, kind: "runtime" }])[0].verdict, "unknown")
+})
+
 test("does not reinterpret within-N-turn budget language as required cadence", () => {
   assert.equal(inferProcessTurnExpectation("Objective achieved: finish this within 10 Goal turns"), undefined)
 })

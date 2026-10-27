@@ -127,8 +127,8 @@
     "solid-js": "1.9.12"
   },
   "peerDependencies": {
-    "@opentui/core": ">=0.5.14 <0.6",
-    "@opentui/solid": ">=0.5.14 <0.6",
+    "@opentui/core": ">=0.5.14 <0.8",
+    "@opentui/solid": ">=0.5.14 <0.8",
     "solid-js": ">=1.9.0 <2"
   },
   "peerDependenciesMeta": {

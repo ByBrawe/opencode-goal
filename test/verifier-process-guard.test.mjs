@@ -196,7 +196,7 @@ test("a verifier cannot mark generic deliverable complete using only runtime tur
       hostEvidence(counts),
     )[0]
     assert.equal(result.verdict, "unknown", "turns and mutation fingerprints cannot establish an implementation")
-    assert.match(result.reason, /real file or passing command\/file evidence is required/)
+    assert.match(result.reason, /real target-file, host absence, or directly linked verification evidence is required/)
   }
 })
 

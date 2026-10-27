@@ -1,7 +1,7 @@
 import { tool } from "@opencode-ai/plugin/tool"
 import { createGoal, editGoal, pauseGoal, resumeGoal, waitForUserGoal } from "../domain/goal.js"
 import type { GoalExecutionContext, GoalState } from "../domain/types.js"
-import { GoalStore, GoalStoreConcurrencyError } from "../persistence/store.js"
+import { GoalStore, GoalStoreConcurrencyError, mutateGoal } from "../persistence/store.js"
 import { accountAssistantUsage } from "../runtime/accounting.js"
 import { formatGoalRuntimeFingerprint } from "../runtime/fingerprint.js"
 import { assistantInfoHasMeaningfulActivity, assistantPartHasMeaningfulActivity, clearEmptyAssistantTurnStreak, recordEmptyAssistantTurn } from "../runtime/empty-turn.js"
@@ -361,17 +361,17 @@ export default async function OpenCodeGoalPlugin(input: any, options: OpenCodeGo
       if (owned) {
         if (owned.owner && Object.keys(context).length) {
           await serialize(event.sessionID, async () => {
-            const goal = await load(event.sessionID)
-            if (goal && goal.status !== "completed" && sameGoalTurn(owned.owner, goalTurnOwner(goal))) {
-              await save({
+            await mutateGoal(store, event.sessionID, (goal) => {
+              if (goal.status === "completed" || !sameGoalTurn(owned.owner, goalTurnOwner(goal))) return null
+              return {
                 ...goal,
                 execution: {
                   ...context,
                   ...(goal.execution?.modelContext ? { modelContext: goal.execution.modelContext } : {}),
                 },
                 updatedAt: Date.now(),
-              })
-            }
+              }
+            })
           })
         }
         return
@@ -387,13 +387,16 @@ export default async function OpenCodeGoalPlugin(input: any, options: OpenCodeGo
         steeringInFlight = Boolean(ownership.activeOwner(event.sessionID) || dispatching.has(event.sessionID))
         if (steeringInFlight && userMessageID) queuedSteeringMessages.set(event.sessionID, userMessageID)
         if (Object.keys(context).length) {
-          await save({
-            ...goal,
-            execution: {
-              ...context,
-              ...(goal.execution?.modelContext ? { modelContext: goal.execution.modelContext } : {}),
-            },
-            updatedAt: Date.now(),
+          await mutateGoal(store, event.sessionID, (latest) => {
+            if (latest.status !== "active" || latest.id !== goal.id || latest.revision !== goal.revision) return null
+            return {
+              ...latest,
+              execution: {
+                ...context,
+                ...(latest.execution?.modelContext ? { modelContext: latest.execution.modelContext } : {}),
+              },
+              updatedAt: Date.now(),
+            }
           })
         }
       })

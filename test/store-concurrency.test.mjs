@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url"
 import os from "node:os"
 import path from "node:path"
 import { createGoal } from "../dist/domain/goal.js"
-import { GoalStore, GoalStoreConcurrencyError } from "../dist/persistence/store.js"
+import { GoalStore, GoalStoreConcurrencyError, mutateGoal } from "../dist/persistence/store.js"
 
 const worker = fileURLToPath(new URL("../scripts/store-concurrency-worker.mjs", import.meta.url))
 
@@ -246,6 +246,53 @@ test("stale snapshots cannot bypass generation checks through semantic no-op det
       (error) => error instanceof GoalStoreConcurrencyError && error.kind === "stale_write",
     )
     assert.equal((await store.load(sessionID)).storageGeneration, 2)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("fresh-snapshot mutation rebases competing Goal writes but never overwrites them", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "goal-mutation-rebase-"))
+  try {
+    const sessionID = "session-rebase"
+    const core = new GoalStore(root)
+    const other = new GoalStore(root)
+    await core.save(createGoal({ sessionID, objective: "race resistant" }))
+    let competed = false
+    const result = await mutateGoal(core, sessionID, async (goal) => {
+      if (!competed) {
+        competed = true
+        const latest = await other.load(sessionID)
+        await other.save({ ...latest, stopReason: "external", updatedAt: latest.updatedAt + 1 })
+      }
+      return { ...goal, constraints: [...(goal.constraints || []), "fresh update"], updatedAt: Date.now() }
+    })
+    assert.equal(result?.wrote, true)
+    const persisted = await core.load(sessionID)
+    assert.equal(persisted.stopReason, "external")
+    assert.deepEqual(persisted.constraints, ["fresh update"])
+    assert.equal(persisted.storageGeneration, 3)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("fresh-snapshot mutation cannot bypass bounded stale generation retries", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "goal-mutation-budget-"))
+  try {
+    const sessionID = "session-race-budget"
+    const core = new GoalStore(root)
+    const other = new GoalStore(root)
+    await core.save(createGoal({ sessionID, objective: "bounded retries" }))
+    let attempts = 0
+    await assert.rejects(() => mutateGoal(core, sessionID, async (goal) => {
+      attempts += 1
+      const latest = await other.load(sessionID)
+      await other.save({ ...latest, stopReason: "external " + attempts, updatedAt: latest.updatedAt + attempts })
+      return { ...goal, stopReason: "stale mutation " + attempts, updatedAt: Date.now() }
+    }, { maxAttempts: 2 }), (error) => error instanceof GoalStoreConcurrencyError && error.kind === "stale_write")
+    assert.equal(attempts, 2)
+    assert.equal((await core.load(sessionID)).stopReason, "external 2")
   } finally {
     await rm(root, { recursive: true, force: true })
   }

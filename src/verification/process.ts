@@ -87,7 +87,8 @@ function runtimeMetric(records: EvidenceRecord[], key: "turns" | "mutations"): n
  * legitimate shared evidence. Runtime counters never suffice.
  */
 function normalizedPath(value: string | undefined): string {
-  return String(value ?? "").replace(/\\/g, "/").replace(/^\.\/+/, "").toLowerCase()
+  const normalized = String(value ?? "").replace(/\\/g, "/").replace(/^\.\/+/, "")
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized
 }
 
 function hasConcreteResultEvidence(

@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs"
 import path from "node:path"
 import type { EvidenceRecord, GoalState } from "../domain/types.js"
 import type { SemanticEvidenceRef, SemanticRequirementResult } from "./semantic.js"
+import { explicitFileTargets, requestsDeletion } from "./semantic-targets.js"
 
 export const DEFAULT_VERIFIER_TIMEOUT_MS = 60_000
 
@@ -57,6 +58,60 @@ export function semanticVerifierHostEvidence(goal: GoalState, currentMessageID?:
   return [...runtime, ...persisted]
 }
 
+
+/**
+ * Verify a negative filesystem assertion without trusting a model or a stale
+ * diff claim. A symlink/junction in the path is never accepted as absence.
+ * Missing ancestors count as absence of the target; permissions/errors do not.
+ */
+async function hostVerifiedAbsence(root: string, candidate: string): Promise<boolean> {
+  const absolute = resolveInside(root, candidate)
+  const relative = path.relative(path.resolve(root), absolute)
+  let cursor = path.resolve(root)
+  for (const segment of relative.split(path.sep).filter(Boolean)) {
+    cursor = path.join(cursor, segment)
+    try {
+      const info = await fs.lstat(cursor)
+      if (info.isSymbolicLink()) return false
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return true
+      throw error
+    }
+  }
+  return false
+}
+
+/**
+ * The verifier cannot quote a file that was deleted. Supply explicit host-
+ * observed absence evidence only for named paths in delete/remove objectives.
+ * The evidence is rechecked after the verifier returns to close race windows.
+ */
+export async function collectHostAbsenceEvidence(root: string, goal: GoalState): Promise<EvidenceRecord[]> {
+  const observations: EvidenceRecord[] = []
+  for (const requirement of goal.requirements) {
+    if (!requirement.required || requirement.verification !== "semantic" || !requestsDeletion(requirement.text)) continue
+    for (const file of explicitFileTargets(requirement.text)) {
+      let absent = false
+      try { absent = await hostVerifiedAbsence(root, file) } catch { /* fail closed */ }
+      if (!absent) continue
+      const key = createHash("sha256").update([goal.id, goal.revision, requirement.id, file].join("\0")).digest("hex").slice(0, 18)
+      observations.push({
+        id: "goal-absent-r" + goal.revision + "-" + key,
+        kind: "file",
+        trust: "host",
+        summary: "Host verified the requested removal target " + file + " is absent from the current workspace (symlinks are not accepted).",
+        createdAt: Date.now(),
+        goalRevision: goal.revision,
+        requirementIDs: [requirement.id],
+        source: file,
+        passed: true,
+        metadata: { absent: true, exists: false },
+      })
+    }
+  }
+  return observations
+}
+
 export function semanticVerificationPrompt(goal: GoalState, auditToken: string, hostEvidenceRecords: EvidenceRecord[]): string {
   const semantic = goal.requirements.filter((item) => item.required && item.verification === "semantic")
   const hostEvidence = hostEvidenceRecords
@@ -69,7 +124,7 @@ export function semanticVerificationPrompt(goal: GoalState, auditToken: string, 
     objective: goal.objective,
     requirements: semantic.map((item) => ({ id: item.id, text: item.text })),
   }, null, 2)
-  return `Independently audit the semantic requirements for an OpenCode goal.\n\nThe goal executor's claims are not proof. Inspect the current workspace yourself using only read/search tools. Never edit files, run shell commands, delegate tasks, or mutate goal state. Preserve the full requested scope.\n\nVerdicts:\n- proven: current authoritative workspace evidence directly establishes the requirement. Support proven verdicts with exact file excerpts as {path, quote} and/or IDs of current passing host evidence. The host will independently re-read file quotes and validate every host-evidence ID.\n- failed: current evidence directly contradicts the requirement.\n- unknown: evidence is missing, indirect, ambiguous, external, or would require executing a command you cannot run.\n\nPrefer a current passing host-evidence ID when it directly establishes the requirement. When citing a file, use a path relative to the workspace root (for example docs/file.md) or an absolute path with its leading root/drive intact; never strip the leading slash or drive prefix. Quote only literal text that exists inside that file. Never copy read-tool line numbers, path headers, XML/Markdown wrappers, labels, or explanatory prose into the quote.\n\nDo not treat a vague statement, plan, TODO, changelog claim, or unverified test claim as proof. Host-run verification evidence, when present below, may be used only for what it actually establishes. A path without an exact quote is not proof, and an unknown host-evidence ID is not proof. Temporal/process requirements such as doing an action across N distinct turns are not proven by a final file value alone: use the host runtime turn/progress evidence below and return unknown or failed when the requested cadence/count is not established.\n\nHost evidence:\n${hostEvidence}\n\nVerification request:\n${request}\n\nCall opencode_goal_verifier_result exactly once with the auditToken and one result for every listed requirement. Do not return a success verdict outside that tool.`
+  return `Independently audit the semantic requirements for an OpenCode goal.\n\nThe goal executor's claims are not proof. Inspect the current workspace yourself using only read/search tools. Never edit files, run shell commands, delegate tasks, or mutate goal state. Preserve the full requested scope.\n\nVerdicts:\n- proven: current authoritative workspace evidence directly establishes the requirement. Support proven verdicts with exact file excerpts as {path, quote} and/or IDs of current passing host evidence. The host will independently re-read file quotes and validate every host-evidence ID.\n- failed: current evidence directly contradicts the requirement.\n- unknown: evidence is missing, indirect, ambiguous, external, or would require executing a command you cannot run.\n\nPrefer a current passing host-evidence ID when it directly establishes the requirement. Deletion-only objectives may cite a host-verified missing-path record when listed below; runtime mutation counters cannot prove that a named file is absent. Host-verified absence will be rechecked after your verdict. Never cite unrelated passing checks or files as proof of a different deliverable.\n\nWhen citing a file, use a path relative to the workspace root (for example docs/file.md) or an absolute path with its leading root/drive intact; never strip the leading slash or drive prefix. Quote only literal text that exists inside that file. Never copy read-tool line numbers, path headers, XML/Markdown wrappers, labels, or explanatory prose into the quote.\n\nDo not treat a vague statement, plan, TODO, changelog claim, or unverified test claim as proof. Host-run verification evidence, when present below, may be used only for what it actually establishes. A path without an exact quote is not proof, and an unknown host-evidence ID is not proof. Temporal/process requirements such as doing an action across N distinct turns are not proven by a final file value alone: use the host runtime turn/progress evidence below and return unknown or failed when the requested cadence/count is not established.\n\nHost evidence:\n${hostEvidence}\n\nVerification request:\n${request}\n\nCall opencode_goal_verifier_result exactly once with the auditToken and one result for every listed requirement. Do not return a success verdict outside that tool.`
 }
 
 function resolveInside(root: string, candidate: string): string {
@@ -216,6 +271,14 @@ export async function corroborateSemanticVerifierEvidence(
       const hostEvidence = hostEvidenceByID.get(id)
       if (!hostEvidence || hostEvidence.goalRevision !== goal.revision || hostEvidence.trust !== "host" || hostEvidence.passed !== true) {
         throw new Error(`verifier referenced invalid or non-passing host evidence: ${id}`)
+      }
+
+      // Missing-path evidence is a snapshot fact. If the file is recreated
+      // during verification, no earlier absence observation can authorize done.
+      if (hostEvidence.metadata?.absent === true) {
+        if (hostEvidence.kind !== "file" || !hostEvidence.source || !await hostVerifiedAbsence(root, hostEvidence.source)) {
+          throw new Error("host-verified deletion target is no longer absent: " + (hostEvidence.source || id))
+        }
       }
     }
     if (result.verdict === "proven" && evidence.length === 0 && normalizedHostEvidenceIDs.length === 0) {

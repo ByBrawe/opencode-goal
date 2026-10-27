@@ -1,5 +1,5 @@
-import { DEFAULT_VERIFIER_TIMEOUT_MS, SemanticVerifierUnavailableError, corroborateSemanticVerifierEvidence, semanticVerificationPrompt, semanticVerifierHostEvidence } from "../verification/verifier-evidence.js"
-export { DEFAULT_VERIFIER_TIMEOUT_MS, SemanticVerifierUnavailableError, corroborateSemanticVerifierEvidence, semanticVerificationPrompt, semanticVerifierHostEvidence } from "../verification/verifier-evidence.js"
+import { DEFAULT_VERIFIER_TIMEOUT_MS, SemanticVerifierUnavailableError, collectHostAbsenceEvidence, corroborateSemanticVerifierEvidence, semanticVerificationPrompt, semanticVerifierHostEvidence } from "../verification/verifier-evidence.js"
+export { DEFAULT_VERIFIER_TIMEOUT_MS, SemanticVerifierUnavailableError, collectHostAbsenceEvidence, corroborateSemanticVerifierEvidence, semanticVerificationPrompt, semanticVerifierHostEvidence } from "../verification/verifier-evidence.js"
 import { randomUUID } from "node:crypto"
 import { tool } from "@opencode-ai/plugin/tool"
 import type { EvidenceRecord, GoalState } from "../domain/types.js"
@@ -190,7 +190,10 @@ export function createSemanticVerifierRuntime(client: any, root: string, options
       : timeoutMs
     const allowTimeoutRetry = verifyOptions.allowTimeoutRetry !== false
     const auditToken = randomUUID()
-    const hostEvidenceRecords = semanticVerifierHostEvidence(goal, verifyOptions.currentMessageID)
+    const hostEvidenceRecords = [
+      ...semanticVerifierHostEvidence(goal, verifyOptions.currentMessageID),
+      ...await collectHostAbsenceEvidence(root, goal),
+    ]
     let childID = ""
     let retryAfterTimeout = false
     try {

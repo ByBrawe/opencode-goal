@@ -9,6 +9,7 @@ import {
 import {
   DEFAULT_VERIFIER_TIMEOUT_MS,
   SemanticVerifierUnavailableError,
+  collectHostAbsenceEvidence,
   corroborateSemanticVerifierEvidence,
   semanticVerificationPrompt,
   semanticVerifierHostEvidence,
@@ -335,7 +336,10 @@ export function createOpenCode2SemanticVerifierRuntime(
     const allowTimeoutRetry = verifyOptions.allowTimeoutRetry !== false
     const auditToken = randomUUID()
     const root = await resolveRoot(parentSessionID)
-    const hostEvidenceRecords = semanticVerifierHostEvidence(goal, verifyOptions.currentMessageID)
+    const hostEvidenceRecords = [
+      ...semanticVerifierHostEvidence(goal, verifyOptions.currentMessageID),
+      ...await collectHostAbsenceEvidence(root, goal),
+    ]
     let childID = ""
     let retryAfterTimeout = false
     let primaryTimeoutMessage: string | undefined

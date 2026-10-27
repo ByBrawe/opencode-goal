@@ -621,7 +621,7 @@ export async function mutateGoal(
   store: GoalStore,
   sessionID: string,
   mutate: (goal: GoalState) => GoalState | null | Promise<GoalState | null>,
-  options: { maxAttempts?: number; exhaustedMessage?: string } = {},
+  options: { maxAttempts?: number } = {},
 ): Promise<FreshGoalMutationResult | null> {
   const maxAttempts = resolveGoalMutationAttempts(options.maxAttempts)
   let lastStale: GoalStoreConcurrencyError | undefined
@@ -641,5 +641,5 @@ export async function mutateGoal(
       throw error
     }
   }
-  throw lastStale ?? new Error(options.exhaustedMessage ?? "Goal state kept changing while applying a fresh mutation")
+  throw lastStale ?? new Error("Goal state kept changing while applying a fresh mutation")
 }

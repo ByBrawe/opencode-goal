@@ -5,6 +5,8 @@ import os from "node:os"
 import path from "node:path"
 import OpenCodeGoalPlugin from "../dist/legacy-loader.js"
 import { createSemanticVerifierRuntime, DEFAULT_VERIFIER_AGENT } from "../dist/opencode/verifier.js"
+import { GoalStore } from "../dist/persistence/store.js"
+import { markHostProgress } from "../dist/runtime/progress.js"
 
 async function stateFor(root) {
   const dir = path.join(root, ".opencode", "goals")
@@ -109,6 +111,52 @@ test("semantic completion needs a separate verifier and host-corroborated exact 
     assert.equal(goal.requirements.filter((item) => item.verification === "semantic").every((item) => item.status === "proven"), true)
     assert.equal(goal.evidence.some((item) => item.trust === "verifier" && item.passed === true), true)
     assert.equal(fake.deleted, 1)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("V1 completion rejects progress changed while semantic verification is running", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-v1-completion-progress-race-"))
+  try {
+    await writeFile(path.join(root, "README.md"), "# Product\nVerified Goal Mode\n", "utf8")
+    const fake = makeClient()
+    const hooks = await OpenCodeGoalPlugin({ client: fake.client, directory: root })
+    fake.setHooks(hooks)
+    await createGoal(hooks, 'ship verified docs --accept "README documents Verified Goal Mode"')
+
+    fake.setPromptHandler(async ({ body, childID }) => {
+      const competitor = new GoalStore(root)
+      const latest = await competitor.load("parent")
+      await competitor.save(markHostProgress(latest, {
+        fingerprint: "race:v1-progress-during-verification",
+        source: "test",
+        now: latest.updatedAt + 1,
+      }))
+      const request = verificationRequest(body.parts[0].text)
+      const result = await hooks.tool.opencode_goal_verifier_result.execute({
+        auditToken: request.auditToken,
+        results: request.requirements.map((requirement) => ({
+          requirementID: requirement.id,
+          verdict: "proven",
+          reason: "The current README directly establishes this requirement.",
+          evidence: [{ path: "README.md", quote: "Verified Goal Mode" }],
+          hostEvidenceIDs: [],
+        })),
+      }, { sessionID: childID, messageID: "verifier-message", agent: DEFAULT_VERIFIER_AGENT })
+      assert.equal(result, "Semantic verifier result accepted.")
+      return {}
+    })
+
+    const result = await hooks.tool.opencode_goal_complete.execute(
+      { summary: "must not close stale verification" },
+      { sessionID: "parent", messageID: "executor-message", agent: "build" },
+    )
+    assert.match(result, /goal changed, paused, or stopped while verification was running/i)
+    const goal = await stateFor(root)
+    assert.equal(goal.status, "active")
+    assert.deepEqual(goal.progressFingerprints, ["race:v1-progress-during-verification"])
+    assert.equal(goal.evidence.some((item) => item.trust === "verifier"), false)
   } finally {
     await rm(root, { recursive: true, force: true })
   }

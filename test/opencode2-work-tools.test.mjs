@@ -3,8 +3,11 @@ import assert from "node:assert/strict"
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import { createGoal } from "../dist/domain/goal.js"
+import { createGoal, editGoal } from "../dist/domain/goal.js"
 import { GoalStore } from "../dist/persistence/store.js"
+import { markHostProgress } from "../dist/runtime/progress.js"
+import { normalizeNativeTodos, observeTodoPlan } from "../dist/runtime/todo-plan.js"
+import { applySemanticVerifierResults } from "../dist/verification/semantic.js"
 import { createOpenCode2AutonomousRuntime } from "../dist/opencode2/autonomous-runtime.js"
 import {
   createOpenCode2GoalWorkTools,
@@ -181,6 +184,314 @@ test("V2 work tool retries when another writer commits before it saves", async (
   } finally {
     GoalStore.prototype.load = originalLoad
     GoalStore.prototype.save = originalSave
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+function semanticProof(goal) {
+  return applySemanticVerifierResults(goal, goal.requirements
+    .filter((item) => item.required && item.verification === "semantic")
+    .map((item) => ({
+      requirementID: item.id,
+      verdict: "proven",
+      reason: "race-test host observation",
+      evidence: [{ path: "README.md", quote: "RACE PROOF" }],
+      hostEvidenceIDs: [],
+    })))
+}
+
+test("V2 completion re-verifies when progress changes during semantic verification", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-v2-completion-progress-race-"))
+  try {
+    await writeFile(path.join(root, "README.md"), "RACE PROOF\n", "utf8")
+    const sessionID = "v2-completion-progress-race"
+    const store = new GoalStore(root)
+    const competitor = new GoalStore(root)
+    const goal = createGoal({ sessionID, objective: "complete after a concurrent progress write", now: 100 })
+    await store.save(goal)
+
+    const autonomousRuntime = createOpenCode2AutonomousRuntime()
+    own(autonomousRuntime, sessionID, goal, "goal-turn-progress-race")
+    let calls = 0
+    const work = createOpenCode2GoalWorkTools({
+      autonomousRuntime,
+      resolveDirectory: async () => root,
+      semanticVerifier: {
+        async verify(_sessionID, current) {
+          calls += 1
+          if (calls === 1) {
+            const latest = await competitor.load(sessionID)
+            await competitor.save(markHostProgress(latest, {
+              fingerprint: "race:progress-during-verification",
+              source: "test",
+              now: latest.updatedAt + 1,
+            }))
+          }
+          return semanticProof(current)
+        },
+      },
+    })
+
+    const result = await work.definitions.opencode_goal_complete.execute(
+      { summary: "completed after re-verification" },
+      { sessionID },
+    )
+    assert.equal(result.content, "Goal completed with host and verifier-backed evidence.")
+    assert.equal(calls, 2, "completion must re-run verification against the changed progress snapshot")
+    const completed = await store.load(sessionID)
+    assert.equal(completed.status, "completed")
+    assert.deepEqual(completed.progressFingerprints, ["race:progress-during-verification"])
+    assert.equal(completed.observedProgressRevision, completed.progressRevision)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("V2 completion fails closed when requirements change during semantic verification", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-v2-completion-requirement-race-"))
+  try {
+    await writeFile(path.join(root, "README.md"), "RACE PROOF\n", "utf8")
+    const sessionID = "v2-completion-requirement-race"
+    const store = new GoalStore(root)
+    const competitor = new GoalStore(root)
+    const goal = createGoal({ sessionID, objective: "original objective", now: 100 })
+    await store.save(goal)
+
+    const autonomousRuntime = createOpenCode2AutonomousRuntime()
+    own(autonomousRuntime, sessionID, goal, "goal-turn-requirement-race")
+    let calls = 0
+    const work = createOpenCode2GoalWorkTools({
+      autonomousRuntime,
+      resolveDirectory: async () => root,
+      semanticVerifier: {
+        async verify(_sessionID, current) {
+          calls += 1
+          const latest = await competitor.load(sessionID)
+          await competitor.save(editGoal(latest, {
+            objective: "replacement objective during verification",
+            now: latest.updatedAt + 1,
+          }))
+          return semanticProof(current)
+        },
+      },
+    })
+
+    const result = await work.definitions.opencode_goal_complete.execute(
+      { summary: "must not complete stale work" },
+      { sessionID },
+    )
+    assert.match(result.content, /changed, paused, or stopped while verification was running/i)
+    assert.equal(calls, 1)
+    const latest = await store.load(sessionID)
+    assert.equal(latest.status, "active")
+    assert.equal(latest.revision, 2)
+    assert.equal(latest.objective, "replacement objective during verification")
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("V2 completion re-verifies when a competing writer commits before the final save", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-v2-completion-save-race-"))
+  const originalSave = GoalStore.prototype.save
+  let injected = false
+  try {
+    await writeFile(path.join(root, "README.md"), "RACE PROOF\n", "utf8")
+    const sessionID = "v2-completion-save-race"
+    const store = new GoalStore(root)
+    const competitor = new GoalStore(root)
+    const goal = createGoal({ sessionID, objective: "complete despite a save collision", now: 100 })
+    await store.save(goal)
+
+    GoalStore.prototype.save = async function (state, ...rest) {
+      if (!injected && state.sessionID === sessionID && state.status === "completed") {
+        injected = true
+        const latest = await competitor.load(sessionID)
+        await originalSave.call(competitor, markHostProgress(latest, {
+          fingerprint: "race:progress-before-completion-save",
+          source: "test",
+          now: latest.updatedAt + 1,
+        }))
+      }
+      return originalSave.call(this, state, ...rest)
+    }
+
+    const autonomousRuntime = createOpenCode2AutonomousRuntime()
+    own(autonomousRuntime, sessionID, goal, "goal-turn-save-race")
+    let calls = 0
+    const work = createOpenCode2GoalWorkTools({
+      autonomousRuntime,
+      resolveDirectory: async () => root,
+      semanticVerifier: {
+        async verify(_sessionID, current) {
+          calls += 1
+          return semanticProof(current)
+        },
+      },
+    })
+
+    const result = await work.definitions.opencode_goal_complete.execute(
+      { summary: "completed after store collision" },
+      { sessionID },
+    )
+    assert.equal(injected, true, "the competing save must be injected")
+    assert.equal(result.content, "Goal completed with host and verifier-backed evidence.")
+    assert.equal(calls, 2, "the stale completion save must re-verify the fresher progress snapshot")
+    const completed = await store.load(sessionID)
+    assert.equal(completed.status, "completed")
+    assert.deepEqual(completed.progressFingerprints, ["race:progress-before-completion-save"])
+  } finally {
+    GoalStore.prototype.save = originalSave
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("V2 completion re-reads target artifacts changed during semantic verification", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-v2-completion-file-race-"))
+  try {
+    await writeFile(path.join(root, "README.md"), "RACE PROOF\n", "utf8")
+    await writeFile(path.join(root, "proof.txt"), "GOOD\n", "utf8")
+    const sessionID = "v2-completion-file-race"
+    const store = new GoalStore(root)
+    const goal = createGoal({
+      sessionID,
+      objective: "complete only with current target artifacts",
+      files: [{ file: "proof.txt", contains: "GOOD" }],
+      now: 100,
+    })
+    await store.save(goal)
+
+    const autonomousRuntime = createOpenCode2AutonomousRuntime()
+    own(autonomousRuntime, sessionID, goal, "goal-turn-file-race")
+    let calls = 0
+    const work = createOpenCode2GoalWorkTools({
+      autonomousRuntime,
+      resolveDirectory: async () => root,
+      semanticVerifier: {
+        async verify(_sessionID, current) {
+          calls += 1
+          if (calls === 1) await writeFile(path.join(root, "proof.txt"), "BAD\n", "utf8")
+          return semanticProof(current)
+        },
+      },
+    })
+
+    const result = await work.definitions.opencode_goal_complete.execute(
+      { summary: "must not complete with a stale target artifact" },
+      { sessionID },
+    )
+    assert.equal(calls, 2, "the changed target artifact must force re-verification")
+    assert.match(result.content, /Completion rejected/i)
+    const latest = await store.load(sessionID)
+    assert.equal(latest.status, "active")
+    const fileRequirement = latest.requirements.find((item) => item.verification === "file")
+    assert.equal(fileRequirement?.status, "failed")
+    assert.equal(latest.evidence.some((item) => item.kind === "file" && item.passed === false), true)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("V2 file evidence re-reads the target file after a stale collision", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-v2-evidence-reread-"))
+  const originalSave = GoalStore.prototype.save
+  let injected = false
+  try {
+    await writeFile(path.join(root, "proof.txt"), "GOOD\n", "utf8")
+    const sessionID = "v2-evidence-reread"
+    const store = new GoalStore(root)
+    const competitor = new GoalStore(root)
+    const goal = createGoal({
+      sessionID,
+      objective: "record fresh file evidence",
+      files: [{ file: "proof.txt", contains: "GOOD" }],
+      now: 100,
+    })
+    await store.save(goal)
+
+    GoalStore.prototype.save = async function (state, ...rest) {
+      if (!injected && state.evidence.some((item) => item.kind === "file" && item.source === "proof.txt")) {
+        injected = true
+        await writeFile(path.join(root, "proof.txt"), "BAD\n", "utf8")
+        const latest = await competitor.load(sessionID)
+        await originalSave.call(competitor, {
+          ...latest,
+          stopReason: "competing evidence writer",
+          updatedAt: latest.updatedAt + 1,
+        })
+      }
+      return originalSave.call(this, state, ...rest)
+    }
+
+    const autonomousRuntime = createOpenCode2AutonomousRuntime()
+    own(autonomousRuntime, sessionID, goal, "goal-turn-evidence-reread")
+    const work = createOpenCode2GoalWorkTools({
+      autonomousRuntime,
+      resolveDirectory: async () => root,
+      semanticVerifier: { async verify(_sessionID, current) { return current } },
+    })
+    const requirement = goal.requirements.find((item) => item.verification === "file")
+    assert.ok(requirement)
+    const result = await work.definitions.opencode_goal_evidence_file.execute(
+      { requirementID: requirement.id },
+      { sessionID },
+    )
+    assert.equal(injected, true, "the competing evidence save must be injected")
+    assert.match(result.content, /Could not verify proof\.txt/i)
+    const latest = await store.load(sessionID)
+    assert.equal(latest.stopReason, "competing evidence writer")
+    const evidence = latest.evidence.find((item) => item.kind === "file" && item.source === "proof.txt")
+    assert.equal(evidence?.passed, false, "the retry must read the changed file instead of reusing the first read")
+    assert.notEqual(latest.requirements.find((item) => item.id === requirement.id)?.status, "proven")
+  } finally {
+    GoalStore.prototype.save = originalSave
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("V2 completion cannot close work added to the Todo plan during verification", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goal-v2-completion-todo-race-"))
+  try {
+    await writeFile(path.join(root, "README.md"), "RACE PROOF\n", "utf8")
+    const sessionID = "v2-completion-todo-race"
+    const store = new GoalStore(root)
+    const competitor = new GoalStore(root)
+    const goal = createGoal({ sessionID, objective: "complete only after the plan is clear", now: 100 })
+    await store.save(goal)
+
+    const autonomousRuntime = createOpenCode2AutonomousRuntime()
+    own(autonomousRuntime, sessionID, goal, "goal-turn-todo-race")
+    const todos = normalizeNativeTodos([
+      { id: "race", content: "Finish work discovered during verification", status: "in_progress" },
+    ])
+    assert.ok(todos)
+    let calls = 0
+    const work = createOpenCode2GoalWorkTools({
+      autonomousRuntime,
+      resolveDirectory: async () => root,
+      semanticVerifier: {
+        async verify(_sessionID, current) {
+          calls += 1
+          if (calls === 1) {
+            const latest = await competitor.load(sessionID)
+            await competitor.save(observeTodoPlan(latest, todos, latest.updatedAt + 1))
+          }
+          return semanticProof(current)
+        },
+      },
+    })
+
+    const result = await work.definitions.opencode_goal_complete.execute(
+      { summary: "must not complete with unfinished discovered work" },
+      { sessionID },
+    )
+    assert.equal(calls, 2, "the changed Todo plan must force re-verification")
+    assert.match(result.content, /Completion rejected/i)
+    assert.match(result.content, /unfinished work/i)
+    const latest = await store.load(sessionID)
+    assert.equal(latest.status, "active")
+    assert.equal(latest.todoPlan?.inProgress, 1)
+  } finally {
     await rm(root, { recursive: true, force: true })
   }
 })

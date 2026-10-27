@@ -12,8 +12,8 @@ import { formatModelContext, observeModelContextLimits, observeModelContextUsage
 import { collectMutationFingerprints } from "../runtime/mutation-progress.js"
 import { addProgressNote, closeObservedTurn, markHostProgress } from "../runtime/progress.js"
 import { normalizeNativeTodos, observeTodoPlan } from "../runtime/todo-plan.js"
-import { completeGoal } from "../verification/audit.js"
-import { verifyDeclaredFiles } from "../verification/contracts.js"
+import { completeGoal, completionSnapshotIdentity } from "../verification/audit.js"
+import { fileRequirementOutcomes, verifyDeclaredFiles } from "../verification/contracts.js"
 import { proveRequirementsFromEvidence, recordFileEvidence } from "../verification/evidence.js"
 import { parseGoalCommand } from "./command.js"
 import { completionNotificationReason, createGoalTransitionNotifier, notifyGoal } from "./notify.js"
@@ -664,6 +664,7 @@ export default async function OpenCodeGoalPlugin(input: any, options: OpenCodeGo
           if ((snapshot.completionMode ?? "verified") === "continuous") {
             return "Completion disabled: this Goal is continuous. Keep working until the user pauses/clears it or a safety boundary stops it; use /goal edit <objective> --verified to re-enable verified completion."
           }
+          const verifiedIdentity = completionSnapshotIdentity(snapshot)
           let evaluated = await runConfiguredChecks(snapshot, directory)
           evaluated = await verifyDeclaredFiles(evaluated, directory)
           if (currentSteeringEpoch(context.sessionID) !== startingSteeringEpoch) {
@@ -685,7 +686,9 @@ export default async function OpenCodeGoalPlugin(input: any, options: OpenCodeGo
                 const reason = `Independent semantic verification unavailable: ${error.message}`
                 const result = await mutateGoal(store, context.sessionID, (latest) => {
                   if (latest.id !== snapshot.id || latest.revision !== snapshot.revision || latest.status !== "active") return null
-                  const merged = settleCurrentProgress(mergeAuditEvaluation(latest, evaluated))
+                  const merged = completionSnapshotIdentity(latest) === verifiedIdentity
+                    ? settleCurrentProgress(mergeAuditEvaluation(latest, evaluated))
+                    : latest
                   return pauseGoal(merged, reason)
                 })
                 if (!result?.wrote) {
@@ -701,8 +704,11 @@ export default async function OpenCodeGoalPlugin(input: any, options: OpenCodeGo
               return "Completion rejected: user steering arrived while verification was running. Goal remains active."
             }
             let completed: ReturnType<typeof completeGoal> | undefined
-            const result = await mutateGoal(store, context.sessionID, (latest) => {
+            const result = await mutateGoal(store, context.sessionID, async (latest) => {
               if (latest.id !== snapshot.id || latest.revision !== snapshot.revision || latest.status !== "active") return null
+              if (completionSnapshotIdentity(latest) !== verifiedIdentity) return null
+              const refreshedFiles = await verifyDeclaredFiles(latest, directory)
+              if (fileRequirementOutcomes(refreshedFiles) !== fileRequirementOutcomes(evaluated)) return null
               const merged = settleCurrentProgress(mergeAuditEvaluation(latest, evaluated))
               completed = completeGoal(merged, args.summary)
               return completed.goal

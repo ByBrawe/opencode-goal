@@ -318,6 +318,7 @@ test("mutateGoal propagates lock, integrity and live-replacement failures withou
   const goal = createGoal({ sessionID: "non-stale-errors", objective: "propagate errors" })
   const failures = [
     new GoalStoreConcurrencyError("lock_timeout", "lock is owned by another process"),
+    new GoalStoreConcurrencyError("lock_lost", "process lease token changed"),
     new GoalStoreConcurrencyError("live_replacement", "refused to replace unfinished Goal"),
     new GoalStoreIntegrityError("goal.json", "invalid_state", "corrupt snapshot"),
   ]

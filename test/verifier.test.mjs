@@ -298,7 +298,12 @@ test("semantic verifier can reference fresh host file evidence", async () => {
       const text = body.parts[0].text
       const request = verificationRequest(text)
       const ids = hostEvidenceIDs(text)
-      assert.ok(ids.length > 0, "declared file contract should be host-verified before semantic audit")
+      // Runtime turn counters are also host-passing evidence, but they
+      // cannot prove that README contains the required product text.
+      // Select the current file/command contract evidence, not ids[0]
+      // (which is the synthetic goal-runtime-turns-rN record).
+      const fileContractID = ids.find((id) => !id.startsWith("goal-runtime-"))
+      assert.ok(fileContractID, "declared README content contract must have current host file proof")
       const result = await hooks.tool.opencode_goal_verifier_result.execute({
         auditToken: request.auditToken,
         results: request.requirements.map((requirement) => ({
@@ -306,7 +311,7 @@ test("semantic verifier can reference fresh host file evidence", async () => {
           verdict: "proven",
           reason: "The host-verified README contract establishes the requested docs state.",
           evidence: [],
-          hostEvidenceIDs: [ids[0]],
+          hostEvidenceIDs: [fileContractID],
         })),
       }, { sessionID: childID, messageID: "verifier-message", agent: DEFAULT_VERIFIER_AGENT })
       assert.equal(result, "Semantic verifier result accepted.")

@@ -47,11 +47,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
         include:
-          - opentui: '0.5.14'
+          - os: ubuntu-latest
+            opentui: '0.5.14'
             host: '2.0.18'
-          - opentui: '0.7.0'
+          - os: windows-latest
+            opentui: '0.5.14'
+            host: '2.0.18'
+          - os: ubuntu-latest
+            opentui: '0.7.0'
+            host: '2.1.4'
+          - os: windows-latest
+            opentui: '0.7.0'
             host: '2.1.4'
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6

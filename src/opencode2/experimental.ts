@@ -1,5 +1,5 @@
 import path from "node:path"
-import { createGoal, editGoal, pauseGoal, resumeGoal } from "../domain/goal.js"
+import { createGoal, editGoal, pauseGoal, resumeGoal } from "../domain/goalx.js"
 import type { GoalState } from "../domain/types.js"
 import { GoalStore, mutateGoal } from "../persistence/store.js"
 import { applyGoalBudget, budgetLimitHits } from "../runtime/accounting.js"
@@ -495,7 +495,7 @@ function canonicalGoalCommand(parsed: ReturnType<typeof parseGoalCommand>): stri
 }
 
 function normalizedGoalArguments(value: string): string {
-  return value.trim().replace(/^\/goal(?:\s+|$)/i, "").trim()
+  return value.trim().replace(/^\/goalx(?:\s+|$)/i, "").trim()
 }
 
 function directCapabilityKey(sessionID: string, messageID: string): string {
@@ -695,7 +695,7 @@ function revokeCapability(runtime: OpenCode2DirectLifecycleRuntime, capability: 
 function authorizationContext(capability: OpenCode2DirectCapability): string {
   return [
     "OpenCode Goal V2 host-authenticated lifecycle command.",
-    `The host authenticated the current user message as a direct /goal command for action ${capability.action}.`,
+    `The host authenticated the current user message as a direct /goalx command for action ${capability.action}.`,
     `Call ${V2_CONTROL_TOOL} exactly once with the exact authorized Goal arguments in its command field: ${JSON.stringify(capability.command)}.`,
     "Do not alter the lifecycle action or arguments. The tool is single-use, validates the host-bound message capability, and rejects mismatch or replay.",
   ].join("\n")
@@ -708,7 +708,7 @@ async function interruptBeforeDirectMutation(
 ): Promise<void> {
   if (!["edit", "pause", "clear"].includes(action)) return
   if (typeof ctx.session.interrupt !== "function") {
-    throw new Error(`OpenCode Goals V2 direct lifecycle requires session.interrupt() before /goal ${action} can run.`)
+    throw new Error(`OpenCode Goals V2 direct lifecycle requires session.interrupt() before /goalx ${action} can run.`)
   }
   await ctx.session.interrupt({ sessionID })
 }
@@ -744,10 +744,10 @@ function requireDirectLifecycleCapabilities(
   action: ReturnType<typeof parseGoalCommand>["action"],
 ): void {
   if ((DIRECT_LIFECYCLE_MUTATION_ACTIONS.has(action) || DIRECT_READ_ACTIONS.has(action)) && typeof ctx.session.prompt !== "function") {
-    throw new Error(`OpenCode Goals V2 direct lifecycle requires session.prompt() before /goal ${action} can run.`)
+    throw new Error(`OpenCode Goals V2 direct lifecycle requires session.prompt() before /goalx ${action} can run.`)
   }
   if (["edit", "pause", "clear"].includes(action) && typeof ctx.session.interrupt !== "function") {
-    throw new Error(`OpenCode Goals V2 direct lifecycle requires session.interrupt() before /goal ${action} can run.`)
+    throw new Error(`OpenCode Goals V2 direct lifecycle requires session.interrupt() before /goalx ${action} can run.`)
   }
 }
 
@@ -801,12 +801,12 @@ async function applyAuthorizedGoalMutation(
   }
 
   if (!parsed.objective) {
-    throw new Error('Usage: /goal <objective> [--accept "criterion"] [--check "command"]')
+    throw new Error('Usage: /goalx <objective> [--accept "criterion"] [--check "command"]')
   }
 
   if (parsed.action === "create") {
     if (goal && goal.status !== "completed") {
-      throw new Error("An unfinished goal already exists. Use /goal edit, /goal clear, or complete it first. No Goal state was changed.")
+      throw new Error("An unfinished goal already exists. Use /goalx edit, /goalx clear, or complete it first. No Goal state was changed.")
     }
     goal = createGoal({
       sessionID,
@@ -833,7 +833,7 @@ async function applyAuthorizedGoalMutation(
   }
 
   if (parsed.action !== "edit") {
-    throw new Error(`OpenCode Goals V2 direct lifecycle capability cannot mutate /goal ${parsed.action}. No Goal state was changed.`)
+    throw new Error(`OpenCode Goals V2 direct lifecycle capability cannot mutate /goalx ${parsed.action}. No Goal state was changed.`)
   }
   if (!goal) throw new Error("No goal exists to edit. No Goal state was changed.")
 
@@ -919,8 +919,8 @@ async function executeAuthorizedGoalControl(
   const message = applied.message
     ? `${applied.message}\nThe single-use host capability is consumed.`
     : goal
-      ? `Authorized /goal ${parsed.action} applied. Persisted Goal status: ${goal.status}. The single-use capability is consumed.`
-      : `Authorized /goal ${parsed.action} applied. No active Goal remains. The single-use capability is consumed.`
+      ? `Authorized /goalx ${parsed.action} applied. Persisted Goal status: ${goal.status}. The single-use capability is consumed.`
+      : `Authorized /goalx ${parsed.action} applied. No active Goal remains. The single-use capability is consumed.`
   return toolResponse(message, goal)
 }
 
@@ -944,7 +944,7 @@ export async function executeOpenCode2DirectGoalCommand(
   const raw = normalizedGoalArguments(input.prompt?.text ?? "")
   const parsed = parseGoalCommand(raw)
   if (!DIRECT_MUTATION_ACTIONS.has(parsed.action) && !DIRECT_READ_ACTIONS.has(parsed.action)) {
-    throw new Error(`OpenCode Goals V2 direct lifecycle does not support /goal ${parsed.action}. No Goal state was changed.`)
+    throw new Error(`OpenCode Goals V2 direct lifecycle does not support /goalx ${parsed.action}. No Goal state was changed.`)
   }
   requireDirectLifecycleCapabilities(ctx, parsed.action)
 
@@ -962,10 +962,10 @@ export async function executeOpenCode2DirectGoalCommand(
   }
 
   if ((parsed.action === "create" || parsed.action === "edit") && !parsed.objective) {
-    throw new Error('Usage: /goal <objective> [--accept "criterion"] [--check "command"]')
+    throw new Error('Usage: /goalx <objective> [--accept "criterion"] [--check "command"]')
   }
   if (parsed.action === "create" && goal && goal.status !== "completed") {
-    throw new Error("An unfinished goal already exists. Use /goal edit, /goal clear, or complete it first. No Goal state was changed.")
+    throw new Error("An unfinished goal already exists. Use /goalx edit, /goalx clear, or complete it first. No Goal state was changed.")
   }
   if (parsed.action === "edit" && !goal) {
     throw new Error("No goal exists to edit. No Goal state was changed.")
@@ -987,7 +987,7 @@ export async function executeOpenCode2DirectGoalCommand(
     await interruptBeforeDirectMutation(ctx, input.sessionID, parsed.action)
     const applied = await applyOpenCode2ControlPlaneMutation(directory, input.sessionID, parsed)
     if (!applied) {
-      throw new Error(`OpenCode Goals V2 direct admin command did not handle /goal ${parsed.action}. No Goal state was changed.`)
+      throw new Error(`OpenCode Goals V2 direct admin command did not handle /goalx ${parsed.action}. No Goal state was changed.`)
     }
     await options.onAdminMutation?.(input.sessionID, parsed, applied)
     if (typeof ctx.session.prompt === "function") {
@@ -995,7 +995,7 @@ export async function executeOpenCode2DirectGoalCommand(
         await promptDirectReadOnly(
           ctx,
           input,
-          `${applied.message}\n\nThis Goal administration mutation was applied directly by the host-native /goal command. Respond with this result only; do not perform project work or mutate Goal state.`,
+          `${applied.message}\n\nThis Goal administration mutation was applied directly by the host-native /goalx command. Respond with this result only; do not perform project work or mutate Goal state.`,
         )
       } catch {
         // The admin mutation is already durably committed. A presentation-only
@@ -1066,7 +1066,7 @@ export async function executeOpenCode2DirectGoalCommand(
 
 /**
  * Read-only compatibility entrypoint retained for callers that do not enter
- * through the host-native direct /goal command boundary. Status/contract and
+ * through the host-native direct /goalx command boundary. Status/contract and
  * other read surfaces remain available, while lifecycle mutation fails closed
  * without host-authorized command identity.
  */
@@ -1104,7 +1104,7 @@ const authorizedControlInputSchema = {
   properties: {
     command: {
       type: "string",
-      description: "Exact Goal command arguments authorized by the host-native direct /goal command.",
+      description: "Exact Goal command arguments authorized by the host-native direct /goalx command.",
     },
   },
   required: ["command"],
@@ -2061,7 +2061,7 @@ export const OpenCode2GoalsExperimental = {
                       return failure.kind === "ignore"
                         ? pauseGoal(
                             latest,
-                            "OpenCode automatic compaction failed before the active Goal could recover. Goal state is preserved. Run /compact, then /goal resume.",
+                            "OpenCode automatic compaction failed before the active Goal could recover. Goal state is preserved. Run /compact, then /goalx resume.",
                           )
                         : failure.goal
                     })
@@ -2320,7 +2320,7 @@ export const OpenCode2GoalsExperimental = {
         throw new Error("OpenCode Goals V2 direct lifecycle requires command.transform().")
       }
       await ctx.command.transform((commands) => {
-        addExperimentalCommand(commands, "goal", {
+        addExperimentalCommand(commands, "goalx", {
           description: "Persistent OpenCode Goal lifecycle through a host-authenticated single-use capability.",
           execute: async (input: OpenCode2DirectCommandInvocation) =>
             await executeOpenCode2DirectGoalCommand(ctx, input, runtime, {
@@ -2354,7 +2354,7 @@ export const OpenCode2GoalsExperimental = {
 
       if (lifecycleEnabled) {
         addExperimentalTool(tools, V2_CONTROL_TOOL, {
-          description: "Consume the one-use host-authenticated direct /goal lifecycle capability for the current request. This tool is removed from ordinary, replayed, and Plan/read-only requests.",
+          description: "Consume the one-use host-authenticated direct /goalx lifecycle capability for the current request. This tool is removed from ordinary, replayed, and Plan/read-only requests.",
           input: authorizedControlInputSchema,
           output: controlOutputSchema,
           execute: async (input: { command?: unknown }, toolContext: OpenCode2ExperimentalToolContext) =>

@@ -290,7 +290,7 @@ test("stable V2 kill switch preserves the read-only fail-closed adapter", async 
       assert.equal(OpenCode2GoalsExperimental.id, OPENCODE2_EXPERIMENTAL_PLUGIN_ID)
       const cleanup = await OpenCode2GoalsExperimental.setup(host.ctx)
 
-      assert.equal(host.commandTransformCalls(), 0, "disabled V2 lifecycle must not register the host-native /goalxx command")
+      assert.equal(host.commandTransformCalls(), 0, "disabled V2 lifecycle must not register the host-native /goalx command")
       assert.equal(host.commands.size, 0)
       assert.equal(host.tools.has("opencode_goals_v2_control"), false)
       assert.equal(host.tools.get("opencode_goals_v2_get")?.options?.codemode, false)
@@ -1379,7 +1379,7 @@ test("direct lifecycle command mints host-message capability without persisting 
   }
 })
 
-test("V2 restarted plugin re-arms only a fresh host-native /goalxx command on the same old session", async () => {
+test("V2 restarted plugin re-arms only a fresh host-native /goalx command on the same old session", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-old-session-rearm-"))
   const sessionID = "v2-old-reaped-session"
   const command = 'ship work after window restart --accept "persist new goal"'
@@ -1410,7 +1410,7 @@ test("V2 restarted plugin re-arms only a fresh host-native /goalxx command on th
         const renewed = await dispatchDirectCommand(reopened, sessionID, command)
         const freshContext = await armCapability(reopened, sessionID, renewed.messageID)
         assert.ok(freshContext.tools.opencode_goals_v2_control,
-          "reissued native /goalxx must arm after plugin restart in the same session")
+          "reissued native /goalx must arm after plugin restart in the same session")
         const result = await consumeCapability(reopened, sessionID, command)
         assert.match(result.content, /single-use capability is consumed/i)
         const saved = await new GoalStore(root).load(sessionID)

@@ -1,4 +1,4 @@
-# OpenCode Goals — GoalX
+# ByBrawe OpenCode Goals
 
 **Dil:** [English](./README.md) · **Türkçe**
 

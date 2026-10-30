@@ -170,7 +170,14 @@ test("uninstall inspects OPENCODE_CONFIG custom path and preserves unrelated plu
   await mkdir(path.dirname(external), { recursive: true })
   await mkdir(config, { recursive: true })
   await writeFile(global, JSON.stringify({ plugins: ["@bybrawe/opencode-goal@1.3.49", "@bybrawe/opencode-loop@0.6.9"] }))
-  const source = '{\\n  // user note\\n  "plugin": ["@bybrawe/opencode-goal@1.0.0", "other-v1"],\\n  "plugins": [{"package":"@bybrawe/opencode-goal@1.3.20","options":{"autonomous":false}}, "@bybrawe/opencode-loop@0.6.9"]\\n}\\n'
+  const source = [
+    "{",
+    "  // user note",
+    '  "plugin": ["@bybrawe/opencode-goal@1.0.0", "other-v1"],',
+    '  "plugins": [{"package":"@bybrawe/opencode-goal@1.3.20","options":{"autonomous":false}}, "@bybrawe/opencode-loop@0.6.9"]',
+    "}",
+    "",
+  ].join("\n")
   await writeFile(external, source)
   const projectState = path.join(path.dirname(config), "project", ".opencode", "goals", "keep.json")
   await mkdir(path.dirname(projectState), { recursive: true })
@@ -181,8 +188,8 @@ test("uninstall inspects OPENCODE_CONFIG custom path and preserves unrelated plu
   assert.deepEqual(JSON.parse(await readFile(global, "utf8")).plugins, ["@bybrawe/opencode-loop@0.6.9"])
   const updated = await readFile(external, "utf8")
   assert.match(updated, /user note/)
-  assert.doesNotMatch(updated, /@bybrawe\\/opencode-goal/)
-  assert.match(updated, /@bybrawe\\/opencode-loop/)
+  assert.ok(!updated.includes("@bybrawe/opencode-goal"))
+  assert.ok(updated.includes("@bybrawe/opencode-loop"))
   assert.equal(await readFile(projectState, "utf8"), '{"status":"paused"}')
   const again = run(config, ["--uninstall"], { OPENCODE_CONFIG: external })
   assert.equal(again.status, 0, again.stderr)

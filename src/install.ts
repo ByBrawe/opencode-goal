@@ -152,9 +152,11 @@ async function installAcrossExistingConfigs(existing: string[]): Promise<void> {
   for (const plan of plans) console.log(`- ${plan.target}`)
   console.log(`Pinned plugin spec: ${packageSpec}`)
   console.log(nativeGoalCommandMode
-    ? `OpenCode ${targetMajor}.x selected; using the plugin-native /goal command and removing the legacy managed bridge: ${goalCommandPath}`
+    ? `OpenCode ${targetMajor}.x selected; using the plugin-native /goalx command alongside built-in /goal; legacy managed bridge removed: ${goalCommandPath}`
     : `Installed managed /goal command: ${goalCommandPath}`)
-  console.log("Fully restart OpenCode, type /goal, then verify with: /goal status")
+  console.log(nativeGoalCommandMode
+    ? "Fully restart OpenCode, type /goalx, then verify with: /goalx status. Native /goal remains separate."
+    : "Fully restart OpenCode, type /goal, then verify with: /goal status")
 }
 
 async function main() {

@@ -8,7 +8,7 @@ import path from "node:path"
 import process from "node:process"
 
 const COMMAND = "goal-promotion-probe"
-const MANAGED_GOAL_COMMAND = "goal"
+const MANAGED_GOAL_COMMAND = "goalx"
 const MANAGED_GOAL_SENTINEL = "MANAGED_GOAL_DIRECT_SENTINEL"
 const IDENTITY_COMMAND = "goal-prompt-identity-probe"
 const CAPABILITY_COMMAND = "goal-capability-probe"
@@ -343,7 +343,7 @@ export default {
     const commandRegistration = await ctx.command.transform((editor) => {
       editor.add({
         name: managedGoalCommandName,
-        description: "OpenCode Goal managed /goal collision probe",
+        description: "OpenCode Goal managed /goalx collision probe",
         async execute(input) {
           await trace({
             phase: "managed-goal.command.execute",
@@ -826,19 +826,19 @@ async function main() {
     )
     assert.ok(
       managedGoalDirect.ok,
-      `plugin-native /goal direct command failed: HTTP ${managedGoalDirect.status} ${managedGoalDirect.text}\n${await diagnostics()}`,
+      `plugin-native /goalx direct command failed: HTTP ${managedGoalDirect.status} ${managedGoalDirect.text}\n${await diagnostics()}`,
     )
     await waitFor(async () => {
       const trace = await readTrace(traceFile)
       return trace.some(
         (item) => item.phase === "managed-goal.command.execute" && item.sessionID === managedGoalSessionID,
       )
-    }, "managed /goal direct plugin callback", diagnostics, 15_000)
+    }, "managed /goalx direct plugin callback", diagnostics, 15_000)
     await new Promise((resolve) => setTimeout(resolve, 500))
     assert.equal(
       provider.stats.requests.length,
       0,
-      `managed /goal command fell through to model execution\n${await diagnostics()}`,
+      `managed /goalx command fell through to model execution\n${await diagnostics()}`,
     )
 
     commandSessionID = await createSession("OpenCode Goal V2 direct command origin")

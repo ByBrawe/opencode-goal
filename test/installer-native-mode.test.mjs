@@ -194,5 +194,15 @@ test("uninstall inspects OPENCODE_CONFIG custom path and preserves unrelated plu
   const again = run(config, ["--uninstall"], { OPENCODE_CONFIG: external })
   assert.equal(again.status, 0, again.stderr)
   assert.equal(await readFile(external, "utf8"), updated)
+
+  // The executable shipped on npm is bin/opencode-goal.js. Verify it invokes
+  // the same uninstall path, rather than testing only dist/install.js.
+  await writeFile(external, source)
+  const packagedBin = spawnSync(process.execPath, [path.join(root, "bin", "opencode-goal.js"), "--uninstall"], {
+    cwd: root, encoding: "utf8", timeout: 20_000,
+    env: { ...process.env, OPENCODE_CONFIG_DIR: config, OPENCODE_CONFIG: external },
+  })
+  assert.equal(packagedBin.status, 0, packagedBin.stderr)
+  assert.ok(!(await readFile(external, "utf8")).includes("@bybrawe/opencode-goal"))
 }))
 

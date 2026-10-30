@@ -2,9 +2,9 @@
 
 All notable changes to **OpenCode Goals** are documented here.
 
-## 1.3.50 — 2026-10-27
+## 1.3.50 — 2026-10-30
 
-OpenCode 2 reliability, stale-writer recovery, and honest verified completion.
+Final maintenance-focused OpenCode 2 reliability release: stale-writer recovery and verifiable completion. Loop is separately maintained; OpenCode 2.2.x has its own native `/goal` command.
 
 - Fix #275 through the contributor's [PR #276](https://github.com/ByBrawe/opencode-goal/pull/276) (@muhammad-luay): make V1 and native V2 Goal writes retry *only* stale generations against the fresh persisted Goal snapshot, with bounded attempts and unchanged lock/integrity protections.
 - Prevent prior Goal/turn execution contexts from attaching to a newly edited or replaced same-session Goal, and prevent replayed V1/V2 completion evidence from closing changed progress, Todo, file contracts or requirements.

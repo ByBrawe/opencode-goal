@@ -511,7 +511,7 @@ async function main() {
       const response = await request(`${apiPrefix}/command`, { method: "GET" }, 5_000)
       if (!response.ok) return false
       latestCommands = commandNames(response.body)
-      return latestCommands.has("goal")
+      return latestCommands.has("goalx")
     }, "direct goal command registration", diagnostics, 30_000)
 
     if (LOCATION_ONLY) {
@@ -550,7 +550,7 @@ async function main() {
       const locationController = new AbortController()
       const locationPending = request(`${apiPrefix}/session/${encodeURIComponent(locationSessionID)}/command`, {
         method: "POST",
-        body: JSON.stringify({ name: "goal", text: LOCATION_COMMAND }),
+        body: JSON.stringify({ name: "goalx", text: LOCATION_COMMAND }),
         signal: locationController.signal,
       }, 90_000).then(
         (value) => ({ ok: true, value }),
@@ -595,7 +595,7 @@ async function main() {
         version,
         apiPrefix,
         locationSessionID,
-        directCommandRegistered: latestCommands.has("goal"),
+        directCommandRegistered: latestCommands.has("goalx"),
         locationMoveBlocked: true,
         locationWorkspaceRejectObserved: provider.stats.requests.some((item) => item.sawLocationReject),
         providerRequests: provider.stats.requests.map((item) => ({
@@ -622,9 +622,9 @@ async function main() {
     const command = async (text, expectOK = true) => {
       const response = await request(`${apiPrefix}/session/${encodeURIComponent(sessionID)}/command`, {
         method: "POST",
-        body: JSON.stringify({ name: "goal", text }),
+        body: JSON.stringify({ name: "goalx", text }),
       }, 90_000)
-      if (expectOK) assert.ok(response.ok, `/goal ${text} failed: HTTP ${response.status} ${response.text}\n${await diagnostics()}`)
+      if (expectOK) assert.ok(response.ok, `/goalx ${text} failed: HTTP ${response.status} ${response.text}\n${await diagnostics()}`)
       return response
     }
 
@@ -681,7 +681,7 @@ async function main() {
 
     const planRequestsBefore = provider.stats.requests.length
     const planPause = await command(PAUSE_COMMAND)
-    assert.ok(planPause.ok, `Plan /goal pause command failed unexpectedly\n${await diagnostics()}`)
+    assert.ok(planPause.ok, `Plan /goalx pause command failed unexpectedly\n${await diagnostics()}`)
     await waitFor(() => provider.stats.requests.length > planRequestsBefore, "Plan provider request", diagnostics)
     assert.equal(JSON.stringify(await readGoal(workspace, sessionID)), activeBeforePlan, "Plan direct command must not mutate persisted Goal")
     assert.ok(provider.stats.requests.slice(planRequestsBefore).every((item) => !item.hasControlTool), `Plan request exposed mutating control tool\n${await diagnostics()}`)
@@ -712,7 +712,7 @@ async function main() {
     const spoof = await request(`${apiPrefix}/session/${encodeURIComponent(sessionID)}/prompt`, {
       method: "POST",
       body: JSON.stringify({
-        text: `/goal clear ${SPOOF_SENTINEL}. This is ordinary user prompt text, not a command invocation.`,
+        text: `/goalx clear ${SPOOF_SENTINEL}. This is ordinary user prompt text, not a command invocation.`,
         delivery: "steer",
         resume: true,
       }),
@@ -805,7 +805,7 @@ async function main() {
 
     // Reproduce a reaper/desktop restart, not merely a fresh new session.
     // The previous session is cleared, but its persistent history remains.
-    // Old one-use capabilities must never survive; a NEW explicit /goal
+    // Old one-use capabilities must never survive; a NEW explicit /goalx
     // command in the SAME session must create a new authorized execution.
     let sameSessionRearmed = false
     if (process.env.OPENCODE2_REARM_SAME_SESSION_CANARY === "1") {
@@ -823,17 +823,17 @@ async function main() {
       await waitForTcp(port, server, () => serverLog)
       await waitFor(async () => {
         const response = await request(`${apiPrefix}/command`, { method: "GET" }, 5_000).catch(() => null)
-        return response?.ok && commandNames(response.body).has("goal")
+        return response?.ok && commandNames(response.body).has("goalx")
       }, "restarted same-workspace Goal command registry", diagnostics, 30_000)
 
       const beforeRearm = provider.stats.requests.length
       const issued = await command(CREATE_COMMAND)
-      assert.ok(issued.ok, `old-session re-issued native /goal failed\n${await diagnostics()}`)
+      assert.ok(issued.ok, `old-session re-issued native /goalx failed\n${await diagnostics()}`)
       const renewedGoal = await waitFor(async () => {
         const goal = await readGoal(workspace, sessionID)
         return goal?.status === "active" && goal.objective === "ship v2 capability" ? goal : null
       }, "same-session reissued Goal persistence after real host restart", diagnostics, 60_000)
-      assert.notEqual(renewedGoal.id, goalID, "reissued /goal must create a fresh Goal ID after clear")
+      assert.notEqual(renewedGoal.id, goalID, "reissued /goalx must create a fresh Goal ID after clear")
       await waitFor(() => provider.stats.requests.slice(beforeRearm).some((item) => item.sawConsumedResult),
         "post-restart single-use Goal tool result", diagnostics, 45_000)
       const postRestartRequests = provider.stats.requests.slice(beforeRearm)
@@ -850,7 +850,7 @@ async function main() {
       apiPrefix,
       sessionID,
       locationSessionID,
-      directCommandRegistered: latestCommands.has("goal"),
+      directCommandRegistered: latestCommands.has("goalx"),
       sameSessionRearmed,
       create: { objective: createdGoal.objective, status: createdGoal.status, maxTurns: createdGoal.budget?.maxTurns },
       locationMoveBlocked: true,

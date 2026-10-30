@@ -247,7 +247,7 @@ async function runHook(host, hookName, {
 }
 
 async function dispatchDirectCommand(host, sessionID, command, delivery = "steer") {
-  const definition = host.commands.get("goal")
+  const definition = host.commands.get("goalx")
   assert.equal(typeof definition?.execute, "function")
   const before = host.prompts.length
   await definition.execute({
@@ -290,7 +290,7 @@ test("stable V2 kill switch preserves the read-only fail-closed adapter", async 
       assert.equal(OpenCode2GoalsExperimental.id, OPENCODE2_EXPERIMENTAL_PLUGIN_ID)
       const cleanup = await OpenCode2GoalsExperimental.setup(host.ctx)
 
-      assert.equal(host.commandTransformCalls(), 0, "disabled V2 lifecycle must not register the host-native /goal command")
+      assert.equal(host.commandTransformCalls(), 0, "disabled V2 lifecycle must not register the host-native /goalxx command")
       assert.equal(host.commands.size, 0)
       assert.equal(host.tools.has("opencode_goals_v2_control"), false)
       assert.equal(host.tools.get("opencode_goals_v2_get")?.options?.codemode, false)
@@ -333,7 +333,7 @@ test("OpenCode 2 native plugin options can disable lifecycle/autonomous while en
     overridden.ctx.options.autonomous = false
     const overriddenCleanup = await OpenCode2GoalsExperimental.setup(overridden.ctx)
     assert.equal(overridden.commandTransformCalls(), 1)
-    assert.equal(typeof overridden.commands.get("goal")?.execute, "function")
+    assert.equal(typeof overridden.commands.get("goalx")?.execute, "function")
     assert.equal(typeof overridden.tools.get("opencode_goals_v2_control")?.definition?.execute, "function")
     assert.equal(typeof overridden.tools.get("opencode_goal_complete")?.definition?.execute, "function")
     await overriddenCleanup()
@@ -357,9 +357,13 @@ test("stable V2 registers lifecycle and autonomous work controls by default", as
     delete process.env[autonomousKey]
     try {
       const host = fakeV2Context(root)
+      const builtInGoal = { description: "OpenCode native /goal", execute: () => "native" }
+      host.commands.set("goal", builtInGoal)
       const cleanup = await OpenCode2GoalsExperimental.setup(host.ctx)
       assert.equal(host.commandTransformCalls(), 1)
-      assert.equal(typeof host.commands.get("goal")?.execute, "function")
+      assert.equal(typeof host.commands.get("goalx")?.execute, "function")
+      assert.equal(host.commands.get("goal"), builtInGoal, "GoalX must not shadow the host built-in /goal")
+      assert.equal(host.commands.size, 2)
       assert.equal(typeof host.tools.get("opencode_goals_v2_control")?.definition?.execute, "function")
       assert.equal(typeof host.tools.get("opencode_goals_v2_get")?.definition?.execute, "function")
       assert.equal(typeof host.tools.get("opencode_goal_complete")?.definition?.execute, "function")
@@ -922,7 +926,7 @@ test("V2 unit change hands one active Goal to a fresh native session with the sa
       assert.equal(handoffPrompts[0].returnedID, handoffPrompts[1].returnedID, "admit/resume must reuse one durable host inbox ID")
 
       await assert.rejects(
-        () => host.commands.get("goal").execute({
+        () => host.commands.get("goalx").execute({
           sessionID: sourceSessionID,
           prompt: { text: "edit stale predecessor" },
           delivery: "steer",
@@ -1316,7 +1320,7 @@ test("V2 lifecycle override can explicitly enable host command and mutating tool
       await OpenCode2GoalsExperimental.setup(host.ctx)
 
       assert.equal(host.commandTransformCalls(), 1)
-      assert.equal(typeof host.commands.get("goal")?.execute, "function")
+      assert.equal(typeof host.commands.get("goalx")?.execute, "function")
       assert.equal(typeof host.tools.get("opencode_goals_v2_control")?.definition?.execute, "function")
       assert.equal(typeof host.tools.get("opencode_goals_v2_get")?.definition?.execute, "function")
     })
@@ -1375,7 +1379,7 @@ test("direct lifecycle command mints host-message capability without persisting 
   }
 })
 
-test("V2 restarted plugin re-arms only a fresh host-native /goal command on the same old session", async () => {
+test("V2 restarted plugin re-arms only a fresh host-native /goalxx command on the same old session", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode-goals-v2-old-session-rearm-"))
   const sessionID = "v2-old-reaped-session"
   const command = 'ship work after window restart --accept "persist new goal"'
@@ -1393,7 +1397,7 @@ test("V2 restarted plugin re-arms only a fresh host-native /goal command on the 
 
       // Reopening the SAME session starts a new plugin runtime. Merely
       // replaying the older message is forbidden, but a new explicit native
-      // /goal command must receive a new host-authenticated capability.
+      // /goalx command must receive a new host-authenticated capability.
       const reopened = fakeV2Context(root)
       const cleanup = await OpenCode2GoalsExperimental.setup(reopened.ctx)
       try {
@@ -1406,7 +1410,7 @@ test("V2 restarted plugin re-arms only a fresh host-native /goal command on the 
         const renewed = await dispatchDirectCommand(reopened, sessionID, command)
         const freshContext = await armCapability(reopened, sessionID, renewed.messageID)
         assert.ok(freshContext.tools.opencode_goals_v2_control,
-          "reissued native /goal must arm after plugin restart in the same session")
+          "reissued native /goalxx must arm after plugin restart in the same session")
         const result = await consumeCapability(reopened, sessionID, command)
         assert.match(result.content, /single-use capability is consumed/i)
         const saved = await new GoalStore(root).load(sessionID)
@@ -1464,7 +1468,7 @@ test("ordinary prompt text and Plan contexts cannot arm or reuse lifecycle mutat
       const ordinary = await runHook(host, "context", {
         sessionID,
         messageID: "ordinary-user",
-        text: "/goal ship spoofed",
+        text: "/goalx ship spoofed",
       })
       assert.equal(ordinary.tools.opencode_goals_v2_control, undefined)
       assert.equal(await new GoalStore(root).load(sessionID), null)

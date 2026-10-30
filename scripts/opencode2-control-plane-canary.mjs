@@ -384,11 +384,11 @@ async function main() {
       const response = await request("/api/command", { method: "GET" }, 5_000).catch(() => null)
       if (response?.ok) {
         latestCommands = commandNames(response.body)
-        if (latestCommands.has("goal")) break
+        if (latestCommands.has("goalx")) break
       }
       await new Promise((resolve) => setTimeout(resolve, 100))
     }
-    assert.ok(latestCommands.has("goal"), `goal command never registered\n${await diagnostics()}`)
+    assert.ok(latestCommands.has("goalx"), `goal command never registered\n${await diagnostics()}`)
 
     const created = await request("/api/session", {
       method: "POST",
@@ -402,9 +402,9 @@ async function main() {
       const before = provider.stats.requests.length
       const response = await request(`/api/session/${encodeURIComponent(sessionID)}/command`, {
         method: "POST",
-        body: JSON.stringify({ name: "goal", text }),
+        body: JSON.stringify({ name: "goalx", text }),
       }, 90_000)
-      assert.ok(response.ok, `/goal ${text} failed: HTTP ${response.status} ${response.text}\n${await diagnostics()}`)
+      assert.ok(response.ok, `/goalx ${text} failed: HTTP ${response.status} ${response.text}\n${await diagnostics()}`)
 
       const deadline = Date.now() + (requireProvider ? 45_000 : 1_500)
       let lastCount = provider.stats.requests.length
@@ -422,7 +422,7 @@ async function main() {
       if (requireProvider) {
         assert.ok(
           provider.stats.requests.length > before,
-          `/goal ${text} produced no provider request after command admission\n${await diagnostics()}`,
+          `/goalx ${text} produced no provider request after command admission\n${await diagnostics()}`,
         )
       }
       return provider.stats.requests.slice(before)
@@ -432,23 +432,23 @@ async function main() {
       const before = provider.stats.requests.length
       const response = await request(`/api/session/${encodeURIComponent(sessionID)}/command`, {
         method: "POST",
-        body: JSON.stringify({ name: "goal", text }),
+        body: JSON.stringify({ name: "goalx", text }),
       }, 90_000)
-      assert.ok(response.ok, `read-only /goal ${text} failed: HTTP ${response.status} ${response.text}\n${await diagnostics()}`)
+      assert.ok(response.ok, `read-only /goalx ${text} failed: HTTP ${response.status} ${response.text}\n${await diagnostics()}`)
 
       const matched = await waitFor(() => {
         const requests = provider.stats.requests.slice(before)
         return requests.find((item) => expected.test(item.currentUserText)) ?? null
-      }, `read-only /goal ${text} expected V1 presentation`, diagnostics, 30_000)
+      }, `read-only /goalx ${text} expected V1 presentation`, diagnostics, 30_000)
 
-      assert.equal(matched.hasControlTool, false, `read-only /goal ${text} exposed mutating control`)
+      assert.equal(matched.hasControlTool, false, `read-only /goalx ${text} exposed mutating control`)
     }
 
     const assertLifecycleMutation = async (text) => {
       const requests = await command(text)
       assert.ok(
         requests.some((item) => item.hasControlTool && item.toolCommand === text),
-        `lifecycle /goal ${text} was not bound to the exact host capability\n${JSON.stringify(requests, null, 2)}`,
+        `lifecycle /goalx ${text} was not bound to the exact host capability\n${JSON.stringify(requests, null, 2)}`,
       )
       return requests
     }
@@ -457,7 +457,7 @@ async function main() {
       const requests = await command(text, { requireProvider: false })
       assert.ok(
         requests.every((item) => !item.hasControlTool),
-        `host-native admin /goal ${text} leaked the lifecycle control tool\n${JSON.stringify(requests, null, 2)}`,
+        `host-native admin /goalx ${text} leaked the lifecycle control tool\n${JSON.stringify(requests, null, 2)}`,
       )
       return requests
     }

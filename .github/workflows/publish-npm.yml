@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   publish:
-    name: Publish 1.3.49
+    name: Publish 1.3.50
     if: github.repository == 'ByBrawe/opencode-goal' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 35
@@ -26,13 +26,12 @@ jobs:
       contents: read
       actions: read
       id-token: write
-    # 1.3.49 releases only after every required gate passes on this exact main SHA.
-    # Add an exclusive-file lock fallback for hard-link-incompatible exFAT/FAT
-    # project volumes. Keep Goal ownership, corrupt-lock fail-closed behavior,
-    # cleanup elections and independent Loop installation unchanged.
+    # Goal 1.3.50 publishes only after every exact-main release gate succeeds.
+    # Includes safe stale-write retries, source-grounded completion proof and
+    # optional native OpenTUI 0.7 peers. Keep ownership fail-closed.
     env:
-      RELEASE_VERSION: '1.3.49'
-      RELEASE_PREDECESSOR: '1.3.48'
+      RELEASE_VERSION: '1.3.50'
+      RELEASE_PREDECESSOR: '1.3.49'
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -93,16 +92,17 @@ jobs:
         if: steps.release.outputs.publish == 'true'
         with:
           repository: ByBrawe/opencode-loop
-          ref: 7dff8a5716d3ac768c79bc4e0a8c78ae7cc3f53e
+          ref: ea1416d0e1db855d08635f53664de7beae2b55ae
           path: companion-loop
           persist-credentials: false
       - name: Real native pair and read-only status before publication
         if: steps.release.outputs.publish == 'true'
         shell: bash
         run: |
-          npm install --prefix "$RUNNER_TEMP/native-host" --package-lock=false @opencode/cli@2.0.18
+          npm install --prefix "$RUNNER_TEMP/native-host" --package-lock=false @opencode/cli@2.1.4
           export OPENCODE2_BINARY="$RUNNER_TEMP/native-host/node_modules/.bin/opencode2"
-          test "$("$OPENCODE2_BINARY" --version)" = 'opencode v2.0.18'
+          export OPENCODE2_EXPECTED_VERSION=2.1.4
+          test "$("$OPENCODE2_BINARY" --version)" = 'opencode v2.1.4'
           export OPENCODE_GOAL_INSTALLER="$GITHUB_WORKSPACE/dist/install.js"
           export OPENCODE_GOAL_V2_PLUGIN_URL="file://$GITHUB_WORKSPACE/dist/server.js"
           export OPENCODE2_CURRENT_COMMAND_FIELDS=1 OPENCODE2_NATIVE_REQUIRED=1
@@ -186,4 +186,22 @@ jobs:
           assert.equal(tui.id, 'opencode-goal')
           assert.equal(typeof tui.setup, 'function')
           console.log('PUBLISHED_NATIVE_TUI_PASS')
+          JS
+          # The 1.3.50 peer expansion must also resolve the *published* package
+          # under the newer OpenCode 2.1.4/OpenTUI 0.7 host without --force or
+          # --legacy-peer-deps; failure is a failed post-publish verification.
+          npm install --omit=dev --ignore-scripts --no-audit --no-fund \
+            "@bybrawe/opencode-goal@$RELEASE_VERSION" "@opencode/cli@2.1.4" \
+            "@opentui/core@0.7.0" "@opentui/solid@0.7.0" "solid-js@1.9.12"
+          npm ls @bybrawe/opencode-goal @opencode/cli @opentui/core @opentui/solid solid-js
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict'
+          import { readFileSync } from 'node:fs'
+          const installedVersion = (name) => JSON.parse(readFileSync('node_modules/@opentui/' + name + '/package.json', 'utf8')).version
+          assert.equal(installedVersion('core'), '0.7.0')
+          assert.equal(installedVersion('solid'), '0.7.0')
+          const { default: tui } = await import('@bybrawe/opencode-goal/tui')
+          assert.equal(tui.id, 'opencode-goal')
+          assert.equal(typeof tui.setup, 'function')
+          console.log('PUBLISHED_NATIVE_TUI_OPENTUI_0_7_STRICT_PASS')
           JS

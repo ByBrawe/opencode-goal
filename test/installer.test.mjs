@@ -109,8 +109,9 @@ $ARGUMENTS
 
     const result = await runInstaller(configDir, [], { OPENCODE_GOAL_HOST_VERSION: "2.0.11" })
     assert.equal(result.code, 0, result.stderr)
-    assert.match(result.stdout, /plugin-native \/goal command/i)
+    assert.match(result.stdout, /plugin-native \/goalx command/i)
     assert.equal(await exists(commandPath), false)
+    assert.match(result.stdout, /type \/goalx, then verify with: \/goalx status/)
 
     const config = JSON.parse(await readFile(path.join(configDir, "opencode.json"), "utf8"))
     assert.deepEqual(config.plugins, [packageSpec])

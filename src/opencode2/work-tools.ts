@@ -280,7 +280,7 @@ export function createOpenCode2GoalWorkTools(input: {
         const owner = initialResult.owner
         const directory = initialResult.directory
         if ((initial.completionMode ?? "verified") === "continuous") {
-          return response("Completion disabled: this Goal is continuous. Keep working until the user pauses/clears it or a safety boundary stops it; use /goal edit <objective> --verified to re-enable verified completion.", initial)
+          return response("Completion disabled: this Goal is continuous. Keep working until the user pauses/clears it or a safety boundary stops it; use /goalx edit <objective> --verified to re-enable verified completion.", initial)
         }
 
         for (let attempt = 0; attempt < MAX_COMPLETION_VERIFICATION_ATTEMPTS; attempt += 1) {
@@ -333,7 +333,7 @@ export function createOpenCode2GoalWorkTools(input: {
                   return response("Completion not verified: goal changed, paused, or stopped while semantic verification was unavailable.", result?.goal ?? null)
                 }
                 return response(
-                  `Completion not verified: ${error.message}. Goal paused to prevent repeated verifier retries. Use /goal resume to retry after the verifier/provider recovers.`,
+                  `Completion not verified: ${error.message}. Goal paused to prevent repeated verifier retries. Use /goalx resume to retry after the verifier/provider recovers.`,
                   result.goal,
                 )
               })

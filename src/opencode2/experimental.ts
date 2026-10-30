@@ -1,5 +1,5 @@
 import path from "node:path"
-import { createGoal, editGoal, pauseGoal, resumeGoal } from "../domain/goalx.js"
+import { createGoal, editGoal, pauseGoal, resumeGoal } from "../domain/goal.js"
 import type { GoalState } from "../domain/types.js"
 import { GoalStore, mutateGoal } from "../persistence/store.js"
 import { applyGoalBudget, budgetLimitHits } from "../runtime/accounting.js"

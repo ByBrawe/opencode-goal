@@ -482,7 +482,7 @@ async function main() {
       const response = await request("/api/command", { method: "GET" }, 5_000).catch(() => null)
       if (!response?.ok) return false
       latestCommands = commandNames(response.body)
-      return latestCommands.has("goal")
+      return latestCommands.has("goalx")
     }, "exact OpenCode 2 plugin-aware command surface", diagnostics, 30_000)
 
     const created = await request("/api/session", {
@@ -495,7 +495,7 @@ async function main() {
 
     const commandPromise = request(`/api/session/${encodeURIComponent(sessionID)}/command`, {
       method: "POST",
-      body: JSON.stringify({ name: "goal", text: CREATE_COMMAND }),
+      body: JSON.stringify({ name: "goalx", text: CREATE_COMMAND }),
     }, 180_000)
 
     const firstGoal = await waitFor(async () => await goalStore.load(sessionID), "initial persisted Goal", diagnostics, 30_000)

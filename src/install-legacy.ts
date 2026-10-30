@@ -2,7 +2,7 @@
 import { isDeepStrictEqual } from "node:util"
 import { copyFile, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
 import { homedir } from "node:os"
-import { dirname, join } from "node:path"
+import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const packageName = "@bybrawe/opencode-goal"
@@ -17,6 +17,12 @@ const goalCommandPath = join(commandDir, "goal.md")
 const managedCommandMarker = "<!-- managed-by:@bybrawe/opencode-goal -->"
 const goalCommandContent = `---\ndescription: Set or manage a persistent evidence-verified goal\n---\n\n${managedCommandMarker}\nOpenCode Goals command bridge. The OpenCode Goals plugin should intercept this command before model execution.\nIf this text reaches the model, do not perform the requested work. Tell the user the OpenCode Goals plugin did not load, then ask them to reinstall/update with npx -y @bybrawe/opencode-goal@latest and fully restart OpenCode.\n\nRequested /goal arguments:\n$ARGUMENTS\n`
 const configCandidates = ["opencode.json", "opencode.jsonc", "config.json", "config.jsonc"]
+// OpenCode may also load an explicit file outside OPENCODE_CONFIG_DIR.
+// Uninstall inspects that file without searching or mutating unrelated projects.
+const uninstallCandidates = (): string[] => [...new Set([
+  ...configCandidates.map((name) => join(configDir, name)),
+  ...(process.env.OPENCODE_CONFIG?.trim() ? [resolve(process.env.OPENCODE_CONFIG.trim())] : []),
+])]
 const installerArgs = process.argv.slice(2)
 const nativeGoalCommandMode = process.env.OPENCODE_GOAL_NATIVE_COMMANDS === "1"
 const uninstallRequested = installerArgs.length === 1 && ["--uninstall", "uninstall", "--remove"].includes(installerArgs[0] ?? "")
@@ -605,8 +611,7 @@ async function removeLegacyLocalCopies(): Promise<void> {
 
 async function uninstall(): Promise<void> {
   const plans: Array<{ target: string; content: string; changed: boolean }> = []
-  for (const name of configCandidates) {
-    const target = join(configDir, name)
+  for (const target of uninstallCandidates()) {
     if (!(await fileExists(target))) continue
     const source = await readFile(target, "utf8")
     const updated = rewritePluginConfig(source, "uninstall")
@@ -622,7 +627,8 @@ async function uninstall(): Promise<void> {
   const changedCount = plans.filter((plan) => plan.changed).length
   console.log(changedCount > 0
     ? `Removed OpenCode Goals registrations from ${changedCount} OpenCode config file(s).`
-    : "OpenCode Goals was not registered in the inspected OpenCode config files.")
+    : `OpenCode Goals was not registered in the inspected OpenCode config files (${configDir}${process.env.OPENCODE_CONFIG ? `, override: ${resolve(process.env.OPENCODE_CONFIG)}` : ""}).`)
+  console.log(`Checked ${uninstallCandidates().length} candidate config path(s). Project-local or other host configs are not modified.`)
   console.log("Removed known local opencode-goal.ts/js plugin copies when present.")
   console.log(removedCommand ? `Removed managed /goal command: ${goalCommandPath}` : "No managed /goal command needed removal.")
   console.log("Project Goal state under .opencode/goals, .opencode/goal-sequences, and .opencode/goal-locks is preserved.")

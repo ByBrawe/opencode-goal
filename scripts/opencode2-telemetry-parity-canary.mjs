@@ -431,7 +431,7 @@ async function main() {
       const response = await request("/api/command", { method: "GET" }, 5_000).catch(() => null)
       if (!response?.ok) return false
       commands = commandNames(response.body)
-      return commands.has("goal")
+      return commands.has("goalx")
     }, "Goal command registration", diagnostics, 30_000)
 
     const created = await request("/api/session", {
@@ -444,7 +444,7 @@ async function main() {
 
     const commandPromise = request(`/api/session/${encodeURIComponent(sessionID)}/command`, {
       method: "POST",
-      body: JSON.stringify({ name: "goal", text: CREATE_COMMAND }),
+      body: JSON.stringify({ name: "goalx", text: CREATE_COMMAND }),
     })
 
     await waitFor(() => p.firstFinalHeld, "first Goal tool loop follow-up", diagnostics)

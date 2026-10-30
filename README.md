@@ -452,7 +452,7 @@ opencode-goal --uninstall
 npm uninstall -g @bybrawe/opencode-goal
 ```
 
-Project Goal state is intentionally **not deleted** during uninstall:
+The uninstaller checks the standard global JSON/JSONC files and, when set, the exact file in `OPENCODE_CONFIG`. It does **not** traverse project folders or remove a different host\'s settings. If you still see the third-party Goal after a restart, inspect the project\'s `opencode.json(c)` and `.opencode/plugins/` or rerun with the exact custom config directory via `OPENCODE_CONFIG_DIR`. OpenCode 2.2.x has a separate built-in `/goal`, which may remain visible after uninstalling this package.\n\nProject Goal state is intentionally **not deleted** during uninstall:
 
 ```text
 .opencode/goals/

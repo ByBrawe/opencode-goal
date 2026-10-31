@@ -106,7 +106,12 @@ jobs:
           test "$("$OPENCODE2_BINARY" --version)" = 'opencode v2.1.4'
           export OPENCODE2_CURRENT_COMMAND_FIELDS=1 OPENCODE2_NATIVE_REQUIRED=1
           # Loop is checked standalone: do not set OPENCODE_GOAL_V2_PLUGIN_URL.
-          (cd companion-loop && npm ci && node scripts/opencode2-loop-canary.mjs && node scripts/native-cli-host-canary.mjs)
+          (cd companion-loop && npm ci && node scripts/opencode2-loop-canary.mjs)
+          # This Loop daemon/CLI regression explicitly requires OpenCode 2.0.18,
+          # whereas the GoalX lifecycle and standalone Loop canary above use 2.1.4.
+          npm install --prefix "$RUNNER_TEMP/loop-cli-host" --package-lock=false @opencode/cli@2.0.18
+          test "$("$RUNNER_TEMP/loop-cli-host/node_modules/.bin/opencode2" --version)" = 'opencode v2.0.18'
+          (cd companion-loop && OPENCODE2_BINARY="$RUNNER_TEMP/loop-cli-host/node_modules/.bin/opencode2" node scripts/native-cli-host-canary.mjs)
           # GoalX is checked separately with a native direct command, and RPC is read-only.
           node scripts/opencode2-direct-lifecycle-canary.mjs
           node scripts/native-status-host-canary.mjs

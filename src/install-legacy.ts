@@ -664,9 +664,11 @@ async function installOrUpdate(): Promise<void> {
   await removeLegacyLocalCopies()
   console.log(`Pinned plugin spec: ${packageSpec}`)
   console.log(nativeGoalCommandMode
-    ? `Using plugin-native /goal command; legacy managed command bridge is not installed: ${goalCommandPath}`
+    ? `Using plugin-native /goalx command; built-in /goal stays untouched; legacy managed command bridge is not installed: ${goalCommandPath}`
     : `Installed managed /goal command: ${goalCommandPath}`)
-  console.log("Fully restart OpenCode, type /goal, then verify with: /goal status")
+  console.log(nativeGoalCommandMode
+    ? "Fully restart OpenCode, type /goalx, then verify with: /goalx status. Native /goal remains separate."
+    : "Fully restart OpenCode, type /goal, then verify with: /goal status")
 }
 
 if (uninstallRequested) await uninstall()

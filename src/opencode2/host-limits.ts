@@ -116,7 +116,7 @@ export function observeOpenCode2NativeCompaction(
 }
 
 export function repeatedOpenCode2CompactionReason(): string {
-  return "OpenCode auto-compacted the same Goal revision again before any successful Goal-owned execution completed. Goal state is preserved to prevent an unbounded compaction/continuation loop. Run /compact if needed, then /goal resume."
+  return "OpenCode auto-compacted the same Goal revision again before any successful Goal-owned execution completed. Goal state is preserved to prevent an unbounded compaction/continuation loop. Run /compact if needed, then /goalx resume."
 }
 
 export function normalizeOpenCode2ProviderFailure(error: unknown): HostSessionError {
@@ -160,7 +160,7 @@ export function classifyOpenCode2ExecutionFailure(
       reason: overflow,
       goal: pauseForFatalProviderError(
         goal,
-        overflow + " OpenCode native compaction did not recover this Goal-owned execution. Goal state is preserved. Run /compact, then /goal resume.",
+        overflow + " OpenCode native compaction did not recover this Goal-owned execution. Goal state is preserved. Run /compact, then /goalx resume.",
         now,
       ),
     }

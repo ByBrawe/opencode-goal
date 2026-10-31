@@ -1,4 +1,4 @@
-# OpenCode Goals
+# ByBrawe OpenCode Goals
 
 **Language:** **English** · [Türkçe](./README.tr.md)
 
@@ -8,11 +8,13 @@
 
 **Persistent, host-verified Goal mode for OpenCode.**
 
-OpenCode Goals is an **OpenCode goal plugin** for long-running AI coding tasks. It adds a durable `/goal` workflow so an OpenCode coding agent can keep one explicit objective across multiple turns, context compaction, interruptions, delegated work, and process restarts — while completion remains gated by current host evidence instead of the executor simply saying “done”.
+OpenCode Goals is an **OpenCode goal plugin** for long-running AI coding tasks. It adds a durable `/goalx` workflow so an OpenCode coding agent can keep one explicit objective across multiple turns, context compaction, interruptions, delegated work, and process restarts — while completion remains gated by current host evidence instead of the executor simply saying “done”.
 
 If you are looking for an **OpenCode autonomous agent**, **persistent goal mode**, **multi-turn coding agent**, **Codex-style long-running goal workflow for OpenCode**, or an OpenCode plugin with **independent completion verification**, this package is built for that use case.
 
 > Independent OpenCode plugin. “Codex-style” describes the long-running goal workflow pattern only; no endorsement or feature-parity claim is implied.
+
+**Command names:** On OpenCode **2.x**, our plugin uses **`/goalx`**. OpenCode's built-in **`/goal`** stays separate and is not overridden. OpenCode **1.x** retains the existing `/goal` command and managed `commands/goal.md` bridge. The npm package, GitHub repository and all persisted Goal contracts/evidence remain unchanged. **The `/goalx` command is part of the 1.3.50 release candidate; use it only after npm confirms that version is published.** Until independent session ownership is verified end to end, do not run both autonomous Goal engines in the same session.
 
 ## Install or update
 
@@ -34,11 +36,11 @@ opencode-goal
 Then **fully restart OpenCode** and verify:
 
 ```text
-/goal status
+/goalx status
 ```
 
-You should also see `/goal` in OpenCode's slash-command list. If Windows
-Desktop says "no matching item" even though terminal TUI lists both `/goal`
+You should also see `/goalx` in OpenCode's slash-command list. If Windows
+Desktop says "no matching item" even though terminal TUI lists both `/goalx`
 and `/loop`, follow the [Windows Desktop native command diagnostic guide](https://github.com/ByBrawe/opencode-loop/blob/main/docs/OPENCODE2-DESKTOP-WINDOWS.md).
 The Desktop and TUI may use different server versions, project directories
 or connections. Do not add a legacy `goal.md` prompt bridge before checking
@@ -56,7 +58,7 @@ The installer:
 - upgrades old, bare, or `@latest` Goal plugin entries;
 - removes known duplicate legacy local Goal plugin copies;
 - on OpenCode 1.x, installs a managed global `commands/goal.md` so `/goal` is discoverable;
-- on OpenCode 2.x, writes the native `plugins` config and uses the plugin-native `/goal` command instead of the legacy command bridge;
+- on OpenCode 2.x, writes the native `plugins` config and uses the plugin-native `/goalx` command instead of the legacy command bridge;
 - preserves unrelated OpenCode settings, plugin registrations, and JSONC comments outside the Goal-owned entry.
 
 Default OpenCode locations:
@@ -102,13 +104,13 @@ Key capabilities:
 Start a Goal with a real verification command:
 
 ```text
-/goal fix the failing tests --check "npm test"
+/goalx fix the failing tests --check "npm test"
 ```
 
 Create a broader Goal Contract:
 
 ```text
-/goal refactor auth \
+/goalx refactor auth \
   --success "all auth tests pass" \
   --success "existing callers remain compatible" \
   --constraint "do not add a runtime dependency" \
@@ -119,16 +121,16 @@ Create a broader Goal Contract:
 Inspect the live contract and proof state:
 
 ```text
-/goal status
-/goal contract
-/goal audit
+/goalx status
+/goalx contract
+/goalx audit
 ```
 
 Pause and resume:
 
 ```text
-/goal pause
-/goal resume
+/goalx pause
+/goalx resume
 ```
 
 When a Goal is paused, a short explicit continuation message such as `devam et`, `continue`, or `resume` also resumes it through the same lifecycle control chain. Other normal chat does not silently reactivate a paused Goal.
@@ -136,9 +138,9 @@ When a Goal is paused, a short explicit continuation message such as `devam et`,
 Queue future Goals:
 
 ```text
-/goal add update docs --success "docs match shipped behavior"
-/goal add prepare release notes --check "npm test"
-/goal queue
+/goalx add update docs --success "docs match shipped behavior"
+/goalx add prepare release notes --check "npm test"
+/goalx queue
 ```
 
 ## Common use cases
@@ -158,22 +160,22 @@ OpenCode Goals is useful when an AI coding agent needs to persist until a real o
 
 | Command | Purpose |
 |---|---|
-| `/goal <objective>` | Start a Goal when no unfinished live Goal blocks creation |
-| `/goal status` | Show current Goal state |
-| `/goal contract` | Show objective, criteria, constraints, checks, files, and limits |
-| `/goal audit` | Inspect proof/evidence and the current completion gate |
-| `/goal edit <objective>` | Create a new revision of the current Goal |
-| `/goal pause` | Pause autonomous Goal continuation |
-| `/goal resume` | Explicitly reactivate an eligible paused Goal |
-| `/goal budget` | Inspect/change local execution limits |
-| `/goal list` | Read-only project-wide live Goal index |
-| `/goal doctor` | Diagnose live/archive/queue storage without rewriting it |
-| `/goal add <objective>` | Queue a future inert Goal Contract |
-| `/goal queue` | Inspect/reorder/remove queued Goals |
-| `/goal next` | Promote the next Goal when no unfinished live Goal blocks it |
-| `/goal history` | Inspect archived Goals |
-| `/goal restore <id>` | Restore an unfinished archived Goal as paused |
-| `/goal clear` | Clear/archive the current live Goal |
+| `/goalx <objective>` | Start a Goal when no unfinished live Goal blocks creation |
+| `/goalx status` | Show current Goal state |
+| `/goalx contract` | Show objective, criteria, constraints, checks, files, and limits |
+| `/goalx audit` | Inspect proof/evidence and the current completion gate |
+| `/goalx edit <objective>` | Create a new revision of the current Goal |
+| `/goalx pause` | Pause autonomous Goal continuation |
+| `/goalx resume` | Explicitly reactivate an eligible paused Goal |
+| `/goalx budget` | Inspect/change local execution limits |
+| `/goalx list` | Read-only project-wide live Goal index |
+| `/goalx doctor` | Diagnose live/archive/queue storage without rewriting it |
+| `/goalx add <objective>` | Queue a future inert Goal Contract |
+| `/goalx queue` | Inspect/reorder/remove queued Goals |
+| `/goalx next` | Promote the next Goal when no unfinished live Goal blocks it |
+| `/goalx history` | Inspect archived Goals |
+| `/goalx restore <id>` | Restore an unfinished archived Goal as paused |
+| `/goalx clear` | Clear/archive the current live Goal |
 
 ## Can I start a second Goal?
 
@@ -181,32 +183,32 @@ A single OpenCode **session has at most one unfinished live Goal**. This avoids 
 
 If a Goal is already active or paused:
 
-- use `/goal edit <objective>` when you mean to revise the current Goal;
-- use `/goal add <objective>` to queue a second Goal for later;
-- use `/goal clear` if you intentionally want to abandon/archive the current Goal and start a different one;
+- use `/goalx edit <objective>` when you mean to revise the current Goal;
+- use `/goalx add <objective>` to queue a second Goal for later;
+- use `/goalx clear` if you intentionally want to abandon/archive the current Goal and start a different one;
 - use a **separate OpenCode session** when you intentionally want two Goals to run in parallel.
 
 For queued Goals:
 
 ```text
-/goal add second objective
-/goal queue
-/goal next
+/goalx add second objective
+/goalx queue
+/goalx next
 ```
 
-`/goal next` promotes the next queued Goal only when no unfinished live Goal blocks promotion.
+`/goalx next` promotes the next queued Goal only when no unfinished live Goal blocks promotion.
 
 Separate sessions have separate persisted Goal snapshots. They can therefore run distinct Goals in the same project directory, although normal workspace conflicts are still possible if both sessions edit the same project files.
 
 ## Pause vs. normal chat: explicit continuation and arbitrary chat
 
-`/goal pause` changes persisted Goal state to `paused`. `/goal resume` remains the explicit lifecycle command for reactivating it.
+`/goalx pause` changes persisted Goal state to `paused`. `/goalx resume` remains the explicit lifecycle command for reactivating it.
 
-For convenience, a narrow set of short, unambiguous continuation messages — for example `devam et`, `continue`, `kaldığın yerden devam et`, or `resume` — is treated as resume intent while a Goal is paused. The plugin routes that intent through the same `/goal resume` command/ownership chain rather than directly rewriting Goal state.
+For convenience, a narrow set of short, unambiguous continuation messages — for example `devam et`, `continue`, `kaldığın yerden devam et`, or `resume` — is treated as resume intent while a Goal is paused. The plugin routes that intent through the same `/goalx resume` command/ownership chain rather than directly rewriting Goal state.
 
 Other foreground chat stays ordinary conversation and does **not** silently reactivate the Goal. This keeps arbitrary chat from becoming lifecycle control while letting a clear “continue” instruction do what the user expects.
 
-The same resume path can be used after a fail-closed verifier outage. A timeout-class verifier failure first receives one fresh bounded automatic retry; if that retry also fails and the Goal is persisted as `paused`, wait until the verifier/provider is usable and then use `/goal resume` or a short explicit continuation message to retry completion.
+The same resume path can be used after a fail-closed verifier outage. A timeout-class verifier failure first receives one fresh bounded automatic retry; if that retry also fails and the Goal is persisted as `paused`, wait until the verifier/provider is usable and then use `/goalx resume` or a short explicit continuation message to retry completion.
 
 ## Goal Contracts
 
@@ -231,27 +233,27 @@ Repeatable contract flags define success and hard boundaries:
 --max-cost <amount>
 ```
 
-New Goals have no cumulative token cap by default (`maxTokens: 0`). Use `--max-tokens` or `/goal budget --max-tokens` only when you want an explicit total-work runaway guard; this cumulative budget is separate from the selected model's current context/input window.
+New Goals have no cumulative token cap by default (`maxTokens: 0`). Use `--max-tokens` or `/goalx budget --max-tokens` only when you want an explicit total-work runaway guard; this cumulative budget is separate from the selected model's current context/input window.
 
 ### Continuous / infinite Goals
 
 For monitoring, generators, queues, or other work that should intentionally keep running without a success condition, create the Goal in continuous mode:
 
 ```text
-/goal process incoming work forever --continuous
+/goalx process incoming work forever --continuous
 ```
 
 `--infinite` is an alias for `--continuous`. In this mode the Goal remains active and autonomous continuation keeps using the same objective, constraints, budgets, restart recovery, no-progress protection, provider safety handling, and user steering rules, but **automatic verified completion is disabled**. The model is instructed not to call `opencode_goal_complete`, and the host rejects that tool before running checks or the semantic verifier if it is called anyway.
 
-Continuous does not mean "ignore safety limits": explicit `--max-turns`, `--max-tokens`, `--max-minutes`, `--max-cost`, provider/usage limits, waiting-user state, repeated no-progress protection, manual `/goal pause`, and `/goal clear` still stop or suspend work normally.
+Continuous does not mean "ignore safety limits": explicit `--max-turns`, `--max-tokens`, `--max-minutes`, `--max-cost`, provider/usage limits, waiting-user state, repeated no-progress protection, manual `/goalx pause`, and `/goalx clear` still stop or suspend work normally.
 
 To convert an existing continuous Goal back to ordinary verified completion, edit it explicitly:
 
 ```text
-/goal edit finish the current backlog and stop --verified
+/goalx edit finish the current backlog and stop --verified
 ```
 
-`/goal status`, `/goal contract`, `/goal audit`, and the native sidebar show the current mode. Queued Goals created with `/goal add ... --continuous` preserve the mode when promoted.
+`/goalx status`, `/goalx contract`, `/goalx audit`, and the native sidebar show the current mode. Queued Goals created with `/goalx add ... --continuous` preserve the mode when promoted.
 
 The native OpenCode 2 sidebar also exposes a read-only telemetry snapshot from persisted Goal state: Goal id/revision, age and accounted model runtime, turns/tokens/cost and finite/unlimited budgets, selected model/context telemetry when available, requirement/check/file proof counts, native Todo-plan counts plus the current in-progress item, last persisted host-progress/state-update age, continuation/recovery/handoff state, stall-guard count, and the Goal queue. It deliberately does **not** invent live TPS, provider phase, or a fake completion percentage when the host has not persisted trustworthy data for those values.
 
@@ -260,7 +262,7 @@ The native OpenCode 2 sidebar also exposes a read-only telemetry snapshot from p
 Example:
 
 ```text
-/goal ship release --check "npm test" --notify "my-notifier --goal {goal} --reason {reason}"
+/goalx ship release --check "npm test" --notify "my-notifier --goal {goal} --reason {reason}"
 ```
 
 The full objective always remains a required semantic requirement. Narrow checks add proof obligations; they never replace the broader outcome.
@@ -270,7 +272,7 @@ The full objective always remains a required semantic requirement. Narrow checks
 For work naturally partitioned by a host-observable unit (for example a migration shard, package, tenant, or numbered batch), OpenCode 2 can rotate the same Goal into a fresh native session whenever that unit identity changes:
 
 ```text
-/goal migrate all shards \
+/goalx migrate all shards \
   --unit "node scripts/current-shard.mjs" \
   --fresh-session-per-unit \
   --check "npm test"
@@ -278,9 +280,9 @@ For work naturally partitioned by a host-observable unit (for example a migratio
 
 Both flags are required together. The `--unit` command's stdout is **identity only**: it tells Goal which external unit is current, but it never proves completion or satisfies a requirement. Rotation happens only after a clean Goal-owned execution boundary. The handoff uses OpenCode 2 native `session.create` and a durable two-phase inbox transfer; the old session becomes terminal `handed_off` before the target becomes the autonomous owner.
 
-The Goal ID, revision, contract, evidence, cumulative usage, and budgets continue across the session chain. `/goal status` shows the current unit plus root/previous/next session links. Paused, waiting-user, blocked/limited, or completed Goals do not rotate, and final verified completion stops the chain instead of opening another session.
+The Goal ID, revision, contract, evidence, cumulative usage, and budgets continue across the session chain. `/goalx status` shows the current unit plus root/previous/next session links. Paused, waiting-user, blocked/limited, or completed Goals do not rotate, and final verified completion stops the chain instead of opening another session.
 
-`/goal edit` creates a new revision. Evidence from an older revision cannot silently prove the edited Goal.
+`/goalx edit` creates a new revision. Evidence from an older revision cannot silently prove the edited Goal.
 
 ## Multi-turn cadence and anti-batching
 
@@ -289,7 +291,7 @@ OpenCode Goals is designed for objectives that explicitly require work across mu
 Example:
 
 ```text
-/goal 10 ayrı goal turunda counter.json içindeki value değerini her tur tam +1 artır. Başlangıç 0, final 10. Tek seferde +10 yapma.
+/goalx 10 ayrı goal turunda counter.json içindeki value değerini her tur tam +1 artır. Başlangıç 0, final 10. Tek seferde +10 yapma.
 ```
 
 For this kind of objective, the plugin tracks host-observed workspace mutation fingerprints and Goal progress across the current revision. A model should perform the requested per-turn unit and end its turn instead of collapsing the work into one batch.
@@ -333,7 +335,7 @@ Non-timeout provider or transport failures are not automatically retried. If the
 When the verifier/provider is healthy again:
 
 ```text
-/goal resume
+/goalx resume
 ```
 
 A short explicit continuation message such as `continue` or `devam et` uses the same resume path.
@@ -352,13 +354,13 @@ Project-local state:
 
 The runtime includes atomic writes, optimistic generation/CAS protection, per-session ownership, process leases, path/symlink escape protection, corrupt-state fail-closed handling, and process-restart recovery.
 
-Goal cumulative token/runtime budgets are intentionally separate from the selected model's current context window. `/goal status` reports the host-observed full context pressure and, when the model exposes a smaller input limit, input-side pressure separately. OpenCode remains responsible for deciding when to compact.
+Goal cumulative token/runtime budgets are intentionally separate from the selected model's current context window. `/goalx status` reports the host-observed full context pressure and, when the model exposes a smaller input limit, input-side pressure separately. OpenCode remains responsible for deciding when to compact.
 
 While an active Goal owns a session, the plugin keeps OpenCode's generic post-compaction synthetic continue disabled and resumes through exactly one Goal-owned guarded continuation path instead, so compaction does not require a manual `continue` and does not create two competing continuation owners.
 
 ## Troubleshooting
 
-### `/goal` is missing or the command bridge reaches the model
+### `/goalx` is missing or the command bridge reaches the model
 
 Reinstall/update:
 
@@ -381,20 +383,20 @@ The installer does **not** overwrite a user-owned `commands/goal.md`; OpenCode 2
 Check:
 
 ```text
-/goal status
-/goal audit
+/goalx status
+/goalx audit
 ```
 
-If the stop reason is verifier infrastructure/timeout after the bounded automatic retry and the workspace is already correct, do not manually repeat the requested mutations. Use `/goal resume` or a short explicit continuation message to retry the completion path.
+If the stop reason is verifier infrastructure/timeout after the bounded automatic retry and the workspace is already correct, do not manually repeat the requested mutations. Use `/goalx resume` or a short explicit continuation message to retry the completion path.
 
 ### I cannot start another Goal in the same session
 
 That session already has an unfinished live Goal. Choose one:
 
 ```text
-/goal edit <replacement objective>
-/goal add <future objective>
-/goal clear
+/goalx edit <replacement objective>
+/goalx add <future objective>
+/goalx clear
 ```
 
 Or open a second OpenCode session for parallel work.
@@ -418,12 +420,12 @@ npx -y @bybrawe/opencode-loop@latest --with-goals
 
 Recommended split:
 
-- **OpenCode Goals** — persistent `/goal` contracts, host evidence, completion verification, false-completion protection, revision isolation, restart recovery, and ordered Goals.
+- **OpenCode Goals** — persistent `/goalx` contracts, host evidence, completion verification, false-completion protection, revision isolation, restart recovery, and ordered Goals.
 - **OpenCode Loop** — `/loop`, scheduled command/shell jobs, compaction scheduling, and timer/idle-driven repetition infrastructure.
 
 Loop's older experimental `/loop-goal*` commands are not installed by default anymore. They remain available only as an explicit compatibility opt-in with `--with-loop-goals`; new setups should use this dedicated Goal plugin instead.
 
-Do **not** run `/goal` and a prompt-producing Loop against the same work in the same OpenCode session. Both can autonomously continue and may compete to start turns. Use separate sessions or pause/remove the prompt loop until the Goal is done.
+Do **not** run `/goalx` and a prompt-producing Loop against the same work in the same OpenCode session. Both can autonomously continue and may compete to start turns. Use separate sessions or pause/remove the prompt loop until the Goal is done.
 
 ## Package and release quality
 
@@ -452,7 +454,7 @@ opencode-goal --uninstall
 npm uninstall -g @bybrawe/opencode-goal
 ```
 
-The uninstaller checks the standard global JSON/JSONC files and, when set, the exact file in `OPENCODE_CONFIG`. It does **not** traverse project folders or remove a different host\'s settings. If you still see the third-party Goal after a restart, inspect the project\'s `opencode.json(c)` and `.opencode/plugins/` or rerun with the exact custom config directory via `OPENCODE_CONFIG_DIR`. OpenCode 2.2.x has a separate built-in `/goal`, which may remain visible after uninstalling this package.\n\nProject Goal state is intentionally **not deleted** during uninstall:
+The uninstaller checks the standard global JSON/JSONC files and, when set, the exact file in `OPENCODE_CONFIG`. It does **not** traverse project folders or remove a different host\'s settings. If you still see the third-party Goal after a restart, inspect the project\'s `opencode.json(c)` and `.opencode/plugins/` or rerun with the exact custom config directory via `OPENCODE_CONFIG_DIR`. OpenCode 2.2.x has a separate built-in `/goalx`, which may remain visible after uninstalling this package.\n\nProject Goal state is intentionally **not deleted** during uninstall:
 
 ```text
 .opencode/goals/

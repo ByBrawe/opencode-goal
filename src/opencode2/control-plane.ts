@@ -153,7 +153,7 @@ export async function applyOpenCode2ControlPlaneMutation(
   const sequence = new GoalSequenceStore(directory)
 
   if (parsed.action === "add") {
-    if (!parsed.objective) throw new Error("Usage: /goal add <objective> [Goal Contract options]")
+    if (!parsed.objective) throw new Error("Usage: /goalx add <objective> [Goal Contract options]")
     const result = await sequence.enqueue(sessionID, {
       objective: parsed.objective,
       acceptance: parsed.acceptance,

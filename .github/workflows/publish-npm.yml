@@ -28,7 +28,8 @@ jobs:
       id-token: write
     # Goal 1.3.50 publishes only after every exact-main release gate succeeds.
     # Includes safe stale-write retries, source-grounded completion proof and
-    # optional native OpenTUI 0.7 peers. Keep ownership fail-closed.
+    # native OpenTUI 0.7 peers, and /goalx separation from built-in /goal.
+    # Keep ownership fail-closed and Loop independently installed.
     env:
       RELEASE_VERSION: '1.3.50'
       RELEASE_PREDECESSOR: '1.3.49'
@@ -92,10 +93,10 @@ jobs:
         if: steps.release.outputs.publish == 'true'
         with:
           repository: ByBrawe/opencode-loop
-          ref: ea1416d0e1db855d08635f53664de7beae2b55ae
+          ref: b68817dcaece9243c4c3898882d209983b40bafe # Loop v0.6.10
           path: companion-loop
           persist-credentials: false
-      - name: Real native pair and read-only status before publication
+      - name: Real standalone Loop and native GoalX lifecycle before publication
         if: steps.release.outputs.publish == 'true'
         shell: bash
         run: |
@@ -103,10 +104,11 @@ jobs:
           export OPENCODE2_BINARY="$RUNNER_TEMP/native-host/node_modules/.bin/opencode2"
           export OPENCODE2_EXPECTED_VERSION=2.1.4
           test "$("$OPENCODE2_BINARY" --version)" = 'opencode v2.1.4'
-          export OPENCODE_GOAL_INSTALLER="$GITHUB_WORKSPACE/dist/install.js"
-          export OPENCODE_GOAL_V2_PLUGIN_URL="file://$GITHUB_WORKSPACE/dist/server.js"
           export OPENCODE2_CURRENT_COMMAND_FIELDS=1 OPENCODE2_NATIVE_REQUIRED=1
-          (cd companion-loop && npm ci && node scripts/native-install-pair-test.mjs && node scripts/opencode2-loop-canary.mjs && node scripts/native-cli-host-canary.mjs)
+          # Loop is checked standalone: do not set OPENCODE_GOAL_V2_PLUGIN_URL.
+          (cd companion-loop && npm ci && node scripts/opencode2-loop-canary.mjs && node scripts/native-cli-host-canary.mjs)
+          # GoalX is checked separately with a native direct command, and RPC is read-only.
+          node scripts/opencode2-direct-lifecycle-canary.mjs
           node scripts/native-status-host-canary.mjs
       - name: Publish stable with npm trusted publishing
         if: steps.release.outputs.publish == 'true'

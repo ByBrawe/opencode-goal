@@ -396,7 +396,7 @@ async function main() {
     await waitFor(async () => {
       const response = await request("/api/command", { method: "GET" }, 5_000).catch(() => null)
       const data = Array.isArray(response?.body?.data) ? response.body.data : Array.isArray(response?.body) ? response.body : []
-      return response?.ok && data.some((item) => (item?.name ?? item?.id) === "goal")
+      return response?.ok && data.some((item) => (item?.name ?? item?.id) === "goalx")
     }, "Goal command registration", diagnostics, 30_000)
 
     const created = await request("/api/session", {
@@ -409,7 +409,7 @@ async function main() {
 
     const result = await request(`/api/session/${encodeURIComponent(sessionID)}/command`, {
       method: "POST",
-      body: JSON.stringify({ name: "goal", text: COMMAND }),
+      body: JSON.stringify({ name: "goalx", text: COMMAND }),
     }, 120_000)
     assert.ok(result.ok, `Goal command failed: ${result.status} ${result.text}\n${diagnostics()}`)
 

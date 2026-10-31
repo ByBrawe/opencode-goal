@@ -1,4 +1,4 @@
-# OpenCode Goals
+# ByBrawe OpenCode Goals
 
 **Dil:** [English](./README.md) · **Türkçe**
 
@@ -8,11 +8,13 @@
 
 **OpenCode için kalıcı, host tarafından doğrulanan Goal modu.**
 
-OpenCode Goals, uzun süren yapay zeka kodlama görevleri için bir **OpenCode goal eklentisidir**. Kalıcı bir `/goal` iş akışı ekleyerek OpenCode kodlama ajanının tek bir açık hedefi birden fazla tur, context compaction, kesintiler, delege edilen işler ve süreç yeniden başlatmaları boyunca korumasını sağlar. Tamamlanma ise executor modelinin yalnızca “bitti” demesine değil, güncel host kanıtlarına bağlıdır.
+OpenCode Goals, uzun süren yapay zeka kodlama görevleri için bir **OpenCode goal eklentisidir**. Kalıcı bir `/goalx` iş akışı ekleyerek OpenCode kodlama ajanının tek bir açık hedefi birden fazla tur, context compaction, kesintiler, delege edilen işler ve süreç yeniden başlatmaları boyunca korumasını sağlar. Tamamlanma ise executor modelinin yalnızca “bitti” demesine değil, güncel host kanıtlarına bağlıdır.
 
 Bir **OpenCode autonomous agent**, **persistent goal mode**, **multi-turn coding agent**, **OpenCode için Codex tarzı uzun süreli goal workflow** veya **bağımsız completion verification** sunan bir OpenCode eklentisi arıyorsanız bu paket bu kullanım için tasarlanmıştır.
 
 > Bağımsız OpenCode eklentisidir. “Codex tarzı” ifadesi yalnızca uzun süreli goal workflow modelini anlatır; herhangi bir onay, bağlantı veya özellik eşitliği iddiası değildir.
+
+**Komut isimleri:** OpenCode **2.x** üzerinde bizim eklenti **`/goalx`** komutunu kullanacak. OpenCode'un yerleşik **`/goal`** komutu ayrı kalacak; üzerine yazılmayacak. OpenCode **1.x** için eski `/goal` ve `commands/goal.md` köprüsü korunuyor. npm paketi, GitHub deposu ve kayıtlı Goal sözleşmeleri/kanıtları değişmiyor. **`/goalx` komutu 1.3.50 sürüm adayına dahil edildi; npm yayını doğrulanmadan kurulu sürümde bulunduğunu varsaymayın.** İki otonom Goal motorunu aynı oturumda birlikte çalıştırmayın.
 
 ## Kurulum veya güncelleme
 
@@ -34,10 +36,10 @@ opencode-goal
 Ardından **OpenCode'u tamamen kapatıp yeniden açın** ve doğrulayın:
 
 ```text
-/goal status
+/goalx status
 ```
 
-OpenCode slash-command listesinde `/goal` komutunu da görmelisiniz.
+OpenCode slash-command listesinde `/goalx` komutunu da görmelisiniz.
 
 Yalnızca `npm install @bybrawe/opencode-goal` çalıştırmak paketi mevcut Node projesine kurar. Eklentiyi OpenCode'a kaydetmez. Yukarıdaki `npx` installer'ını veya global installer komutunu kullanın.
 
@@ -51,7 +53,7 @@ Installer:
 - eski, sürümsüz veya `@latest` Goal plugin kayıtlarını yükseltir;
 - bilinen yinelenen eski yerel Goal plugin kopyalarını kaldırır;
 - OpenCode 1.x üzerinde `/goal` komutunun keşfedilebilir olması için yönetilen global `commands/goal.md` köprüsünü kurar;
-- OpenCode 2.x üzerinde native `plugins` config alanını yazar ve eski command bridge yerine plugin-native `/goal` komutunu kullanır;
+- OpenCode 2.x üzerinde native `plugins` config alanını yazar ve eski command bridge yerine plugin-native `/goalx` komutunu kullanır;
 - Goal'a ait kayıt dışındaki ilgisiz OpenCode ayarlarını, plugin kayıtlarını ve JSONC yorumlarını korur.
 
 Varsayılan OpenCode konumları:
@@ -97,13 +99,13 @@ Temel özellikler:
 Gerçek bir doğrulama komutuyla Goal başlatın:
 
 ```text
-/goal fix the failing tests --check "npm test"
+/goalx fix the failing tests --check "npm test"
 ```
 
 Daha kapsamlı bir Goal Contract oluşturun:
 
 ```text
-/goal refactor auth \
+/goalx refactor auth \
   --success "all auth tests pass" \
   --success "existing callers remain compatible" \
   --constraint "do not add a runtime dependency" \
@@ -114,16 +116,16 @@ Daha kapsamlı bir Goal Contract oluşturun:
 Canlı contract ve proof durumunu inceleyin:
 
 ```text
-/goal status
-/goal contract
-/goal audit
+/goalx status
+/goalx contract
+/goalx audit
 ```
 
 Duraklatın ve devam ettirin:
 
 ```text
-/goal pause
-/goal resume
+/goalx pause
+/goalx resume
 ```
 
 Goal paused durumundayken `devam et`, `continue` veya `resume` gibi kısa ve açık bir devam mesajı da aynı lifecycle control zinciri üzerinden Goal'ı yeniden aktive eder. Diğer normal chat mesajları paused Goal'ı sessizce yeniden başlatmaz.
@@ -131,9 +133,9 @@ Goal paused durumundayken `devam et`, `continue` veya `resume` gibi kısa ve aç
 Gelecekteki Goal'ları sıraya ekleyin:
 
 ```text
-/goal add update docs --success "docs match shipped behavior"
-/goal add prepare release notes --check "npm test"
-/goal queue
+/goalx add update docs --success "docs match shipped behavior"
+/goalx add prepare release notes --check "npm test"
+/goalx queue
 ```
 
 ## Yaygın kullanım alanları
@@ -153,22 +155,22 @@ OpenCode Goals, bir AI coding agent'ın gerçek bir sonuç elde edilene kadar he
 
 | Komut | Amaç |
 |---|---|
-| `/goal <objective>` | Bitmemiş canlı Goal yokken yeni Goal başlatır |
-| `/goal status` | Mevcut Goal durumunu gösterir |
-| `/goal contract` | Objective, criteria, constraints, checks, files ve limitleri gösterir |
-| `/goal audit` | Proof/evidence ve mevcut completion gate'i inceler |
-| `/goal edit <objective>` | Mevcut Goal'ın yeni revision'ını oluşturur |
-| `/goal pause` | Autonomous Goal continuation'ı duraklatır |
-| `/goal resume` | Uygun paused Goal'ı açıkça yeniden aktive eder |
-| `/goal budget` | Yerel execution limitlerini inceler/değiştirir |
-| `/goal list` | Proje çapındaki canlı Goal index'ini read-only gösterir |
-| `/goal doctor` | Live/archive/queue storage'ı yeniden yazmadan teşhis eder |
-| `/goal add <objective>` | Gelecek için inert bir Goal Contract sıraya ekler |
-| `/goal queue` | Queue'yu inceler, yeniden sıralar veya öğe kaldırır |
-| `/goal next` | Bitmemiş canlı Goal engellemiyorsa sıradaki Goal'ı promote eder |
-| `/goal history` | Arşivlenmiş Goal'ları inceler |
-| `/goal restore <id>` | Bitmemiş arşiv Goal'ını paused olarak geri yükler |
-| `/goal clear` | Mevcut canlı Goal'ı clear/archive eder |
+| `/goalx <objective>` | Bitmemiş canlı Goal yokken yeni Goal başlatır |
+| `/goalx status` | Mevcut Goal durumunu gösterir |
+| `/goalx contract` | Objective, criteria, constraints, checks, files ve limitleri gösterir |
+| `/goalx audit` | Proof/evidence ve mevcut completion gate'i inceler |
+| `/goalx edit <objective>` | Mevcut Goal'ın yeni revision'ını oluşturur |
+| `/goalx pause` | Autonomous Goal continuation'ı duraklatır |
+| `/goalx resume` | Uygun paused Goal'ı açıkça yeniden aktive eder |
+| `/goalx budget` | Yerel execution limitlerini inceler/değiştirir |
+| `/goalx list` | Proje çapındaki canlı Goal index'ini read-only gösterir |
+| `/goalx doctor` | Live/archive/queue storage'ı yeniden yazmadan teşhis eder |
+| `/goalx add <objective>` | Gelecek için inert bir Goal Contract sıraya ekler |
+| `/goalx queue` | Queue'yu inceler, yeniden sıralar veya öğe kaldırır |
+| `/goalx next` | Bitmemiş canlı Goal engellemiyorsa sıradaki Goal'ı promote eder |
+| `/goalx history` | Arşivlenmiş Goal'ları inceler |
+| `/goalx restore <id>` | Bitmemiş arşiv Goal'ını paused olarak geri yükler |
+| `/goalx clear` | Mevcut canlı Goal'ı clear/archive eder |
 
 ## İkinci bir Goal başlatabilir miyim?
 
@@ -176,32 +178,32 @@ Tek bir OpenCode **session'ında en fazla bir bitmemiş canlı Goal** bulunur. B
 
 Bir Goal zaten active veya paused durumdaysa:
 
-- mevcut Goal'ı revize etmek istiyorsanız `/goal edit <objective>` kullanın;
-- ikinci Goal'ı daha sonra çalıştırmak için `/goal add <objective>` kullanın;
-- mevcut Goal'ı bilerek bırakıp/arşivleyip başka bir Goal başlatmak istiyorsanız `/goal clear` kullanın;
+- mevcut Goal'ı revize etmek istiyorsanız `/goalx edit <objective>` kullanın;
+- ikinci Goal'ı daha sonra çalıştırmak için `/goalx add <objective>` kullanın;
+- mevcut Goal'ı bilerek bırakıp/arşivleyip başka bir Goal başlatmak istiyorsanız `/goalx clear` kullanın;
 - iki Goal'ı bilinçli olarak paralel çalıştırmak istiyorsanız **ayrı bir OpenCode session'ı** kullanın.
 
 Queue için:
 
 ```text
-/goal add second objective
-/goal queue
-/goal next
+/goalx add second objective
+/goalx queue
+/goalx next
 ```
 
-`/goal next`, yalnızca bitmemiş canlı Goal promotion'ı engellemiyorsa sıradaki Goal'ı aktive eder.
+`/goalx next`, yalnızca bitmemiş canlı Goal promotion'ı engellemiyorsa sıradaki Goal'ı aktive eder.
 
 Ayrı session'lar ayrı kalıcı Goal snapshot'larına sahiptir. Bu nedenle aynı proje dizininde farklı Goal'lar çalıştırabilirler; ancak iki session aynı proje dosyalarını değiştirirse normal workspace çakışmaları yine oluşabilir.
 
 ## Pause ile normal chat farkı: açık devam isteği ve sıradan chat
 
-`/goal pause`, kalıcı Goal durumunu `paused` yapar. `/goal resume`, Goal'ı yeniden aktive etmek için açık lifecycle komutu olarak kalır.
+`/goalx pause`, kalıcı Goal durumunu `paused` yapar. `/goalx resume`, Goal'ı yeniden aktive etmek için açık lifecycle komutu olarak kalır.
 
-Kolaylık için `devam et`, `continue`, `kaldığın yerden devam et` veya `resume` gibi kısa ve belirsiz olmayan devam mesajları, Goal paused durumundayken resume niyeti olarak kabul edilir. Plugin bu niyeti Goal state'ini doğrudan değiştirmek yerine mevcut `/goal resume` command/ownership zinciri üzerinden geçirir.
+Kolaylık için `devam et`, `continue`, `kaldığın yerden devam et` veya `resume` gibi kısa ve belirsiz olmayan devam mesajları, Goal paused durumundayken resume niyeti olarak kabul edilir. Plugin bu niyeti Goal state'ini doğrudan değiştirmek yerine mevcut `/goalx resume` command/ownership zinciri üzerinden geçirir.
 
 Diğer foreground chat mesajları normal konuşma olarak kalır ve Goal'ı **sessizce yeniden aktive etmez**. Böylece rastgele chat lifecycle control'e dönüşmezken açık bir “devam et” isteği beklenen davranışı verir.
 
-Aynı resume yolu fail-closed verifier kesintisi sonrasında da kullanılabilir. Timeout sınıfındaki bir verifier hatası önce taze bir verifier session'ında tek ve bounded bir otomatik retry alır; bu retry de başarısız olur ve Goal `paused` olarak kalıcılaştırılırsa verifier/provider kullanılabilir olduğunda `/goal resume` veya kısa ve açık bir devam mesajıyla completion yeniden denenebilir.
+Aynı resume yolu fail-closed verifier kesintisi sonrasında da kullanılabilir. Timeout sınıfındaki bir verifier hatası önce taze bir verifier session'ında tek ve bounded bir otomatik retry alır; bu retry de başarısız olur ve Goal `paused` olarak kalıcılaştırılırsa verifier/provider kullanılabilir olduğunda `/goalx resume` veya kısa ve açık bir devam mesajıyla completion yeniden denenebilir.
 
 ## Goal Contracts
 
@@ -226,27 +228,27 @@ Tekrarlanabilir contract flag'leri success ve hard boundary'leri tanımlar:
 --max-cost <amount>
 ```
 
-Yeni Goal'larda cumulative token limiti varsayılan olarak yoktur (`maxTokens: 0`). Toplam çalışma için açık bir runaway guard istediğinizde `--max-tokens` veya `/goal budget --max-tokens` kullanın; bu cumulative budget seçilen modelin güncel context/input penceresinden ayrıdır.
+Yeni Goal'larda cumulative token limiti varsayılan olarak yoktur (`maxTokens: 0`). Toplam çalışma için açık bir runaway guard istediğinizde `--max-tokens` veya `/goalx budget --max-tokens` kullanın; bu cumulative budget seçilen modelin güncel context/input penceresinden ayrıdır.
 
 ### Continuous / infinite Goal'lar
 
 Monitoring, generator, queue veya bilerek bir başarı koşuluna ulaşmadan çalışmaya devam etmesi gereken işler için Goal'ı continuous mode'da başlatın:
 
 ```text
-/goal gelen işleri sürekli işle --continuous
+/goalx gelen işleri sürekli işle --continuous
 ```
 
 `--infinite`, `--continuous` için alias'tır. Bu modda Goal aktif kalır; autonomous continuation aynı objective, constraint, budget, restart recovery, no-progress koruması, provider güvenliği ve user-steering kurallarını kullanır, ancak **otomatik verified completion kapalıdır**. Model `opencode_goal_complete` çağırmaması için açıkça yönlendirilir; yine de çağırırsa host check veya semantic verifier çalıştırılmadan önce tool çağrısı reddedilir.
 
-Continuous, "safety limitlerini yok say" anlamına gelmez: açık `--max-turns`, `--max-tokens`, `--max-minutes`, `--max-cost`, provider/usage limitleri, waiting-user durumu, tekrarlanan no-progress koruması, manuel `/goal pause` ve `/goal clear` normal şekilde işi durdurur veya askıya alır.
+Continuous, "safety limitlerini yok say" anlamına gelmez: açık `--max-turns`, `--max-tokens`, `--max-minutes`, `--max-cost`, provider/usage limitleri, waiting-user durumu, tekrarlanan no-progress koruması, manuel `/goalx pause` ve `/goalx clear` normal şekilde işi durdurur veya askıya alır.
 
 Mevcut continuous Goal'ı normal verified completion moduna döndürmek için açıkça edit edin:
 
 ```text
-/goal edit mevcut backlog'u bitir ve dur --verified
+/goalx edit mevcut backlog'u bitir ve dur --verified
 ```
 
-`/goal status`, `/goal contract`, `/goal audit` ve native sidebar mevcut mode'u gösterir. `/goal add ... --continuous` ile kuyruğa alınan Goal'lar promote edilirken mode'u korur.
+`/goalx status`, `/goalx contract`, `/goalx audit` ve native sidebar mevcut mode'u gösterir. `/goalx add ... --continuous` ile kuyruğa alınan Goal'lar promote edilirken mode'u korur.
 
 Native OpenCode 2 sidebar ayrıca persisted Goal state'ten read-only telemetry gösterir: Goal id/revision, Goal yaşı ve account edilmiş model runtime, turn/token/cost ile finite/unlimited budget'lar, varsa seçili model/context telemetry, requirement/check/file proof sayıları, native Todo plan sayıları ve aktif Todo, son persisted host-progress/state-update yaşı, continuation/recovery/handoff durumu, stall-guard sayacı ve Goal queue. Host güvenilir veri persist etmediyse live TPS/provider phase veya sahte completion yüzdesi **üretilmez**.
 
@@ -255,7 +257,7 @@ Native OpenCode 2 sidebar ayrıca persisted Goal state'ten read-only telemetry g
 Örnek:
 
 ```text
-/goal release'i hazırla --check "npm test" --notify "my-notifier --goal {goal} --reason {reason}"
+/goalx release'i hazırla --check "npm test" --notify "my-notifier --goal {goal} --reason {reason}"
 ```
 
 Tam objective her zaman gerekli bir semantic requirement olarak kalır. Dar kapsamlı kontroller ek proof obligations oluşturur; geniş sonucu asla değiştirmez veya yerine geçmez.
@@ -265,7 +267,7 @@ Tam objective her zaman gerekli bir semantic requirement olarak kalır. Dar kaps
 İş host tarafından gözlemlenebilen doğal unit'lere bölünüyorsa (ör. migration shard, paket, tenant veya numaralı batch), OpenCode 2 unit kimliği değiştiğinde aynı Goal'ı yeni bir native session'a devredebilir:
 
 ```text
-/goal tüm shard'ları migrate et \
+/goalx tüm shard'ları migrate et \
   --unit "node scripts/current-shard.mjs" \
   --fresh-session-per-unit \
   --check "npm test"
@@ -273,9 +275,9 @@ Tam objective her zaman gerekli bir semantic requirement olarak kalır. Dar kaps
 
 İki flag birlikte zorunludur. `--unit` komutunun stdout'u yalnızca **kimliktir**; hangi harici unit'in aktif olduğunu söyler, completion kanıtı oluşturmaz ve requirement sağlamaz. Rotation yalnız temiz bir Goal-owned execution boundary sonrasında yapılır. Handoff OpenCode 2 native `session.create` ve kalıcı iki fazlı inbox transferini kullanır; eski session terminal `handed_off` olmadan target autonomous owner olamaz.
 
-Goal ID, revision, contract, evidence, kümülatif usage ve budget session zinciri boyunca korunur. `/goal status` current unit ile root/previous/next session bağlantılarını gösterir. Paused, waiting-user, blocked/limited veya completed Goal rotate edilmez; final doğrulanmış completion yeni bir session açmak yerine zinciri bitirir.
+Goal ID, revision, contract, evidence, kümülatif usage ve budget session zinciri boyunca korunur. `/goalx status` current unit ile root/previous/next session bağlantılarını gösterir. Paused, waiting-user, blocked/limited veya completed Goal rotate edilmez; final doğrulanmış completion yeni bir session açmak yerine zinciri bitirir.
 
-`/goal edit` yeni bir revision oluşturur. Eski revision'a ait kanıtlar düzenlenmiş Goal'ı sessizce kanıtlayamaz.
+`/goalx edit` yeni bir revision oluşturur. Eski revision'a ait kanıtlar düzenlenmiş Goal'ı sessizce kanıtlayamaz.
 
 ## Multi-turn cadence ve anti-batching
 
@@ -284,7 +286,7 @@ OpenCode Goals, açıkça birden fazla ayrı tur/cycle isteyen objective'ler iç
 Örnek:
 
 ```text
-/goal 10 ayrı goal turunda counter.json içindeki value değerini her tur tam +1 artır. Başlangıç 0, final 10. Tek seferde +10 yapma.
+/goalx 10 ayrı goal turunda counter.json içindeki value değerini her tur tam +1 artır. Başlangıç 0, final 10. Tek seferde +10 yapma.
 ```
 
 Bu tip objective'lerde plugin, mevcut revision boyunca host tarafından gözlenen workspace mutation fingerprint'lerini ve Goal progress bilgisini takip eder. Model işi tek seferde batch etmek yerine istenen per-turn birimini yapıp turu bitirmelidir.
@@ -328,7 +330,7 @@ Timeout dışındaki provider veya transport hataları otomatik retry edilmez. B
 Verifier/provider tekrar sağlıklı olduğunda:
 
 ```text
-/goal resume
+/goalx resume
 ```
 
 kullanın. `devam et` veya `continue` gibi kısa ve açık bir mesaj da aynı resume yolunu kullanır.
@@ -347,13 +349,13 @@ Project-local state:
 
 Runtime; atomic writes, optimistic generation/CAS protection, per-session ownership, process leases, path/symlink escape protection, corrupt-state fail-closed handling ve process-restart recovery içerir.
 
-Goal cumulative token/runtime budget'ları seçilen modelin mevcut context penceresinden bilinçli olarak ayrıdır. `/goal status`, host tarafından gözlenen full context pressure bilgisini ve model daha küçük bir input limiti sunuyorsa input-side pressure bilgisini ayrı gösterir. Ne zaman compact yapılacağına OpenCode karar vermeye devam eder.
+Goal cumulative token/runtime budget'ları seçilen modelin mevcut context penceresinden bilinçli olarak ayrıdır. `/goalx status`, host tarafından gözlenen full context pressure bilgisini ve model daha küçük bir input limiti sunuyorsa input-side pressure bilgisini ayrı gösterir. Ne zaman compact yapılacağına OpenCode karar vermeye devam eder.
 
 Aktif bir Goal session'ı sahiplenmişken plugin, OpenCode'un generic post-compaction synthetic continue davranışını kapalı tutar ve tam bir kez Goal-owned guarded continuation yolundan devam eder. Böylece compaction sonrasında elle `continue` yazmak gerekmez ve iki ayrı continuation owner birbiriyle yarışmaz.
 
 ## Sorun giderme
 
-### `/goal` yok veya command bridge modele ulaşıyor
+### `/goalx` yok veya command bridge modele ulaşıyor
 
 Yeniden kurun/güncelleyin:
 
@@ -376,20 +378,20 @@ Installer kullanıcıya ait bir `commands/goal.md` dosyasının üzerine yazmaz;
 Şunları kontrol edin:
 
 ```text
-/goal status
-/goal audit
+/goalx status
+/goalx audit
 ```
 
-Stop reason bounded otomatik retry sonrasında verifier infrastructure/timeout ise ve workspace zaten doğruysa istenen mutation'ları elle tekrar etmeyin. Completion yolunu yeniden denemek için `/goal resume` veya kısa ve açık bir devam mesajı kullanın.
+Stop reason bounded otomatik retry sonrasında verifier infrastructure/timeout ise ve workspace zaten doğruysa istenen mutation'ları elle tekrar etmeyin. Completion yolunu yeniden denemek için `/goalx resume` veya kısa ve açık bir devam mesajı kullanın.
 
 ### Aynı session'da başka Goal başlatamıyorum
 
 O session'da bitmemiş canlı bir Goal vardır. Şunlardan birini seçin:
 
 ```text
-/goal edit <replacement objective>
-/goal add <future objective>
-/goal clear
+/goalx edit <replacement objective>
+/goalx add <future objective>
+/goalx clear
 ```
 
 Ya da paralel çalışma için ikinci bir OpenCode session açın.
@@ -413,12 +415,12 @@ npx -y @bybrawe/opencode-loop@latest --with-goals
 
 Önerilen görev ayrımı:
 
-- **OpenCode Goals** — kalıcı `/goal` contracts, host evidence, completion verification, false-completion protection, revision isolation, restart recovery ve ordered Goals.
+- **OpenCode Goals** — kalıcı `/goalx` contracts, host evidence, completion verification, false-completion protection, revision isolation, restart recovery ve ordered Goals.
 - **OpenCode Loop** — `/loop`, scheduled command/shell jobs, compaction scheduling ve timer/idle-driven repetition altyapısı.
 
 Loop'un eski deneysel `/loop-goal*` komutları artık varsayılan olarak kurulmaz. Yalnızca uyumluluk için `--with-loop-goals` ile açıkça etkinleştirilebilir; yeni kurulumlarda bunun yerine bu ayrı Goal eklentisini kullanın.
 
-Aynı OpenCode session'ında aynı iş üzerinde `/goal` ile prompt üreten bir Loop'u birlikte çalıştırmayın. İkisi de autonomous continuation yapabilir ve tur başlatmak için yarışabilir. Ayrı session kullanın veya Goal bitene kadar prompt loop'u pause/remove edin.
+Aynı OpenCode session'ında aynı iş üzerinde `/goalx` ile prompt üreten bir Loop'u birlikte çalıştırmayın. İkisi de autonomous continuation yapabilir ve tur başlatmak için yarışabilir. Ayrı session kullanın veya Goal bitene kadar prompt loop'u pause/remove edin.
 
 ## Paket ve release kalitesi
 

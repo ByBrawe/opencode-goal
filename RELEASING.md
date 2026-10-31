@@ -1,8 +1,7 @@
 # Releasing OpenCode Goals
 
-Release readiness and publication are separate. Work remains on `main`; no repair
-or release branch is needed. Publish only an immutable commit which passes all
-required gates. A green older commit is not evidence for the release candidate.
+Release readiness and publication are separate. Merge reviewed changes to `main`
+first. Publish only an immutable main commit which passes all required gates. A green older commit is not evidence for the release candidate.
 
 ## Required release gates
 
@@ -73,9 +72,11 @@ A different gitHead is an error, not a successful no-op. Use a new version for n
 source. For an unpublished version the registry's latest must equal the declared
 predecessor, preventing accidental downgrades or out-of-order publication.
 
-After exact-main gates, the publisher exercises the pinned Loop source with Goal
-on real OpenCode 2.0.18, plus read-only native status. npm publish also runs the
-existing prepublishOnly release:check; no product gate is removed.
+After exact-main gates, the publisher checks pinned Loop v0.6.10 standalone,
+then the ByBrawe `/goalx` direct lifecycle and read-only native status on real
+OpenCode 2.1.4. These tests do not claim that two autonomous Goal engines may
+run together in one session. npm publish also runs the existing prepublishOnly
+release:check; no product gate is removed.
 
 ## Final verification
 

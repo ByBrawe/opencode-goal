@@ -14,7 +14,7 @@ If you are looking for an **OpenCode autonomous agent**, **persistent goal mode*
 
 > Independent OpenCode plugin. “Codex-style” describes the long-running goal workflow pattern only; no endorsement or feature-parity claim is implied.
 
-**Command names:** On OpenCode **2.x**, our plugin uses **`/goalx`**. OpenCode's built-in **`/goal`** stays separate and is not overridden. OpenCode **1.x** retains the existing `/goal` command and managed `commands/goal.md` bridge. The npm package, GitHub repository and all persisted Goal contracts/evidence remain unchanged. **The `/goalx` migration is not included in the already prepared 1.3.50 release.** Until independent session ownership is verified end to end, do not run both autonomous Goal engines in the same session.
+**Command names:** On OpenCode **2.x**, our plugin uses **`/goalx`**. OpenCode's built-in **`/goal`** stays separate and is not overridden. OpenCode **1.x** retains the existing `/goal` command and managed `commands/goal.md` bridge. The npm package, GitHub repository and all persisted Goal contracts/evidence remain unchanged. **The `/goalx` command is part of the 1.3.50 release candidate; use it only after npm confirms that version is published.** Until independent session ownership is verified end to end, do not run both autonomous Goal engines in the same session.
 
 ## Install or update
 

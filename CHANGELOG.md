@@ -2,16 +2,17 @@
 
 All notable changes to **OpenCode Goals** are documented here.
 
-## 1.3.50 — 2026-10-30
+## 1.3.50 — 2026-10-31
 
-Final maintenance-focused OpenCode 2 reliability release: stale-writer recovery and verifiable completion. Loop is separately maintained; OpenCode 2.2.x has its own native `/goal` command.
+OpenCode 2 Goal command separation (`/goalx`) and reliability release: stale-writer recovery and verifiable completion. Loop remains an independently installed product.
 
 - Fix #275 through the contributor's [PR #276](https://github.com/ByBrawe/opencode-goal/pull/276) (@muhammad-luay): make V1 and native V2 Goal writes retry *only* stale generations against the fresh persisted Goal snapshot, with bounded attempts and unchanged lock/integrity protections.
 - Prevent prior Goal/turn execution contexts from attaching to a newly edited or replaced same-session Goal, and prevent replayed V1/V2 completion evidence from closing changed progress, Todo, file contracts or requirements.
 - Harden completion proof (#281): generic deliverables need actual target-file or directly grounded host evidence; runtime turn counts alone are never deliverable proof. Mixed process + artifact objectives require both. Host-verified named deletions fail closed if a file reappears.
 - Add real pinned OpenCode **2.1.4** lifecycle and restart checks, while keeping previous 2.0.x compatibility (#283).
 - Widen optional CLI/TUI OpenTUI peers to **0.5.14–0.7.x** after strict Windows/Linux clean npm consumer and real Bun render tests (#284). Tested independent Loop+Goal source candidates in Loop #193.
-- Preserve Goal/Loop separate ownership, the no-silent-resume policy, session-recovery safeguards, and user-controlled `/goal` lifecycle.
+- Register ByBrawe Goal as `/goalx` on OpenCode 2, leaving OpenCode 2.2.x's built-in `/goal` registration untouched. OpenCode 1 keeps `/goal`; saved goals and npm package identity are not migrated. Two autonomous Goal engines in one session remain unsupported.
+- Preserve Goal/Loop separate ownership, the no-silent-resume policy, session-recovery safeguards, and user-controlled lifecycle. Loop 0.6.10 and Goal are installed and checked independently.
 
 Unresolved: Goal #281 artifact-linked closure receipts and the original reported reproduction, Goal #282 silent compaction/auth stalls, and Loop #169 Windows Desktop UI slash visibility. **No claims of resolving those issues or publishing this version until the npm registry confirms it.**
 

@@ -14,7 +14,7 @@ Bir **OpenCode autonomous agent**, **persistent goal mode**, **multi-turn coding
 
 > Bağımsız OpenCode eklentisidir. “Codex tarzı” ifadesi yalnızca uzun süreli goal workflow modelini anlatır; herhangi bir onay, bağlantı veya özellik eşitliği iddiası değildir.
 
-**Komut isimleri:** OpenCode **2.x** üzerinde bizim eklenti **`/goalx`** komutunu kullanacak. OpenCode'un yerleşik **`/goal`** komutu ayrı kalacak; üzerine yazılmayacak. OpenCode **1.x** için eski `/goal` ve `commands/goal.md` köprüsü korunuyor. npm paketi, GitHub deposu ve kayıtlı Goal sözleşmeleri/kanıtları değişmiyor. **`/goalx` değişikliği hazırlanmış 1.3.50 sürümünde henüz yok.** İki otonom Goal motorunu aynı oturumda birlikte çalıştırmayın.
+**Komut isimleri:** OpenCode **2.x** üzerinde bizim eklenti **`/goalx`** komutunu kullanacak. OpenCode'un yerleşik **`/goal`** komutu ayrı kalacak; üzerine yazılmayacak. OpenCode **1.x** için eski `/goal` ve `commands/goal.md` köprüsü korunuyor. npm paketi, GitHub deposu ve kayıtlı Goal sözleşmeleri/kanıtları değişmiyor. **`/goalx` komutu 1.3.50 sürüm adayına dahil edildi; npm yayını doğrulanmadan kurulu sürümde bulunduğunu varsaymayın.** İki otonom Goal motorunu aynı oturumda birlikte çalıştırmayın.
 
 ## Kurulum veya güncelleme
 

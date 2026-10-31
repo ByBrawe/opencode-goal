@@ -49,12 +49,12 @@ test("readiness timeouts exceed the slow Windows consumer and fit the fail-close
     readFile(new URL("../.github/workflows/publish-npm.yml", import.meta.url), "utf8"),
     readFile(new URL("../scripts/native-release-gate.mjs", import.meta.url), "utf8"),
   ])
-  const readMinutes = Number(readiness.match(/timeout-minutes:\\s*(\\d+)/)?.[1])
-  const publishMinutes = Number(publisher.match(/timeout-minutes:\\s*(\\d+)/)?.[1])
-  const gateMinutes = Number(gate.match(/const deadline = Date\\.now\\(\\) \\+ (\\d+) \\* 60_000/)?.[1])
+  const readMinutes = Number(readiness.match(/timeout-minutes:\s*(\d+)/)?.[1])
+  const publishMinutes = Number(publisher.match(/timeout-minutes:\s*(\d+)/)?.[1])
+  const gateMinutes = Number(gate.match(/const deadline = Date\.now\(\) \+ (\d+) \* 60_000/)?.[1])
   assert.ok(readMinutes >= 25, "Windows packed consumer must be allowed to complete")
   assert.ok(gateMinutes > readMinutes, "the fail-closed publisher must outwait the slowest readiness job")
   assert.ok(publishMinutes >= gateMinutes + 30, "publication must leave time for real host and npm verification")
-  assert.match(readiness, /os:\\s*\\[ubuntu-latest, windows-latest\\]/)
-  assert.match(readiness, /node:\\s*\\[20, 24\\]/)
+  assert.match(readiness, /os:\s*\[ubuntu-latest, windows-latest\]/)
+  assert.match(readiness, /node:\s*\[20, 24\]/)
 })

@@ -21,7 +21,9 @@ jobs:
     name: Publish 1.3.50
     if: github.repository == 'ByBrawe/opencode-goal' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    # Allow the exact-main Windows package matrix and the separate real-host + npm verification.
+    # The publisher must still refuse missing, cancelled, timed-out or failed gates.
+    timeout-minutes: 80
     permissions:
       contents: read
       actions: read

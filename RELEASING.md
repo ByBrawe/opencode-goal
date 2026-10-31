@@ -20,8 +20,13 @@ The exact main push must pass all of these before npm publication:
 
 `scripts/native-release-gate.mjs` enforces this list. Missing, pending, skipped,
 failed, cancelled, wrong-commit, PR-only or fork runs never count as success. The
-publisher waits at most fifteen minutes, then refuses publication. Both previously
-PR-only current-stable and Todo-differential workflows now run on main as well.
+publisher waits at most 35 minutes, then refuses publication. Release Readiness
+retains the full Ubuntu/Windows, Node 20/24 matrix with a bounded 25-minute job
+timeout; the npm publisher has an 80-minute bound for the gate, native hosts and
+published-consumer verification. These limits prevent valid, slow Windows packed
+consumers from being misreported as `cancelled`, without bypassing any gate.
+Both previously PR-only current-stable and Todo-differential workflows now run
+on main as well.
 
 CI retains V1 minimum/current compatibility and native lifecycle/semantic/steering
 coverage. Release Readiness checks Ubuntu/Windows with Node 20/24, unit tests,

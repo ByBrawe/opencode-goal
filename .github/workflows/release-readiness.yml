@@ -16,7 +16,9 @@ permissions:
 jobs:
   package:
     name: package smoke (${{ matrix.os }}, Node ${{ matrix.node }})
-    timeout-minutes: 12
+    # Windows packed production consumers can take more than 12 minutes to build, link and import.
+    # Keep every Node/OS matrix gate mandatory; allow its slowest honest run to finish.
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:

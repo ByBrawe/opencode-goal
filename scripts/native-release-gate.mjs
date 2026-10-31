@@ -45,7 +45,9 @@ async function main() {
   const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"))
   if (pkg.version !== process.env.RELEASE_VERSION) throw new Error("Release version changed")
   const endpoint = `https://api.github.com/repos/${repository}/actions/runs?per_page=100&head_sha=${sha}`
-  const deadline = Date.now() + 15 * 60_000
+  // Release Readiness (Windows packed consumer) needs up to 25 minutes per job.
+  // Wait longer than its hard timeout, without weakening any required gate.
+  const deadline = Date.now() + 35 * 60_000
   while (Date.now() < deadline) {
     const runs = []
     for (let page = 1; page <= 10; page++) {

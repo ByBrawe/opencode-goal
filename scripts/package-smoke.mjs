@@ -13,6 +13,13 @@ const v2RuntimeDependency = "@opencode/plugin"
 const v2RuntimeDependencyRange = "2.0.22"
 const minimumOpenCode = ">=1.4.0"
 const managedCommandMarker = "<!-- managed-by:@bybrawe/opencode-goal -->"
+// Manual only: exercise one supported OpenTUI train per strict packed consumer.
+// Do not silently reinterpret unsupported version strings.
+const tuiSmokeVersion = process.env.GOAL_OPENTUI_SMOKE_VERSION ?? "0.5.14"
+if (!["0.5.14", "0.7.0", "0.8.1"].includes(tuiSmokeVersion)) {
+  throw new Error("GOAL_OPENTUI_SMOKE_VERSION must be 0.5.14, 0.7.0 or 0.8.1")
+}
+const tuiSmokeSolidVersion = tuiSmokeVersion === "0.8.1" ? "1.9.16" : "1.9.12"
 
 function parseArgs(argv) {
   const options = { jsonPath: null }
@@ -188,9 +195,9 @@ async function main() {
       "--no-audit",
       "--no-fund",
       tarball,
-      "@opentui/core@0.5.14",
-      "@opentui/solid@0.5.14",
-      "solid-js@1.9.12",
+      `@opentui/core@${tuiSmokeVersion}`,
+      `@opentui/solid@${tuiSmokeVersion}`,
+      `solid-js@${tuiSmokeSolidVersion}`,
     ], { cwd: consumer })
     const tuiProbe = String.raw`
       const tui = await import("@bybrawe/opencode-goal/tui");

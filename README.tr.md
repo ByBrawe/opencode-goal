@@ -14,7 +14,9 @@ Bir **OpenCode autonomous agent**, **persistent goal mode**, **multi-turn coding
 
 > Bağımsız OpenCode eklentisidir. “Codex tarzı” ifadesi yalnızca uzun süreli goal workflow modelini anlatır; herhangi bir onay, bağlantı veya özellik eşitliği iddiası değildir.
 
-**Komut isimleri:** OpenCode **2.x** üzerinde bizim eklenti **`/goalx`** komutunu kullanacak. OpenCode'un yerleşik **`/goal`** komutu ayrı kalacak; üzerine yazılmayacak. OpenCode **1.x** için eski `/goal` ve `commands/goal.md` köprüsü korunuyor. npm paketi, GitHub deposu ve kayıtlı Goal sözleşmeleri/kanıtları değişmiyor. **`/goalx` komutu 1.3.50 sürüm adayına dahil edildi; npm yayını doğrulanmadan kurulu sürümde bulunduğunu varsaymayın.** İki otonom Goal motorunu aynı oturumda birlikte çalıştırmayın.
+**Komut isimleri:** OpenCode **2.x** üzerinde bizim eklenti **`/goalx`** komutunu kullanacak. OpenCode'un yerleşik **`/goal`** komutu ayrı kalacak; üzerine yazılmayacak. OpenCode **1.x** için eski `/goal` ve `commands/goal.md` köprüsü korunuyor. npm paketi, GitHub deposu ve kayıtlı Goal sözleşmeleri/kanıtları değişmiyor. **`/goalx` komutu yayımlanmış 1.3.50 paketinde mevcuttur.** İki otonom Goal motorunu aynı oturumda birlikte çalıştırmayın.
+
+**OpenTUI 0.8 notu:** `main` dalındaki **henüz npm'ye yayımlanmamış kaynak kod**, 0.5–0.7 yanında isteğe bağlı OpenTUI 0.8.x paketlerini de kabul eder. Yayımlanmış 1.3.50 paketinin bağımlılık aralığı henüz güncellenmedi. OpenCode 2.2.3+ için `@opentui/core` ve `@opentui/solid` sürümleri aynı 0.8.x seviyesinde olmalı; güvenlik nedeniyle `solid-js >=1.9.16` önerilir. Gerçek Bun 0.8 render doğrulaması tamamlanmadan tam çalışma uyumluluğu iddia edilmez. GitHub Actions kapalıdır.
 
 ## Kurulum veya güncelleme
 

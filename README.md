@@ -14,7 +14,9 @@ If you are looking for an **OpenCode autonomous agent**, **persistent goal mode*
 
 > Independent OpenCode plugin. “Codex-style” describes the long-running goal workflow pattern only; no endorsement or feature-parity claim is implied.
 
-**Command names:** On OpenCode **2.x**, our plugin uses **`/goalx`**. OpenCode's built-in **`/goal`** stays separate and is not overridden. OpenCode **1.x** retains the existing `/goal` command and managed `commands/goal.md` bridge. The npm package, GitHub repository and all persisted Goal contracts/evidence remain unchanged. **The `/goalx` command is part of the 1.3.50 release candidate; use it only after npm confirms that version is published.** Until independent session ownership is verified end to end, do not run both autonomous Goal engines in the same session.
+**Command names:** On OpenCode **2.x**, our plugin uses **`/goalx`**. OpenCode's built-in **`/goal`** stays separate and is not overridden. OpenCode **1.x** retains the existing `/goal` command and managed `commands/goal.md` bridge. The npm package, GitHub repository and all persisted Goal contracts/evidence remain unchanged. **The `/goalx` command is included in the published 1.3.50 package.** Until independent session ownership is verified end to end, do not run both autonomous Goal engines in the same session.
+
+**OpenTUI 0.8 note:** The **unreleased source** on `main` now accepts optional OpenTUI 0.8.x alongside 0.5–0.7. The published 1.3.50 package still declares a pre-0.8 range until a separate npm release is made. For OpenCode 2.2.3+ use matching `@opentui/core`/`@opentui/solid` 0.8.x and prefer `solid-js >=1.9.16` (security update). Native Bun render verification on 0.8 remains required before declaring full runtime compatibility. No GitHub Actions are enabled.
 
 ## Install or update
 

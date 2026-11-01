@@ -2,6 +2,12 @@
 
 All notable changes to **OpenCode Goals** are documented here.
 
+## Unreleased — OpenTUI 0.8 compatibility source update
+
+- Allow optional `@opentui/core` and `@opentui/solid` 0.8.x peers without dropping existing 0.5.14–0.7.x consumers; align the Solid peer minimum with upstream 1.9.12 and recommend patched 1.9.16+ installs.
+- Permit manual strict packed-consumer import checks using `GOAL_OPENTUI_SMOKE_VERSION=0.8.1 npm run package:smoke`; the default remains the existing 0.5.14 coverage. Both OpenTUI packages must resolve at the same version.
+- Upstream 0.8.1 still exports the public Solid primitives used by this sidebar. **The 0.8.1 Bun render has not yet been executed in this restricted environment.** No CI or publisher was re-enabled; npm 1.3.50 is unchanged.
+
 ## 1.3.50 — 2026-10-31
 
 OpenCode 2 Goal command separation (`/goalx`) and reliability release: stale-writer recovery and verifiable completion. Loop remains an independently installed product.

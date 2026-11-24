@@ -1,38 +1,6 @@
 # Releasing OpenCode Goals
 
-Release readiness and publication are separate. Merge reviewed changes to `main`
-first. Publish only an immutable main commit which passes all required gates. A green older commit is not evidence for the release candidate.
-
-## Required release gates
-
-The exact main push must pass all of these before npm publication:
-
-- CI
-- Actions Security Gate
-- Real Host Progress
-- Real Restart Recovery
-- Release Readiness
-- Experimental OpenCode 2 Host
-- Current OpenCode 2 Stable Host
-- OpenCode 2 Todo Materialization Diff
-- OpenCode 2 Unit Handoff
-- Native Goal Sidebar
-
-`scripts/native-release-gate.mjs` enforces this list. Missing, pending, skipped,
-failed, cancelled, wrong-commit, PR-only or fork runs never count as success. The
-publisher waits at most 35 minutes, then refuses publication. Release Readiness
-retains the full Ubuntu/Windows, Node 20/24 matrix with a bounded 25-minute job
-timeout; the npm publisher has an 80-minute bound for the gate, native hosts and
-published-consumer verification. These limits prevent valid, slow Windows packed
-consumers from being misreported as `cancelled`, without bypassing any gate.
-Both previously PR-only current-stable and Todo-differential workflows now run
-on main as well.
-
-CI retains V1 minimum/current compatibility and native lifecycle/semantic/steering
-coverage. Release Readiness checks Ubuntu/Windows with Node 20/24, unit tests,
-adversarial evaluation and a production-only installed tarball. Native Goal Sidebar
-checks actual OpenTUI rendering on both operating systems and two-location RPC on
-OpenCode 2.0.18. Unit Handoff tests 2.0.16 and 2.0.18 independently.
+**Manual releases only.** All GitHub Actions workflows were removed to stop runner consumption. Do not restore scheduled, push, pull-request or publishing workflows. An ordinary commit does not publish anything. The last verified npm version is 1.3.50. Changes to main after that publication remain unreleased.
 
 ## Package contract
 
@@ -52,36 +20,15 @@ Native V2 install also persists OpenCode's canonical plural `plugins` representa
 valid legacy `plugin` entries are normalized into that list, while malformed entries
 and unrelated provider/model settings remain untouched.
 
-Local gates:
+## Manual release checklist
 
-```sh
-npm install
-npm run release:check
-npm run test:tui-native
-```
+1. Choose a new version, update package.json and its numeric CHANGELOG release heading, and record the exact clean main commit. Never reuse an immutable published version for changed source.
+2. Install dependencies in a local checkout. Run focused checks once, rather than an automatic platform matrix. `npm run release:check` is the existing complete local package gate; it is not automatically run by GitHub. The package's prepublishOnly hook still requires it.
+3. Validate the target OpenCode host and native TUI locally. For OpenCode 2.4.1 use matching OpenTUI core/solid 0.9.4 and Solid 1.9.17. Run the packed consumer with `GOAL_OPENTUI_SMOKE_VERSION=0.9.4 npm run package:smoke` (PowerShell: `$env:GOAL_OPENTUI_SMOKE_VERSION='0.9.4'; npm run package:smoke`). Also run a real Bun renderer with the matching dependencies. Retain the older pinned host checks as needed; peer ranges alone do not prove runtime compatibility.
+4. Check npm latest and the intended predecessor, and check the candidate tarball contents, exact package name/version/exports, installer, and independent Goal-only installation. Do not publish if any required check fails or has not been executed.
+5. Only after an explicit release decision, an authorized maintainer can publish from the clean, verified checkout with npm's supported authentication and normal release checks. Do not bypass prepublishOnly, embed credentials, or silently re-enable an Actions trusted publisher. If manual npm authentication is unavailable, stop rather than weakening publication policy.
 
-## Trusted publication
-
-The next authorized release candidate is 1.3.50, following the published npm latest 1.3.49. It may publish only after every exact-main gate passes and the trusted publisher validates npm provenance. The publisher
-runs on an explicit workflow dispatch or a main update to its workflow/package
-manifest. Other versions are skipped until the release guard is deliberately changed.
-
-The existing `publish-npm.yml` is the only OIDC publisher. It retains read-only
-contents, no persisted checkout credentials, no long-lived npm token and no git
-push. Actions read permission is used only to verify exact-commit checks. The
-immutable triggering SHA is checked out; publication is serialized and never
-cancelled by a newer publisher run. npm >=11.5.1 is required.
-
-An existing immutable npm version must have the same gitHead as the release source.
-A different gitHead is an error, not a successful no-op. Use a new version for new
-source. For an unpublished version the registry's latest must equal the declared
-predecessor, preventing accidental downgrades or out-of-order publication.
-
-After exact-main gates, the publisher checks pinned Loop v0.6.10 standalone,
-then the ByBrawe `/goalx` direct lifecycle and read-only native status on real
-OpenCode 2.1.4. These tests do not claim that two autonomous Goal engines may
-run together in one session. npm publish also runs the existing prepublishOnly
-release:check; no product gate is removed.
+The old Actions gate command is deliberately retired and fails immediately instead of polling for deleted workflows. Its pure source-identity regression helpers remain usable offline. The unit test runner no longer expects workflow YAML files. No release is authorized by this document alone.
 
 ## Final verification
 
@@ -90,6 +37,6 @@ matching gitHead, package exports, production dependencies, expected installer b
 and latest tag. A clean consumer runs the public installer with --version and
 imports the published native server/shared RPC without TUI peers, then imports the TUI with the supported host peer set.
 
-A started workflow, merge, tag or successful upload alone is not publication proof.
+A merge, tag or successful upload alone is not publication proof.
 Record the published version, source SHA, integrity and successful consumer check.
-See docs/releases/1.3.50.md for current candidate scope and limits, including the unreproduced silent-stall/Windows Desktop reports.
+See docs/releases/1.3.50.md for published 1.3.50 scope and limits, including the unreproduced silent-stall/Windows Desktop reports.

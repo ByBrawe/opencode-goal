@@ -1,6 +1,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { readFile } from "node:fs/promises"
+import { spawnSync } from "node:child_process"
+import { fileURLToPath } from "node:url"
 import { evaluateReleaseRuns, assertRegistrySource, REQUIRED_GOAL_GATES } from "../scripts/native-release-gate.mjs"
 const sha = "a".repeat(40), repository = "ByBrawe/opencode-goal"
 const run = (overrides = {}) => ({ id: 1, name: "CI", head_sha: sha, event: "push", head_branch: "main", repository: { full_name: repository }, status: "completed", conclusion: "success", ...overrides })
@@ -32,29 +33,10 @@ test("an already published immutable version must match its exact git source", (
   assert.doesNotThrow(() => assertRegistrySource({ name: expected.name, version: expected.version, gitHead: sha }, expected))
   for (const change of [{ gitHead: "b".repeat(40) }, { gitHead: undefined }, { name: "other" }, { version: "1.3.49" }]) assert.throws(() => assertRegistrySource({ name: expected.name, version: expected.version, gitHead: sha, ...change }, expected), /different source/)
 })
-test("publisher keeps immutable checkout, serialized OIDC and exact-main gates", async () => {
-  const workflow = await readFile(new URL("../.github/workflows/publish-npm.yml", import.meta.url), "utf8")
-  assert.match(workflow, /ref: \$\{\{ github.sha \}\}/)
-  assert.match(workflow, /persist-credentials: false/)
-  assert.match(workflow, /cancel-in-progress: false/)
-  assert.match(workflow, /node scripts\/native-release-gate.mjs/)
-  assert.match(workflow, /assertRegistrySource/)
-  assert.doesNotMatch(workflow, /contents: write|git push|secrets\.NPM_TOKEN/)
-  assert.ok(workflow.indexOf("node scripts/native-release-gate.mjs") < workflow.indexOf("npm publish --tag latest --access public"))
-})
-
-test("readiness timeouts exceed the slow Windows consumer and fit the fail-closed publisher budget", async () => {
-  const [readiness, publisher, gate] = await Promise.all([
-    readFile(new URL("../.github/workflows/release-readiness.yml", import.meta.url), "utf8"),
-    readFile(new URL("../.github/workflows/publish-npm.yml", import.meta.url), "utf8"),
-    readFile(new URL("../scripts/native-release-gate.mjs", import.meta.url), "utf8"),
-  ])
-  const readMinutes = Number(readiness.match(/timeout-minutes:\s*(\d+)/)?.[1])
-  const publishMinutes = Number(publisher.match(/timeout-minutes:\s*(\d+)/)?.[1])
-  const gateMinutes = Number(gate.match(/const deadline = Date\.now\(\) \+ (\d+) \* 60_000/)?.[1])
-  assert.ok(readMinutes >= 25, "Windows packed consumer must be allowed to complete")
-  assert.ok(gateMinutes > readMinutes, "the fail-closed publisher must outwait the slowest readiness job")
-  assert.ok(publishMinutes >= gateMinutes + 30, "publication must leave time for real host and npm verification")
-  assert.match(readiness, /os:\s*\[ubuntu-latest, windows-latest\]/)
-  assert.match(readiness, /node:\s*\[20, 24\]/)
+test("retired CI gate refuses to poll or authorize a release", () => {
+  const script = fileURLToPath(new URL("../scripts/native-release-gate.mjs", import.meta.url))
+  const result = spawnSync(process.execPath, [script], { encoding: "utf8", timeout: 3000 })
+  assert.equal(result.error, undefined)
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /Automatic Actions publication is disabled/)
 })

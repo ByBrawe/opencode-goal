@@ -51,8 +51,8 @@ export function selectOpenCode2RegistryModel(
  * that registry is advisory and must never block Goal work or invent limits.
  */
 function nonNegative(value: unknown): number | undefined {
-  const number = Number(value)
-  return Number.isFinite(number) && number >= 0 ? number : undefined
+  // A missing/null catalog limit is unknown, not zero.
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined
 }
 
 export async function observeOpenCode2ModelRegistryLimits(
@@ -61,46 +61,32 @@ export async function observeOpenCode2ModelRegistryLimits(
   selected: unknown,
   now = Date.now(),
 ): Promise<GoalState> {
-  if (typeof registry?.list !== "function") return goal
-
-  let models: unknown
-  try {
-    models = await registry.list()
-  } catch {
-    return goal
-  }
-
-  const model = selectOpenCode2RegistryModel(models, selected)
-  if (!model) return goal
-
   const selection = record(selected)
   const providerID = firstString(selection?.providerID)
   const modelID = firstString(selection?.id, selection?.modelID)
   if (!providerID || !modelID) return goal
 
+  // The selected identity is authoritative even when the asynchronously loaded
+  // OpenCode 2.4+ registry is empty, partial, unavailable or still initializing.
+  // Never keep an old model's limits or token-pressure observations on a switch.
   const execution = goal.execution ?? {}
   const previousModel = execution.model
-  const modelChanged = Boolean(
-    previousModel
-    && (
-      previousModel.providerID !== providerID
-      || previousModel.modelID !== modelID
-    )
-  )
-
+  const modelChanged = !previousModel || previousModel.providerID !== providerID || previousModel.modelID !== modelID
   let base = goal
-  if (!previousModel || modelChanged) {
-    const { modelContext: previousContext, ...rest } = execution
-    base = {
-      ...goal,
-      execution: {
-        ...rest,
-        model: { providerID, modelID },
-        ...(!modelChanged && previousContext ? { modelContext: previousContext } : {}),
-      },
-      updatedAt: now,
-    }
+  if (modelChanged) {
+    const { modelContext: _previousContext, ...rest } = execution
+    base = { ...goal, execution: { ...rest, model: { providerID, modelID } }, updatedAt: now }
   }
+
+  if (typeof registry?.list !== "function") return base
+  let models: unknown
+  try {
+    models = await registry.list()
+  } catch {
+    return base
+  }
+  const model = selectOpenCode2RegistryModel(models, selected)
+  if (!model) return base
 
   const limit = record(model.limit)
   const contextLimit = nonNegative(limit?.context)
@@ -110,10 +96,12 @@ export async function observeOpenCode2ModelRegistryLimits(
 
   const current = base.execution?.modelContext
   if (
-    current?.contextLimit === contextLimit
-    && current?.inputLimit === inputLimit
-    && current?.outputLimit === outputLimit
+    (contextLimit === undefined || current?.contextLimit === contextLimit)
+    && (inputLimit === undefined || current?.inputLimit === inputLimit)
+    && (outputLimit === undefined || current?.outputLimit === outputLimit)
   ) return base
 
-  return observeModelContextLimits(base, { model, now })
+  // Pass only validated values; the legacy context observer also accepts
+  // numeric strings, and must not coerce a null field in the V2 catalog to 0.
+  return observeModelContextLimits(base, { model: { limit: { context: contextLimit, input: inputLimit, output: outputLimit } }, now })
 }

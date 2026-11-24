@@ -9,7 +9,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 test("CHANGELOG latest release heading matches the package version", async () => {
   const packageJSON = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"))
   const changelog = await readFile(path.join(root, "CHANGELOG.md"), "utf8")
-  const latest = changelog.match(/^##\s+([^\s—]+)\s+—/m)?.[1]
+  const latest = changelog.match(/^##[ \t]+(\d+\.\d+\.\d+)[ \t]+—/m)?.[1]
 
   assert.equal(latest, packageJSON.version, `CHANGELOG latest release is ${latest ?? "missing"}; package.json is ${packageJSON.version}`)
 })

@@ -2,11 +2,12 @@
 
 All notable changes to **OpenCode Goals** are documented here.
 
-## Unreleased — OpenTUI 0.8 compatibility source update
+## Unreleased — OpenCode 2.4 compatibility and maintenance
 
-- Allow optional `@opentui/core` and `@opentui/solid` 0.8.x peers without dropping existing 0.5.14–0.7.x consumers; align the Solid peer minimum with upstream 1.9.12 and recommend patched 1.9.16+ installs.
-- Permit manual strict packed-consumer import checks using `GOAL_OPENTUI_SMOKE_VERSION=0.8.1 npm run package:smoke`; the default remains the existing 0.5.14 coverage. Both OpenTUI packages must resolve at the same version.
-- Upstream 0.8.1 still exports the public Solid primitives used by this sidebar. **The 0.8.1 Bun render has not yet been executed in this restricted environment.** No CI or publisher was re-enabled; npm 1.3.50 is unchanged.
+- Accept optional OpenTUI 0.8.x and 0.9.x peers while retaining the previously supported 0.5.14–0.7.x range. Add a manual packed-consumer profile for OpenTUI 0.9.4 / Solid 1.9.17. The installed SDK baseline is retained pending a real-host migration check; 0.8/0.9 renderer and OpenCode 2.4.1 runtime compatibility are not yet proven.
+- Bind model identity before reading the asynchronous V2 catalog; invalidate previous-model limits and pressure on a selection change even if the registry is empty or unavailable. Ignore missing or invalid catalog limits; retain known same-model limits without churn while the catalog loads.
+- Remove retired Actions YAML-dependent assertions, stop obsolete gate polling, allow an Unreleased heading ahead of the latest numeric version, and document manual local verification. Keep package/source identity checks and the product release checks; no workflow is restored.
+- No new npm release; published 1.3.50 is unchanged.
 
 ## 1.3.50 — 2026-10-31
 

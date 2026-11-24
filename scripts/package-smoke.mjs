@@ -16,10 +16,10 @@ const managedCommandMarker = "<!-- managed-by:@bybrawe/opencode-goal -->"
 // Manual only: exercise one supported OpenTUI train per strict packed consumer.
 // Do not silently reinterpret unsupported version strings.
 const tuiSmokeVersion = process.env.GOAL_OPENTUI_SMOKE_VERSION ?? "0.5.14"
-if (!["0.5.14", "0.7.0", "0.8.1"].includes(tuiSmokeVersion)) {
-  throw new Error("GOAL_OPENTUI_SMOKE_VERSION must be 0.5.14, 0.7.0 or 0.8.1")
+if (!["0.5.14", "0.7.0", "0.8.1", "0.9.4"].includes(tuiSmokeVersion)) {
+  throw new Error("GOAL_OPENTUI_SMOKE_VERSION must be 0.5.14, 0.7.0, 0.8.1 or 0.9.4")
 }
-const tuiSmokeSolidVersion = tuiSmokeVersion === "0.8.1" ? "1.9.16" : "1.9.12"
+const tuiSmokeSolidVersion = tuiSmokeVersion === "0.9.4" ? "1.9.17" : tuiSmokeVersion === "0.8.1" ? "1.9.16" : "1.9.12"
 
 function parseArgs(argv) {
   const options = { jsonPath: null }

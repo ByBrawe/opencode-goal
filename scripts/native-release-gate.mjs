@@ -1,6 +1,4 @@
-import { readFile } from "node:fs/promises"
 import { pathToFileURL } from "node:url"
-import { setTimeout as delay } from "node:timers/promises"
 
 export const REQUIRED_GOAL_GATES = [
   "CI", "Actions Security Gate", "Real Host Progress", "Real Restart Recovery",
@@ -28,45 +26,10 @@ export function assertRegistrySource(manifest, expected) {
   }
 }
 
-async function get(url) {
-  const headers = { Accept: "application/vnd.github+json" }
-  if (process.env.GH_TOKEN) headers.Authorization = `Bearer ${process.env.GH_TOKEN}`
-  const response = await fetch(url, { headers, signal: AbortSignal.timeout(20000) })
-  if (!response.ok) throw new Error(`Release gate HTTP ${response.status}`)
-  return response.json()
-}
-
+// The old Actions publisher has been retired. Historical pure source checks
+// remain importable, but calling this script must not poll missing workflows.
 async function main() {
-  const repository = process.env.GITHUB_REPOSITORY
-  const sha = process.env.GITHUB_SHA
-  if (repository !== "ByBrawe/opencode-goal" || process.env.GITHUB_REF !== "refs/heads/main" || !/^[a-f0-9]{40}$/.test(sha ?? "")) {
-    throw new Error("Stable publication is restricted to an immutable main commit in the owning repository")
-  }
-  const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"))
-  if (pkg.version !== process.env.RELEASE_VERSION) throw new Error("Release version changed")
-  const endpoint = `https://api.github.com/repos/${repository}/actions/runs?per_page=100&head_sha=${sha}`
-  // Release Readiness (Windows packed consumer) needs up to 25 minutes per job.
-  // Wait longer than its hard timeout, without weakening any required gate.
-  const deadline = Date.now() + 35 * 60_000
-  while (Date.now() < deadline) {
-    const runs = []
-    for (let page = 1; page <= 10; page++) {
-      const result = await get(`${endpoint}&page=${page}`)
-      if (!Array.isArray(result.workflow_runs)) throw new Error("Invalid workflow response")
-      runs.push(...result.workflow_runs)
-      if (runs.length >= result.total_count || result.workflow_runs.length < 100) break
-      if (page === 10) throw new Error("Too many workflow runs to verify safely")
-    }
-    const gates = evaluateReleaseRuns(runs, REQUIRED_GOAL_GATES, sha, repository)
-    console.log(JSON.stringify({ sha, gates }))
-    if (gates.some((gate) => gate.state === "failed")) throw new Error("An exact-commit release gate failed; publication refused")
-    if (gates.every((gate) => gate.state === "passed")) {
-      console.log(`All ${gates.length} exact-main release gates passed for ${pkg.name}@${pkg.version}`)
-      return
-    }
-    await delay(15000)
-  }
-  throw new Error("Timed out waiting for every exact-main release gate; publication refused")
+  throw new Error("Automatic Actions publication is disabled; see RELEASING.md for manual release checks.")
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

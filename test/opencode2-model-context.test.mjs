@@ -117,5 +117,27 @@ test("V2 unavailable model registry fails closed without inventing limits", asyn
     { id: "m", providerID: "p" },
     100,
   )
-  assert.equal(next, goal)
+  assert.deepEqual(next.execution?.model, { providerID: "p", modelID: "m" })
+  assert.equal(next.execution?.modelContext, undefined)
+})
+
+
+test("V2 partial or unavailable registry cannot retain another model's context", async () => {
+  const initial = {
+    ...createGoal({ sessionID: "v2-catalog-loading", objective: "switch", now: 1 }),
+    execution: { model: { providerID: "p", modelID: "old" }, modelContext: { contextLimit: 1000, lastRequestTokens: 999, observedAt: 1 } },
+  }
+  const selected = { providerID: "p", id: "new" }
+  for (const registry of [undefined, { list: async () => [] }, { list: async () => { throw Error("loading") } }]) {
+    const next = await observeOpenCode2ModelRegistryLimits(initial, registry, selected, 2)
+    assert.deepEqual(next.execution?.model, { providerID: "p", modelID: "new" })
+    assert.equal(next.execution?.modelContext, undefined)
+  }
+  const pending = await observeOpenCode2ModelRegistryLimits(initial, { list: async () => [] }, selected, 2)
+  const loaded = await observeOpenCode2ModelRegistryLimits(pending, { list: async () => [{ providerID: "p", id: "new", limit: { context: 2000, input: null, output: "" } }] }, selected, 3)
+  assert.equal(loaded.execution?.modelContext?.contextLimit, 2000)
+  assert.equal(loaded.execution?.modelContext?.inputLimit, undefined)
+  assert.equal(loaded.execution?.modelContext?.outputLimit, undefined)
+  assert.equal(await observeOpenCode2ModelRegistryLimits(loaded, { list: async () => [] }, selected, 4), loaded)
+  assert.equal(await observeOpenCode2ModelRegistryLimits(loaded, { list: async () => [{ providerID: "p", id: "new", limit: { context: 2000 } }] }, selected, 4), loaded)
 })
